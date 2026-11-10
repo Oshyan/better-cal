@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Domain;
 
 use BetterCal\Dav\ChangeLog;
+use BetterCal\Domain\Series\Calc;
 use BetterCal\Domain\Series\OwnFields;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
@@ -1240,6 +1241,17 @@ final class Undo
         $id = (int) $mutation['id'];
         $reverts = [];
         $added = [];
+        // A series a later change re-formed (made all-day or timed, or moved to another zone): its row key => the
+        // frames of the journal since this entry (lineFor), false for a row nothing re-formed, which is read as ever.
+        $lines = [];
+        // Of such a series, each of this entry's day grounds => the frame its key is in (null where it can't be told).
+        $frames = [];
+        $frameOf = function (string $row, string $ground) use ($mutation, &$lines, &$frames): ?array {
+            if (!array_key_exists($ground, $frames[$row] ?? [])) {
+                $frames[$row][$ground] = $this->keyFrame($mutation, $lines[$row]['master'], (string) self::dayKeyOf($ground), $lines[$row]);
+            }
+            return $frames[$row][$ground];
+        };
         // A page of what it touched at a time: a calendar of tens of
         // thousands of events deleted touched each one (#191).
         [$lastRow, $lastCol] = ['', ''];
@@ -1282,8 +1294,33 @@ final class Undo
                             $moves[$row][] = $col;
                         }
                     }
+                    $targets = [];
                     foreach ($moves as $row => $list) {
-                        $mine[$row] = self::moved($mine[$row] ?? [], $list);
+                        $line = $lines[$row] ??= $this->lineFor($mutation, (string) $row);
+                        if ($line === false) {
+                            $mine[$row] = self::moved($mine[$row] ?? [], $list);
+                            continue;
+                        }
+                        // A series re-formed since: each of this entry's days is followed by the day its key names (carry).
+                        [$before, $after] = self::around($line, (int) $entry);
+                        $next = [];
+                        foreach (array_keys($mine[$row] ?? []) as $ground) {
+                            $ground = (string) $ground;
+                            $at = self::dayKeyOf($ground);
+                            if ($at === null) {
+                                $next[$ground] = true;
+                                continue;
+                            }
+                            $frame = $frameOf((string) $row, $ground);
+                            [$to, $then, $carried] = self::carry($at, $frame, $list, $before, $after);
+                            $moved = $carried ? self::atKey($ground, $to) : $ground;
+                            $next[$moved] = true;
+                            $frames[$row][$moved] = $carried ? $then : $frame;
+                        }
+                        $mine[$row] = $next;
+                        foreach ($list as $move) {
+                            $targets[$row][explode('>', $move, 2)[1] ?? ''] = true;
+                        }
                     }
                     foreach ($touches as [$row, $col]) {
                         // A day it brought into being, touched since: its ground, named.
@@ -1295,7 +1332,19 @@ final class Undo
                             }
                         }
                         foreach (array_keys($mine[$row] ?? []) as $own) {
-                            if (self::conflicts((string) $own, $col, strstr($row, ':', true) ?: '')) {
+                            $own = (string) $own;
+                            // Two grounds of days of a series re-formed since are one day by the day each key names under
+                            // its own frame, never by the key: the same string is two days there, and one day two strings.
+                            $line = $key !== null && self::dayKeyOf($own) !== null ? ($lines[$row] ??= $this->lineFor($mutation, (string) $row)) : false;
+                            if ($line === false) {
+                                $hit = self::conflicts($own, $col, strstr($row, ':', true) ?: '');
+                            } else {
+                                [$before, $after, $reform] = self::around($line, (int) $entry);
+                                // The change that re-formed the series names what it removed at its old key and what it made or
+                                // carried at its new one: a key it carried a day to is of the series after, any other of either.
+                                $hit = self::conflictsByDay($own, $frameOf((string) $row, $own), $col, $reform && !isset($targets[$row][$key]) ? [$before, $after] : [$after]);
+                            }
+                            if ($hit) {
                                 return 'Newer changes exist for this item; undoing would overwrite them';
                             }
                         }
@@ -1304,6 +1353,62 @@ final class Undo
             }
         } while (count($page) === 2000);
         return null;
+    }
+
+    /**
+     * For staleFor: the frames of the journal since an entry (framesSince)
+     * for a series' row key, with the series' row; false when the key is
+     * no live series' or no later change re-formed it, which is every
+     * series but the rare one, found by one query.
+     *
+     * @return array{reforms: list<array>, stretch: list<?array>, master: array}|false
+     */
+    private function lineFor(array $mutation, string $rowKey): array|false
+    {
+        if (preg_match('/^events:(\d+)$/', $rowKey, $m) !== 1 || $this->db->scalar(
+            "SELECT 1 FROM mutation_touches t JOIN mutations m ON m.id = t.mutation_id
+             WHERE t.row_key = ? AND t.col IN ('all_day', 'tzid') AND m.user_id = ? AND m.id > ? AND m.undone = 0 LIMIT 1",
+            [$rowKey, (int) $mutation['user_id'], (int) $mutation['id']]
+        ) === null) {
+            return false;
+        }
+        $master = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL AND recurrence_instance_utc IS NULL', [(int) $m[1]]);
+        if ($master === null) {
+            return false;
+        }
+        $line = $this->framesSince($master, (int) $mutation['user_id'], (int) $mutation['id']);
+        return $line['reforms'] === [] ? false : $line + ['master' => $master];
+    }
+
+    /** A day's or skip's ground at another key. Pure. */
+    private static function atKey(string $ground, string $key): string
+    {
+        return str_starts_with($ground, self::SKIP) ? self::SKIP . $key : self::dayGround($key, explode('|', substr($ground, strlen(self::DAY)), 2)[1] ?? '');
+    }
+
+    /**
+     * conflicts() for two grounds of days of one series re-formed between
+     * them: each key read as the day it names under its own frame ($frame
+     * this entry's, each of $frames a reading of the later one's), and the
+     * two grounds compared on that day. Under one frame, or where a frame
+     * can't be told, by the keys as written. Pure.
+     *
+     * @param list<?array> $frames
+     */
+    private static function conflictsByDay(string $mine, ?array $frame, string $later, array $frames): bool
+    {
+        foreach ($frames as $f) {
+            if ($frame === null || $f === null || $frame === $f) {
+                $hit = self::conflicts($mine, $later, 'events');
+            } else {
+                $hit = self::conflicts(self::atKey($mine, '#' . Calc::dayOf((string) self::dayKeyOf($mine), $frame[0], $frame[1])),
+                    self::atKey($later, '#' . Calc::dayOf((string) self::dayKeyOf($later), $f[0], $f[1])), 'events');
+            }
+            if ($hit) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The occurrence key a day's or skip's ground names, or null. Pure. */
@@ -1397,12 +1502,27 @@ final class Undo
      * series in its after snapshot has none at that key): such a day is
      * never matched by its date to whatever lies there now; a row brought
      * back for it comes back at its own key, composed onto a row there.
+     *
+     * A key names a day only under the series it was written in: a timed
+     * key is an instant, a day by the series' zone; an all-day key is a
+     * date. So the day is read under the form and zone the series had when
+     * the key was written (keyFrame), never under the series as it stands:
+     * once a later change made the series all-day or timed, or moved its
+     * zone, the two readings of one key are different days wherever the
+     * key's UTC date is not its local one. $held is what the caller holds
+     * of that form and zone beside the entry (an instance id's form, a
+     * snapshot row's): [all-day or null, zone or null]. Where the entry and
+     * the journal after it don't say (a delete of an ordinary day keeps a
+     * bare id, and a poll keeps nothing of the series as it was), or two of
+     * the entry's own sources disagree, the undo is refused before anything
+     * is written or sent (untold): acting on a guessed day is the one thing
+     * this never does.
      */
-    public function dayNow(int $entryId, array $master, string $key): ?string
+    public function dayNow(int $entryId, array $master, string $key, ?array $held = null): ?string
     {
         // A day its own entry left no day of (the series as the entry left it has none at that key: a count,
         // rule or bound change dropped it) is matched to nothing by its date: it is at its own key or nowhere.
-        $entry = $this->db->one('SELECT user_id, after_json FROM mutations WHERE id = ?', [$entryId]);
+        $entry = $this->db->one('SELECT id, user_id, details_json, before_json, after_json FROM mutations WHERE id = ?', [$entryId]);
         foreach (self::tables($entry['after_json'] ?? null)['events'] ?? [] as $left) {
             if (is_array($left) && (int) ($left['id'] ?? 0) === (int) ($master['id'] ?? -1) && ($left['recurrence_instance_utc'] ?? null) === null && !empty($left['rrule'])) {
                 $series = ['exdates_json' => null] + $left;
@@ -1413,7 +1533,6 @@ final class Undo
             }
         }
         $userId = (int) ($entry['user_id'] ?? 0);
-        $grounds = [self::dayGround($key, 'when') => true];
         $moves = [];
         foreach ($this->db->all(
             "SELECT t.col, m.id FROM mutation_touches t JOIN mutations m ON m.id = t.mutation_id
@@ -1424,16 +1543,292 @@ final class Undo
                 $moves[(int) $t['id']][] = (string) $t['col'];
             }
         }
-        foreach ($moves as $list) {
-            $grounds = self::moved($grounds, $list);
+        // The frames of the journal since the entry, and the one its key was written in.
+        $line = $this->framesSince($master, $userId, $entryId);
+        $frame = $this->keyFrame($entry ?? [], $master, $key, $line, $held);
+        if ($frame === null) {
+            throw $this->untold($entryId, $line);
         }
-        $now = substr((string) array_key_first($grounds), strlen(self::DAY), -strlen('|when'));
+        $now = $key;
+        foreach ($moves as $id => $list) {
+            [$before, $after] = self::around($line, (int) $id);
+            // A move is of a key of the series as it was then: one made where the journal doesn't say that can't be followed.
+            if ($before === null) {
+                throw $this->untold($entryId, $line);
+            }
+            [$now, $next, $carried] = self::carry($now, $frame, $list, $before, $after);
+            if ($carried && $next === null) {
+                throw $this->untold($entryId, $line);
+            }
+            $frame = $next;
+        }
         if (empty($master['rrule'])) {
             return $now;
         }
         $series = ['exdates_json' => null] + $master;
-        $at = Feeds::ofSeries(['recurrence_instance_utc' => $now, 'recurrence_parent_id' => (int) $master['id']] + $series, null, $series);
+        $at = Feeds::ofSeries(['recurrence_instance_utc' => $now, 'recurrence_parent_id' => (int) $master['id']] + $series, null, $series, Calc::dayOf($now, $frame[0], $frame[1]));
         return $at === null ? null : (string) ($at['recurrence_instance_utc'] ?? $now);
+    }
+
+    /** A series' frame: whether it is all-day, and its zone (UTC for an all-day one, whose keys are dates). Pure. */
+    private static function frameOf(array $series): array
+    {
+        $allDay = (int) ($series['all_day'] ?? 0) === 1;
+        return [$allDay, $allDay ? 'UTC' : Time::normalizeTzid((string) ($series['tzid'] ?? 'UTC'))];
+    }
+
+    /** The frame of a series' own row in an entry's snapshot (before_json or after_json), or null when it isn't there. Pure. */
+    private static function frameIn(?string $json, int $seriesId): ?array
+    {
+        foreach (self::tables($json)['events'] ?? [] as $r) {
+            if (is_array($r) && (int) ($r['id'] ?? 0) === $seriesId && ($r['recurrence_instance_utc'] ?? null) === null && array_key_exists('all_day', $r)) {
+                return self::frameOf($r);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * What an entry itself holds about the frame its key was written in:
+     * the form (all-day or not) and, for a timed key, the zone, each from
+     * every source the entry has, in this order of trust.
+     *  - The Google id it journaled for that day: its suffix is a date or
+     *    an instant, the series' form exactly (GoogleWriter::instanceOf).
+     *  - Its series' own row in its snapshots.
+     *  - The day's row in its snapshots, for what the day does not own: a
+     *    day that owns its all-day flag says nothing of the series' form,
+     *    and one that owns its time or that flag nothing of its zone.
+     *  - The body Google held before an edit (its start a date, or a time
+     *    with its zone), by the same rule over the day's row before.
+     * `clash` when two of them disagree: then none is believed. A change of
+     * the series itself holds both of its frames and says nothing here: its
+     * keys are read by where it stands in the journal (framesSince). Pure.
+     *
+     * @return array{allDay: ?bool, tzid: ?string, clash: bool}
+     */
+    public static function writtenIn(array $entry, int $seriesId, string $key): array
+    {
+        $none = ['allDay' => null, 'tzid' => null, 'clash' => false];
+        $details = json_decode((string) ($entry['details_json'] ?? ''), true);
+        $g = is_array($details) && is_array($details['google'] ?? null) ? $details['google'] : null;
+        if ($g !== null && (string) ($g['kind'] ?? '') === GoogleUndo::SERIES) {
+            return $none;
+        }
+        $forms = [];
+        $zones = [];
+        $of = $g !== null && is_string($g['googleId'] ?? null) ? GoogleWriter::instanceOf($g['googleId']) : null;
+        $named = $of !== null && $of['key'] === $key;
+        if ($named) {
+            $forms[] = $of['allDay'];
+        }
+        // The body before is the day before: it speaks for the series only where the day's row before did not own it.
+        [$bodyForm, $bodyZone] = [true, true];
+        $masters = [];
+        $sides = [];
+        foreach (['before_json', 'after_json'] as $side) {
+            $masters[$side] = self::frameIn($entry[$side] ?? null, $seriesId);
+            foreach (self::tables($entry[$side] ?? null)['events'] ?? [] as $r) {
+                if (!is_array($r) || (int) ($r['recurrence_parent_id'] ?? 0) !== $seriesId || (string) ($r['recurrence_instance_utc'] ?? '') !== $key) {
+                    continue;
+                }
+                $sides[$side] = true;
+                $own = OwnFields::decode($r['override_fields'] ?? null);
+                if ($own === null) {
+                    continue;
+                }
+                $ownsForm = in_array('allDay', $own, true);
+                $ownsZone = $ownsForm || in_array('time', $own, true);
+                if ($side === 'before_json') {
+                    [$bodyForm, $bodyZone] = [!$ownsForm, !$ownsZone];
+                }
+                if (!$ownsForm) {
+                    $forms[] = (int) ($r['all_day'] ?? 0) === 1;
+                    if (!$ownsZone && (int) ($r['all_day'] ?? 0) !== 1) {
+                        $zones[] = Time::normalizeTzid((string) ($r['tzid'] ?? 'UTC'));
+                    }
+                }
+            }
+        }
+        // The series' own row: both sides of a change to one day show the same series; where they differ (a change that
+        // re-formed the series) only the side the day's row is on speaks for its key.
+        $same = $masters['before_json'] === null || $masters['after_json'] === null || $masters['before_json'] === $masters['after_json'];
+        foreach ($masters as $side => $frame) {
+            if ($frame !== null && ($same || isset($sides[$side]))) {
+                $forms[] = $frame[0];
+                if (!$frame[0]) {
+                    $zones[] = $frame[1];
+                }
+            }
+        }
+        $start = $named && (string) ($g['kind'] ?? '') === GoogleUndo::EDIT && is_array($g['before'] ?? null) && is_array($g['before']['start'] ?? null) ? $g['before']['start'] : null;
+        if ($start !== null && $bodyForm && (isset($start['date']) || isset($start['dateTime']))) {
+            $forms[] = isset($start['date']);
+            if ($bodyZone && isset($start['dateTime']) && is_string($start['timeZone'] ?? null) && $start['timeZone'] !== '') {
+                $zones[] = Time::normalizeTzid($start['timeZone']);
+            }
+        }
+        $forms = array_values(array_unique($forms));
+        $zones = array_values(array_unique($zones));
+        if (count($forms) > 1 || count($zones) > 1) {
+            return ['allDay' => null, 'tzid' => null, 'clash' => true];
+        }
+        return ['allDay' => $forms[0] ?? null, 'tzid' => ($forms[0] ?? null) === false ? ($zones[0] ?? null) : null, 'clash' => false];
+    }
+
+    /**
+     * The journal after an entry as stretches of one frame each, for a
+     * series: the later changes not undone whose grounds name the series'
+     * `all_day` or `tzid` (`reforms`, each with whether it changed the form
+     * and the series' row it kept before and after, a change made here; a
+     * poll keeps neither), and the frame of each stretch between them
+     * (`stretch`, one more than the reforms): the last is the series as it
+     * stands; an earlier one is the series its ending change kept before,
+     * else the one its opening change kept after, else unknown (null).
+     *
+     * @return array{reforms: list<array{id:int, form:bool, before:?array, after:?array}>, stretch: list<?array>}
+     */
+    private function framesSince(array $master, int $userId, int $entryId): array
+    {
+        $reforms = [];
+        foreach ($this->db->all(
+            "SELECT t.col, m.id FROM mutation_touches t JOIN mutations m ON m.id = t.mutation_id
+             WHERE t.row_key = ? AND t.col IN ('all_day', 'tzid') AND m.user_id = ? AND m.id > ? AND m.undone = 0 ORDER BY m.id",
+            [self::keyOf('events', $master), $userId, $entryId]
+        ) as $t) {
+            $id = (int) $t['id'];
+            if (!isset($reforms[$id]) && $this->revertsSince($id, $entryId)) {
+                continue;
+            }
+            $reforms[$id]['form'] = ($reforms[$id]['form'] ?? false) || (string) $t['col'] === 'all_day';
+        }
+        $list = [];
+        foreach ($reforms as $id => $r) {
+            $kept = $this->db->one('SELECT before_json, after_json FROM mutations WHERE id = ?', [$id]) ?? [];
+            $list[] = ['id' => $id, 'form' => $r['form'], 'before' => self::frameIn($kept['before_json'] ?? null, (int) $master['id']), 'after' => self::frameIn($kept['after_json'] ?? null, (int) $master['id'])];
+        }
+        $stretch = [];
+        foreach ($list as $i => $r) {
+            $stretch[] = $r['before'] ?? ($i > 0 ? $list[$i - 1]['after'] : null);
+        }
+        $stretch[] = self::frameOf($master);
+        return ['reforms' => $list, 'stretch' => $stretch];
+    }
+
+    /** The frames just before and just after a later entry, in a line of stretches (framesSince). Pure. @return array{0:?array,1:?array,2:bool} */
+    private static function around(array $line, int $entryId): array
+    {
+        $i = 0;
+        $reform = false;
+        foreach ($line['reforms'] as $r) {
+            if ($r['id'] < $entryId) {
+                $i++;
+            } elseif ($r['id'] === $entryId) {
+                $reform = true;
+            }
+        }
+        return [$line['stretch'][$i], $line['stretch'][$i + ($reform ? 1 : 0)], $reform];
+    }
+
+    /**
+     * The frame an entry's key was written in: what the entry holds
+     * (writtenIn) with what the caller holds beside it ($held), and for
+     * what neither says the first stretch of the journal after it
+     * (framesSince: the series as the next change that re-formed it found
+     * it, or as it stands when none did). Null when it can't be told: two
+     * sources disagree, the form is unknown, or the key is timed and
+     * nothing says its zone. Sets the line's first stretch where the
+     * journal did not say it: the entry is in it.
+     */
+    private function keyFrame(array $entry, array $master, string $key, array &$line, ?array $held = null): ?array
+    {
+        $own = self::writtenIn($entry, (int) $master['id'], $key);
+        if ($own['clash']) {
+            return null;
+        }
+        foreach (['allDay', 'tzid'] as $i => $part) {
+            $also = $held[$i] ?? null;
+            if ($also !== null && $own[$part] !== null && $also !== $own[$part]) {
+                return null;
+            }
+            $own[$part] ??= $also;
+        }
+        // The stretch the entry is in: the series as the next change that re-formed it found it, else as the entry itself left it.
+        $first = $line['stretch'][0] ?? self::frameIn($entry['after_json'] ?? null, (int) $master['id']);
+        // Nothing re-formed the series since, and the entry doesn't say otherwise: it was written in the series as it stands.
+        if ($line['reforms'] === [] && ($own['allDay'] === null || $own['allDay'] === $first[0])) {
+            return $first;
+        }
+        // The journal's reading counts only while it agrees with the entry's form: one it contradicts is a change no entry recorded.
+        if ($first !== null && $own['allDay'] !== null && $first[0] !== $own['allDay']) {
+            $first = null;
+            $line['unrecorded'] = true;
+        }
+        $allDay = $own['allDay'] ?? ($first[0] ?? null);
+        if ($allDay === null) {
+            return null;
+        }
+        $tz = 'UTC';
+        if (!$allDay) {
+            $said = $own['tzid'] !== null ? Time::normalizeTzid($own['tzid']) : null;
+            $kept = $first !== null ? $first[1] : null;
+            // The entry's zone and the journal's are two sources: one where only one speaks, none where they disagree.
+            if (($said ?? $kept) === null || ($said !== null && $kept !== null && $said !== $kept)) {
+                return null;
+            }
+            $tz = $said ?? $kept;
+        }
+        $line['stretch'][0] = [$allDay, $tz];
+        return [$allDay, $tz];
+    }
+
+    /**
+     * A key carried by one later change's recorded moves ("move:<from>><to>"):
+     * [the key after, its frame after, whether a move carried it]. Where the
+     * key is one of the series as that change found it ($frame is $before),
+     * by the key itself, as moves are written; where it is a key of an
+     * older frame (no move was recorded for it when the series was
+     * re-formed, there being no row or skip to move), by its day: the move
+     * from the occurrence on the day the key names. Pure.
+     *
+     * @param list<string> $moves
+     */
+    private static function carry(string $key, ?array $frame, array $moves, ?array $before, ?array $after): array
+    {
+        $byDay = $frame !== null && $before !== null && $frame !== $before;
+        foreach ($moves as $move) {
+            [$from, $to] = explode('>', substr($move, strlen(self::MOVE)), 2) + [1 => ''];
+            if ($byDay ? Calc::dayOf($from, $before[0], $before[1]) === Calc::dayOf($key, $frame[0], $frame[1]) : $from === $key) {
+                return [$to, $after, true];
+            }
+        }
+        return [$key, $frame, false];
+    }
+
+    /** What the refusal of an undo whose day can't be told carries as its `reason`, beside its code. */
+    public const DAY_UNTOLD = 'day_untold';
+
+    /**
+     * The refusal where an entry's day can't be told (dayNow): what changed
+     * since, in the journal's own terms (the series was made all-day or
+     * timed, or only its zone moved), that the record does not say which
+     * day the change was on, and what the person can do. Where nothing
+     * shows the series changed (the entry's own sources disagree and no
+     * later change re-formed it), the sentence claims no change.
+     * `not_undoable`, the code of every refusal `force` does not pass: the
+     * app shows such a refusal in its own words, where it answers a
+     * `stale_undo` with a sentence of its own and an offer to undo anyway.
+     */
+    private function untold(int $entryId, array $line): HttpError
+    {
+        // The entry's form is not that of the stretch it is in: the series was made all-day or timed, by a change no entry recorded.
+        $form = !empty($line['unrecorded']);
+        foreach ($line['reforms'] as $r) {
+            $form = $form || $r['form'];
+        }
+        $since = $form ? 'changed between timed and all-day' : ($line['reforms'] !== [] ? 'changed its time zone' : null);
+        return new HttpError('not_undoable', ($since === null ? 'The' : "This series $since since this was done, and the")
+            . " record of this change doesn't say which day it was on, so it can't be "
+            . ($this->takesBack($entryId) ? 'redone' : 'undone') . ' here. You can make the change again on that day.', 400, ['reason' => self::DAY_UNTOLD]);
     }
 
     /**
@@ -1929,10 +2324,23 @@ final class Undo
             // A write to one Google resource: its inverse goes to Google
             // first (GoogleUndo::undo), not inside a transaction. The stale
             // check here is the journal's; Google's own (If-Match) follows.
-            // A day that left its series is said so first, plainly.
-            GoogleUndo::refuseLeftSeriesOf($this->db, $this, $mutation);
+            // A day that left its series is said so first, plainly. A day the
+            // record can't tell (untold) gives way to a newer change standing on
+            // the same thing, which is the nearer reason and was the answer before.
+            $untold = null;
+            try {
+                GoogleUndo::refuseLeftSeriesOf($this->db, $this, $mutation);
+            } catch (HttpError $e) {
+                if (($e->extra['reason'] ?? null) !== self::DAY_UNTOLD) {
+                    throw $e;
+                }
+                $untold = $e;
+            }
             if (!$force && ($why = $this->staleFor($mutation)) !== null) {
                 throw HttpError::badRequest($why, 'stale_undo');
+            }
+            if ($untold !== null) {
+                throw $untold;
             }
             return (new GoogleUndo($this->db, $this, $this->google))->undo($mutation, $authority, $force);
         }
@@ -2533,7 +2941,15 @@ final class Undo
      * the day's value as it stands: a row brought back onto a day skipped
      * now that this restore leaves skipped is not brought back and is
      * named in $dropped, as on a Google calendar (skipStands), so the two
-     * agree.
+     * agree. And a snapshot is of the series as it was: a row brought back
+     * whose series is all-day where the row is timed, or in another zone
+     * (reframed, against the series as this restore leaves it), is no row
+     * of the series as it is, and its key names its day only under the
+     * series it was written in. Such a row is composed onto its day as the
+     * series stands (overCurrent, which asks dayNow where that is), as on a
+     * Google calendar. Only a forced undo reaches that: unforced, the later
+     * change of form or zone is every occurrence of the series, and the
+     * entry is stale (restoredGround).
      */
     private function snapshotOnto(array $before, array $after, int $entryId, array &$dropped = []): array
     {
@@ -2545,6 +2961,13 @@ final class Undo
         $restored = [];
         foreach ($before['events'] ?? [] as $row) {
             $restored[(int) ($row['id'] ?? 0)] = ($row['recurrence_instance_utc'] ?? null) === null ? null : (string) $row['recurrence_instance_utc'];
+        }
+        $composed = []; // row id => true: the rows composed onto their day instead (below)
+        $mastersBack = []; // series id => its row as this restore puts it back
+        foreach ($before['events'] ?? [] as $row) {
+            if (($row['recurrence_instance_utc'] ?? null) === null && isset($row['id']) && array_key_exists('all_day', $row)) {
+                $mastersBack[(int) $row['id']] = $row;
+            }
         }
         foreach ($before['events'] ?? [] as $row) {
             if (($row['recurrence_instance_utc'] ?? null) === null || !isset($row['id'])) {
@@ -2559,13 +2982,23 @@ final class Undo
             if (!$onto) {
                 continue;
             }
+            $series = empty($row['recurrence_parent_id']) ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]);
+            // The series as this restore leaves it: its row in the snapshot, where the entry changed the series too
+            // (its rows and its series go back together, in one frame), else the series as it stands.
+            if ($series !== null && self::reframed($row, $mastersBack[(int) $row['recurrence_parent_id']] ?? $series)) {
+                // A row of the series as it was (timed where the series is all-day now, or in another zone): its
+                // snapshot is of a series that no longer is, and its key names its day only there. Composed onto
+                // its day as the series stands (overCurrent, which asks dayNow where that is), here as on a
+                // Google calendar.
+                $composed[(int) $row['id']] = true;
+                continue;
+            }
             $now = $this->db->one('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND id <> ? AND deleted_at IS NULL',
                 [(int) $row['calendar_id'], (string) $row['uid'], (string) $row['recurrence_instance_utc'], (int) $row['id']]);
             if ($now !== null && array_key_exists((int) $now['id'], $restored) && $restored[(int) $now['id']] !== (string) $row['recurrence_instance_utc']) {
                 $now = null; // a row this restore moves off the day leaves it (Events::parkInstanceKeys)
             }
             if ($now === null) {
-                $series = empty($row['recurrence_parent_id']) ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]);
                 if ($series !== null && $this->skipStands($entryId, $series, $before, $after, (string) $row['recurrence_instance_utc'])) {
                     $dropped[] = Feeds::droppedDay($row, Feeds::heldHere(OwnFields::decode($row['override_fields'] ?? null) ?? [], $row), [], 'gone');
                     $before = self::withoutEvent($before, (int) $row['id']);
@@ -2574,7 +3007,31 @@ final class Undo
             }
             $before = self::renamed($before, (int) $row['id'], (int) $now['id']);
         }
-        return $before;
+        return $composed === [] ? $before : $this->overCurrent($before, $after, $entryId, [], $dropped, $composed);
+    }
+
+    /**
+     * What a day's row says of its series' frame, for dayNow: its own form
+     * and zone, where the day does not own them (a day that owns its
+     * all-day flag says nothing of the series' form, one that owns its time
+     * nothing of its zone). [all-day or null, zone or null]. Pure.
+     */
+    private static function heldBy(array $row): array
+    {
+        $own = OwnFields::decode($row['override_fields'] ?? null);
+        if ($own === null || in_array('allDay', $own, true)) {
+            return [null, null];
+        }
+        $allDay = (int) ($row['all_day'] ?? 0) === 1;
+        return [$allDay, $allDay || in_array('time', $own, true) ? null : Time::normalizeTzid((string) ($row['tzid'] ?? 'UTC'))];
+    }
+
+    /** Whether a day's row was written under another form or zone than its series has now (heldBy against the series' row). Pure. */
+    private static function reframed(array $row, array $series): bool
+    {
+        [$allDay, $tz] = self::heldBy($row);
+        $now = self::frameOf($series);
+        return ($allDay !== null && $allDay !== $now[0]) || ($tz !== null && !$now[0] && $tz !== $now[1]);
     }
 
     /**
@@ -2595,12 +3052,15 @@ final class Undo
      * comes back where the undo's series has it. A day skipped now that the
      * restore leaves skipped has nothing to compose onto: the row is not
      * brought back, and is named in $dropped (Feeds::droppedDay). A Google
-     * calendar's composition alone, in the check and the restore; a calendar
-     * here puts its snapshot back (snapshotOnto).
+     * calendar's composition, in the check and the restore; a calendar
+     * here puts its snapshot back (snapshotOnto) and composes only the rows
+     * of a series made all-day or timed, or moved to another zone, since
+     * ($only: those rows by id).
      *
      * @param list<array> $dropped
+     * @param ?array<int,true> $only
      */
-    private function overCurrent(array $before, array $after, int $entryId, array $placed = [], array &$dropped = []): array
+    private function overCurrent(array $before, array $after, int $entryId, array $placed = [], array &$dropped = [], ?array $only = null): array
     {
         $kept = [];
         foreach ($after['events'] ?? [] as $row) {
@@ -2612,7 +3072,8 @@ final class Undo
             $restored[(int) ($row['id'] ?? 0)] = ($row['recurrence_instance_utc'] ?? null) === null ? null : (string) $row['recurrence_instance_utc'];
         }
         foreach ($before['events'] ?? [] as $i => $row) {
-            if (($row['recurrence_instance_utc'] ?? null) === null) {
+            // $only: the rows a calendar here composes (snapshotOnto), by id; every row of a Google calendar's.
+            if (($row['recurrence_instance_utc'] ?? null) === null || ($only !== null && !isset($only[(int) ($row['id'] ?? 0)]))) {
                 continue;
             }
             $was = $kept[self::keyOf('events', $row)] ?? null;
@@ -2636,7 +3097,7 @@ final class Undo
             }
             $series = empty($row['recurrence_parent_id']) ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]);
             // Where a planned undo puts the day ($placed: row id => its key in the series the undo restores), else where later changes carried it.
-            $at = $placed[(int) ($row['id'] ?? 0)] ?? ($series === null ? null : $this->dayNow($entryId, $series, (string) $row['recurrence_instance_utc']));
+            $at = $placed[(int) ($row['id'] ?? 0)] ?? ($series === null ? null : $this->dayNow($entryId, $series, (string) $row['recurrence_instance_utc'], self::heldBy($row)));
             $key = $at ?? (string) $row['recurrence_instance_utc'];
             $now = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND id <> ? AND deleted_at IS NULL',
                 [(int) $row['calendar_id'], (string) $row['uid'], $key, (int) $row['id']]);

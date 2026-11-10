@@ -372,7 +372,7 @@ return static function (Db $db): void {
 
     // ---- An import that meets a deleted series of the same UID ----------------
 
-    scenario('link ownership: importing a series and its edited day after the series was deleted brings the series back with the file\'s content; its undo deletes it again', function () use ($db, $series, $seriesIcs, $holds, $tagsOf, $dayRow): void {
+    scenario('link ownership: importing a series and its edited day after the series was deleted leaves both out, and says so', function () use ($db, $series, $seriesIcs, $holds, $dayRow): void {
         $u = freshUser($db);
         $d = domains($db);
         $cal = Settings::defaultCalendarId($db, $u);
@@ -380,19 +380,38 @@ return static function (Db $db): void {
         $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-11T09:00:00Z', 'title' => 'Sample older day']);
         $uid = (string) $db->scalar('SELECT uid FROM events WHERE id = ?', [$id]);
         $d->events->deleteEvent($u, $id, 'all', null);
+        $entry = lastEntry($db, $u);
+        $rows = (int) $db->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = ?', [$cal]);
         $out = (new CalendarImport($db, $d->calendars))->importIcs($u, $seriesIcs($uid, ['20270118T090000Z' => 'Sample imported day']), 'ignored', null, $cal);
-        checkEq('link ownership: the series and its day come in, the series brought back; nothing is said to be there already', [2, 1, 0], [$out['imported'], $out['broughtBack'], $out['alreadyThere']]);
-        checkEq('link ownership: the series is live again under its own id, with the file\'s title, and holds its tag', [null, 'Sample weekly', ['Sample A']],
-            [$db->scalar('SELECT deleted_at FROM events WHERE id = ?', [$id]), $db->scalar('SELECT title FROM events WHERE id = ?', [$id]), $tagsOf($id)]);
-        $day = $dayRow($id, '2027-01-18 09:00:00');
-        checkEq('link ownership: the imported day stands under the series brought back and holds its tag', ['Sample A'], $day === null ? null : $tagsOf((int) $day['id']));
-        checkEq('link ownership: the deleted day the file does not carry is gone for good, as a PUT leaves it', 0, (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ?', [$id, '2027-01-11 09:00:00']));
-        $holds('an import that brings back a deleted series (CalendarImport::importIcs)', $u);
+        checkEq('link ownership: nothing of the file comes in; the series and its day are counted as deleted here before, not as already there', [0, 2, 0], [$out['imported'], $out['deletedBefore'], $out['alreadyThere']]);
+        checkEq('link ownership: the series stays deleted, with its own title', [true, 'Sample weekly'],
+            [$db->scalar('SELECT deleted_at FROM events WHERE id = ?', [$id]) !== null, $db->scalar('SELECT title FROM events WHERE id = ?', [$id])]);
+        checkEq('link ownership: no day of the file is a live row under the deleted series, and no row was made', [null, $rows],
+            [$dayRow($id, '2027-01-18 09:00:00'), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = ?', [$cal])]);
+        checkEq('link ownership: an import that brought nothing in records no entry', $entry, lastEntry($db, $u));
+        $holds('an import over a deleted series (CalendarImport::importIcs)', $u);
+    });
+
+    scenario('link ownership: importing a file with an event deleted here and a new one brings in the new one alone; its undo removes that one', function () use ($db, $holds): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = Settings::defaultCalendarId($db, $u);
+        $id = (int) $d->events->create($u, ['calendarId' => $cal, 'title' => 'Sample single', 'start' => '2027-02-01T09:00:00Z', 'end' => '2027-02-01T10:00:00Z', 'tzid' => 'UTC'])['eventId'];
+        $uid = (string) $db->scalar('SELECT uid FROM events WHERE id = ?', [$id]);
+        $d->events->deleteEvent($u, $id, 'all', null);
+        $vevent = static fn(string $uid, string $title, string $day): string => "BEGIN:VEVENT\r\nUID:$uid\r\nDTSTAMP:20270101T000000Z\r\nDTSTART:{$day}T090000Z\r\nDTEND:{$day}T100000Z\r\nSUMMARY:$title\r\nEND:VEVENT\r\n";
+        $ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Sample//EN\r\n" . $vevent($uid, 'Sample single, from the file', '20270201') . $vevent('sample-new-event@example.test', 'Sample new', '20270202') . "END:VCALENDAR\r\n";
+        $out = (new CalendarImport($db, $d->calendars))->importIcs($u, $ics, 'ignored', null, $cal);
+        checkEq('link ownership: the new event comes in, the deleted one is left out and counted', [1, 1, 0], [$out['imported'], $out['deletedBefore'], $out['alreadyThere']]);
+        checkEq('link ownership: the deleted event stays deleted with its own title', [true, 'Sample single'],
+            [$db->scalar('SELECT deleted_at FROM events WHERE id = ?', [$id]) !== null, $db->scalar('SELECT title FROM events WHERE id = ?', [$id])]);
+        checkEq('link ownership: the Activity line says how many were left out', true,
+            str_ends_with((string) $db->scalar('SELECT summary FROM mutations WHERE id = ?', [lastEntry($db, $u)]), '; 1 left out, deleted here before'));
+        $holds('an import beside a deleted event', $u);
         $d->undo->undoById($u, lastEntry($db, $u));
-        $holds('undo of an import that brought back a deleted series', $u);
-        checkEq('link ownership: undone, the series is deleted again and its deleted day is back as it was, deleted', [true, 1],
-            [$db->scalar('SELECT deleted_at FROM events WHERE id = ?', [$id]) !== null,
-             (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NOT NULL', [$id, '2027-01-11 09:00:00'])]);
+        checkEq('link ownership: undone, the new event is gone and the deleted one is as it was', [0, true],
+            [(int) $db->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL', [$cal, 'sample-new-event@example.test']),
+             $db->scalar('SELECT deleted_at FROM events WHERE id = ?', [$id]) !== null]);
     });
 
     // The hunter's case: an answer for a day left with no own list, which no

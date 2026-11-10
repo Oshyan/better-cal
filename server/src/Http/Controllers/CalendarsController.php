@@ -173,6 +173,7 @@ final class CalendarsController
         $out = $this->calendars->serializeById($userId, $done['calendarId']);
         $out['imported'] = $done['imported'];
         $out['alreadyThere'] = $done['alreadyThere'];
+        $out['deletedBefore'] = $done['deletedBefore'];
         $out['skippedEvents'] = $done['skippedEvents'];
         return Response::json($out, $into !== null && $into !== '' ? 200 : 201);
     }

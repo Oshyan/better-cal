@@ -8,7 +8,6 @@ use BetterCal\Domain\Series\OwnFields;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Limits;
-use BetterCal\Support\Time;
 
 /**
  * Bringing calendar files in: one .ics as a new local calendar, or a zip of
@@ -97,20 +96,21 @@ final class CalendarImport
             $imported = 0;
             $importedIds = [];
             $days = []; // master id => the edited days imported under it
-            // The keys each UID of the file carries, and the deleted rows the
-            // import brings back or removes, as they were, with their links.
-            $fileKeys = [];
-            foreach ($parsed as $p) {
-                $fileKeys[(string) $p['uid']][(string) ($p['recurrence_instance_utc'] ?? '')] = true;
-            }
-            $before = ['events' => []];
-            $keepBefore = function (array $row) use (&$before): void {
-                $before['events'][] = $row;
-                foreach (Undo::linksOf($this->db, [(int) $row['id']]) as $table => $rows) {
-                    $before[$table] = array_merge($before[$table] ?? [], $rows);
+            // An import never brings back what was deleted here: a record
+            // of the file whose event, or whose series, the calendar holds
+            // as deleted is left out and counted, and the answer says so.
+            // Deleting was the person's own act and a file can't know of
+            // it; bringing such an event back is theirs to choose.
+            $deletedBefore = 0;
+            // The series of a UID as the calendar holds it, a live one
+            // first, as it was before this import (id and deleted_at).
+            $stored = [];
+            $seriesOf = function (string $uid) use (&$stored, $calendarId): ?array {
+                if (!array_key_exists($uid, $stored)) {
+                    $stored[$uid] = $this->db->one('SELECT id, deleted_at FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL ORDER BY deleted_at IS NOT NULL, id DESC LIMIT 1', [$calendarId, $uid]);
                 }
+                return $stored[$uid];
             };
-            $revived = 0;
             $alreadyThere = 0;
             $masterIdByUid = [];
             $importedMasters = [];
@@ -124,32 +124,24 @@ final class CalendarImport
                     continue;
                 }
                 $seen[$key] = true;
-                $revive = null; // a deleted row of this UID at this key, brought back with the file's content
                 if ($intoCalendarId !== null) {
-                    // Live rows first; a deleted one is brought back, as a
-                    // CalDAV PUT brings back a deleted row of its UID.
+                    $series = $seriesOf((string) $ev['uid']);
                     $existing = $ev['recurrence_instance_utc'] === null
-                        ? $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL ORDER BY deleted_at IS NOT NULL, id DESC LIMIT 1', [$calendarId, $ev['uid']])
-                        : $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ?', [$calendarId, $ev['uid'], $ev['recurrence_instance_utc']]);
-                    if ($existing !== null && $existing['deleted_at'] === null) {
+                        ? $series
+                        : $this->db->one('SELECT id, deleted_at FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ?', [$calendarId, $ev['uid'], $ev['recurrence_instance_utc']]);
+                    // Deleted here before, itself or with its series: left
+                    // out. A day of a deleted series never comes in as a
+                    // live day under it.
+                    if (($existing !== null && $existing['deleted_at'] !== null) || ($series !== null && $series['deleted_at'] !== null)) {
+                        $deletedBefore++;
+                        continue;
+                    }
+                    if ($existing !== null) {
                         if ($ev['recurrence_instance_utc'] === null) {
                             $masterIdByUid[(string) $ev['uid']] = (int) $existing['id'];
                         }
                         $alreadyThere++;
                         continue;
-                    }
-                    $revive = $existing;
-                    if ($revive !== null && $ev['recurrence_instance_utc'] === null) {
-                        // A deleted series brought back: its deleted days the
-                        // file doesn't carry go for good, as a PUT's do (a key
-                        // stays taken by a deleted row, and nothing else could
-                        // bring one back); the entry's before side holds them.
-                        foreach ($this->db->all('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NOT NULL AND deleted_at IS NOT NULL', [$calendarId, $ev['uid']]) as $gone) {
-                            if (!isset($fileKeys[(string) $ev['uid']][(string) $gone['recurrence_instance_utc']])) {
-                                $keepBefore($gone);
-                                $this->db->run('DELETE FROM events WHERE id = ?', [(int) $gone['id']]);
-                            }
-                        }
                     }
                 }
                 $cols = [
@@ -188,17 +180,7 @@ final class CalendarImport
                     $row = $cols + ['icon' => null, 'attendance' => 'none'];
                     $cols['override_fields'] = OwnFields::encode($master === null ? [] : OwnFields::infer($row, $master));
                 }
-                if ($revive !== null) {
-                    // The deleted row back, with the file's content (its
-                    // provenance kept); its links come back with it, and a
-                    // day's that it doesn't own follow its series (below).
-                    $keepBefore($revive);
-                    $id = (int) $revive['id'];
-                    $this->db->update('events', array_diff_key($cols, array_flip(['user_id', 'calendar_id', 'uid', 'created_via'])) + ['deleted_at' => null, 'updated_at' => Time::nowDb()], 'id = ?', [$id]);
-                    $revived++;
-                } else {
-                    $id = $this->db->insert('events', $cols);
-                }
+                $id = $this->db->insert('events', $cols);
                 if ($cols['recurrence_parent_id'] !== null) {
                     $days[(int) $cols['recurrence_parent_id']][] = $id;
                 }
@@ -224,15 +206,13 @@ final class CalendarImport
                     [$in, $params] = Db::in($chunk);
                     $rows = array_merge($rows, $this->db->all("SELECT * FROM events WHERE id IN $in", $params));
                 }
-                // The links of every row that can have them: the days, and the rows brought back with theirs.
-                $linked = array_values(array_unique(array_merge($days === [] ? [] : array_merge(...array_values($days)), array_map(static fn(array $r): int => (int) $r['id'], $before['events']))));
-                $links = $linked === [] ? [] : Undo::linksOf($this->db, $linked);
+                $links = $days === [] ? [] : Undo::linksOf($this->db, array_merge(...array_values($days)));
                 $calendarName = (string) $this->db->scalar('SELECT name FROM calendars WHERE id = ?', [$calendarId]);
                 $summary = 'Imported ' . $imported . ($imported === 1 ? ' event' : ' events') . " into '" . $calendarName . "'"
-                    . ($revived === 0 ? '' : ', ' . $revived . ' of them deleted before and brought back');
-                ActivityContext::with('import', fn() => $undo->record($userId, 'calendar', $calendarId, 'update', $before['events'] === [] ? null : $before, ['events' => $rows] + $links, $summary));
+                    . ($deletedBefore === 0 ? '' : '; ' . $deletedBefore . ' left out, deleted here before');
+                ActivityContext::with('import', fn() => $undo->record($userId, 'calendar', $calendarId, 'update', null, ['events' => $rows] + $links, $summary));
             }
-            return ['calendarId' => $calendarId, 'imported' => $imported, 'broughtBack' => $revived, 'alreadyThere' => $alreadyThere, 'skippedEvents' => $skippedEvents];
+            return ['calendarId' => $calendarId, 'imported' => $imported, 'deletedBefore' => $deletedBefore, 'alreadyThere' => $alreadyThere, 'skippedEvents' => $skippedEvents];
         });
     }
 

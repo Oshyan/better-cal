@@ -176,8 +176,8 @@ return static function (Db $db): void {
             $t->s->idProblems($db->one('SELECT * FROM events WHERE id = ?', [$t->id]), $rows)));
     };
 
-    $scenario = static function (string $name, callable $fn) use ($db): void {
-        scenario($name, $fn);
+    $scenario = static function (string $name, callable $fn, ?string $rulesOptOut = null) use ($db): void {
+        scenario($name, $fn, $rulesOptOut);
     };
 
     $timedUtc = ['start' => '2027-01-04T00:00:00Z', 'end' => '2027-01-04T01:00:00Z', 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=4'];
@@ -436,7 +436,7 @@ return static function (Db $db): void {
         } finally {
             GoogleStand::forget($db, $t->u);
         }
-    });
+    }, 'swaps one stored Google id to the other form by raw SQL on purpose, to show I3 names it');
 
     // Test 2, the reviewer's second probe: seed 911 cases 193 and 879 of the harness's Google mode, as recorded (invented
     // data), run through the harness's driver with the setting off. Each is an Auckland series at 13:00 in its summer

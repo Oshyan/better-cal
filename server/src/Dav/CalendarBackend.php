@@ -401,7 +401,14 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                     $existingByInstance[(string) $row['recurrence_instance_utc']] = $row;
                 }
             }
-            $beforeRows = array_values(array_filter($existing, static fn(array $r): bool => $r['deleted_at'] === null));
+            // The undo snapshots hold exactly the rows the statements below
+            // reach, with their links: every row of the UID, deleted ones
+            // included, since a PUT brings a deleted row back (deleted_at
+            // null) or removes it whole. Before, only live rows were kept,
+            // so a row brought back read as made by the PUT and its undo
+            // deleted it for good, links and all.
+            $existingIds = array_map(static fn(array $r): int => (int) $r['id'], $existing);
+            $before = $existing === [] ? null : ['events' => $existing] + Undo::linksOf($this->db, $existingIds);
             $isNewObject = $existingMaster === null || $existingMaster['deleted_at'] !== null;
 
             $now = Time::nowDb();
@@ -448,25 +455,20 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 }
             }
             // Overrides dropped from the PUT body are gone for good (with what
-            // they carried, for undo).
-            $removedLinks = [];
+            // they carried, which the before snapshot holds for undo).
             foreach ($existingByInstance as $instance => $row) {
                 if (!isset($seenInstances[$instance])) {
-                    $removedLinks = array_merge_recursive($removedLinks, Undo::linksOf($this->db, [(int) $row['id']]));
                     $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
                 }
             }
-            $afterRows = $this->db->all(
-                'SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL',
-                [$calendarId, $uid]
-            );
+            $afterRows = $this->db->all('SELECT * FROM events WHERE calendar_id = ? AND uid = ?', [$calendarId, $uid]);
             $this->undo->record(
                 $userId,
                 'event',
                 $masterId,
                 $isNewObject ? 'create' : 'update',
-                $beforeRows === [] ? null : ['events' => $beforeRows] + $removedLinks,
-                ['events' => $afterRows]
+                $before,
+                ['events' => $afterRows] + Undo::linksOf($this->db, array_map(static fn(array $r): int => (int) $r['id'], $afterRows))
             );
             ChangeLog::record($this->db, $calendarId, $uid, $isNewObject ? ChangeLog::OP_ADD : ChangeLog::OP_MODIFY);
 

@@ -422,6 +422,15 @@ return static function (Db $db): void {
             $journaled('an event made from a phone', fn() => $dav->createCalendarObject($home, 'dav-1@example.test.ics', $davEvent('From the phone')));
             $journaled('an event changed from a phone', fn() => $dav->updateCalendarObject($home, 'dav-1@example.test.ics', $davEvent('From the phone, changed')));
             $journaled('an event deleted from a phone', fn() => $dav->deleteCalendarObject($home, 'dav-1@example.test.ics'));
+            // A phone that still holds an event deleted here puts it back, tags, people and all, since
+            // the row is the same: undone, the event is deleted again with everything it carried, and
+            // the earlier delete can still be undone.
+            $gone = (int) $d->events->create($u, eventAt($home, 'Sample dinner', '2026-12-19', ['tagNames' => ['food'], 'personNames' => ['Alex Example']]))['eventId'];
+            $d->events->deleteEvent($u, $gone, null, null);
+            $goneUid = (string) $db->scalar('SELECT uid FROM events WHERE id = ?', [$gone]);
+            $journaled('an event deleted here, put back from a phone', fn() => $dav->createCalendarObject($home, "$goneUid.ics",
+                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:$goneUid\r\nDTSTAMP:20261101T000000Z\r\n"
+                . "DTSTART:20261219T180000Z\r\nDTEND:20261219T190000Z\r\nSUMMARY:Sample dinner, back from the phone\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"));
             $journaled('a calendar renamed from a phone', function () use ($dav, $home): void {
                 $patch = new \Sabre\DAV\PropPatch(['{DAV:}displayname' => 'Renamed on the phone']);
                 $dav->updateCalendar($home, $patch);

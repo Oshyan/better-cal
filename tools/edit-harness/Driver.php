@@ -1303,6 +1303,10 @@ final class Driver
                 fwrite(STDERR, 'google held: ' . json_encode($held) . "\ngoogle stored: " . json_encode($stored) . "\n");
             }
             $this->check('8-google', $held === $stored, 'the stand-in holds the series as the rows here hold it: rule, start, end, every exception and skip', ['held' => $held, 'stored' => $stored, 'googleId' => $m['google_event_id']]);
+            // I3 (rule 1 audit): the same by id, in the master's form, and every stored id one the stand-in answers.
+            foreach ($this->google->idProblems($m, $rows) as $p) {
+                $this->fail('8-google-id', 'the stand-in holds the series as the rows here say, by id: ' . $p['problem'], $p + ['googleId' => $m['google_event_id']]);
+            }
         }
         foreach ($this->db->all('SELECT * FROM events WHERE user_id = ? AND id >= ? AND calendar_id = ? AND rrule IS NULL AND recurrence_parent_id IS NULL AND deleted_at IS NULL ORDER BY id', [$this->userId, $this->firstId, $this->calendarId]) as $single) {
             $e = $this->google->fake->events[(string) $single['google_event_id']] ?? null;

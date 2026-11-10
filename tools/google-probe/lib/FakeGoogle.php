@@ -46,6 +46,28 @@ final class FakeGoogle
     /** fn(array $master): list<\DateTimeImmutable>, the starts of a master's occurrences in its zone, 730 at most; null uses the built-in reading. */
     public ?\Closure $expand = null;
 
+    /**
+     * Settings for what neither the probe nor Google's documentation fixes, so the suites stop depending on one
+     * accidental behaviour of this stand-in (rule 1 audit, "What the harness generator must reach"). Each default is
+     * this stand-in's behaviour before the settings existed; each is also read from the environment at construction,
+     * so every suite that makes a FakeGoogle (the database suite, the edit harness and its shards, the interleaving
+     * mode) runs under it:
+     *
+     * - $order (FAKE_GOOGLE_ORDER): the order a list comes in, for deltas, whole reads and read-backs alike.
+     *   'made' lists resources in the order they were first made (a resource made again keeps its old place);
+     *   'reversed' lists them last made first; 'shuffled' in an order fixed by $orderSeed and each id
+     *   (FAKE_GOOGLE_ORDER=shuffled:SEED), the same on every page of one list.
+     * - $listDropped (FAKE_GOOGLE_DROPPED=listed|omitted): whether a dropped record (a cancelled item with no
+     *   originalStartTime, left under its old id) is listed at all.
+     * - $zoneAlone (FAKE_GOOGLE_ZONE_ALONE=kept|dropped): what a master change of the zone alone, which moves no
+     *   instant, does to the exception records (probe question Q2, open): 'kept' keeps those whose instant is still an
+     *   occurrence, as before; 'dropped' drops every record of the series, as a clock or start change does.
+     */
+    public string $order = 'made';
+    public int $orderSeed = 0;
+    public bool $listDropped = true;
+    public string $zoneAlone = 'kept';
+
     private int $seq = 0;
     private int $etags = 0;
     private int $ids = 0;
@@ -53,9 +75,66 @@ final class FakeGoogle
     private array $changed = [];
     /** @var array<string,int> id => GETs left that answer 404 */
     private array $lagLeft = [];
+    /** @var array<string,true> records dropped by a zone change under zoneAlone 'dropped': their id names an occurrence again, which lists as the series' own */
+    private array $zoneDropped = [];
 
     public function __construct(public readonly string $calendarId)
     {
+        $order = (string) getenv('FAKE_GOOGLE_ORDER');
+        if ($order !== '') {
+            [$kind, $seed] = array_pad(explode(':', $order, 2), 2, '0');
+            if (!in_array($kind, ['made', 'reversed', 'shuffled'], true)) {
+                throw new \InvalidArgumentException("FAKE_GOOGLE_ORDER is made, reversed or shuffled[:SEED], not '$order'");
+            }
+            $this->order = $kind;
+            $this->orderSeed = (int) $seed;
+        }
+        $dropped = (string) getenv('FAKE_GOOGLE_DROPPED');
+        if ($dropped !== '') {
+            if (!in_array($dropped, ['listed', 'omitted'], true)) {
+                throw new \InvalidArgumentException("FAKE_GOOGLE_DROPPED is listed or omitted, not '$dropped'");
+            }
+            $this->listDropped = $dropped === 'listed';
+        }
+        $zone = (string) getenv('FAKE_GOOGLE_ZONE_ALONE');
+        if ($zone !== '') {
+            if (!in_array($zone, ['kept', 'dropped'], true)) {
+                throw new \InvalidArgumentException("FAKE_GOOGLE_ZONE_ALONE is kept or dropped, not '$zone'");
+            }
+            $this->zoneAlone = $zone;
+        }
+    }
+
+    /** The settings in force, for a report: order, dropped items, the zone alone. */
+    public function settings(): string
+    {
+        return 'order=' . $this->order . ($this->order === 'shuffled' ? ':' . $this->orderSeed : '') . ' dropped=' . ($this->listDropped ? 'listed' : 'omitted') . ' zoneAlone=' . $this->zoneAlone;
+    }
+
+    /** A dropped record: cancelled, no originalStartTime, under an instance id of a series. */
+    private function isDropped(array $e): bool
+    {
+        return ($e['status'] ?? '') === 'cancelled' && !isset($e['originalStartTime']) && empty($e['recurrence']) && $this->seriesIdOf((string) $e['id']) !== (string) $e['id'];
+    }
+
+    /** A list's items in the order the setting says (made, reversed, or shuffled by the seed and each id), dropped records left out when they are omitted. */
+    private function arrange(array $items): array
+    {
+        if (!$this->listDropped) {
+            $items = array_values(array_filter($items, fn(array $e): bool => !$this->isDropped($e)));
+        }
+        if ($this->order === 'reversed') {
+            return array_reverse($items);
+        }
+        if ($this->order === 'shuffled') {
+            $rank = [];
+            foreach ($items as $i => $e) {
+                $rank[$i] = crc32($this->orderSeed . ':' . ($e['id'] ?? '') . ':' . $i);
+            }
+            uksort($items, static fn(int $a, int $b): int => $rank[$a] <=> $rank[$b] ?: $a <=> $b);
+            return array_values($items);
+        }
+        return $items;
     }
 
     /** The probe's Api transport: (method, url, headers, payload). */
@@ -252,6 +331,7 @@ final class FakeGoogle
         $e = array_replace($e, $body);
         $e['updated'] = gmdate('Y-m-d\TH:i:s.000\Z');
         $this->events[$id] = $e;
+        unset($this->zoneDropped[$id]);
         $this->bump($seriesId);
         return self::ok($this->events[$id]);
     }
@@ -286,6 +366,9 @@ final class FakeGoogle
         $patternChanged = self::pattern($old) !== self::pattern($new);
         $fields = array_intersect_key($body, array_flip(['summary', 'description', 'location', 'status']));
         $exdates = self::exdateKeys($new);
+        // The zone alone changed (both timed, another timeZone): under the 'dropped' setting every record goes (Q2).
+        $zoneAlone = isset($old['start']['dateTime'], $new['start']['dateTime']) && ($old['start']['timeZone'] ?? null) !== ($new['start']['timeZone'] ?? null);
+        $dropAll = $zoneAlone && $this->zoneAlone === 'dropped';
         $occ = [];
         foreach ($this->occurrences($new) as $start) {
             $occ[self::keyOfStart($start, $allDay)] = $start;
@@ -296,12 +379,15 @@ final class FakeGoogle
             }
             $key = self::keyOf($r['originalStartTime'], $r['start']['timeZone'] ?? $this->zone);
             $cancelled = ($r['status'] ?? '') === 'cancelled';
-            if (!isset($occ[$key]) || isset($exdates[$key]) || ($patternChanged && $cancelled)) {
+            if ($dropAll || !isset($occ[$key]) || isset($exdates[$key]) || ($patternChanged && $cancelled)) {
                 // Gone: a cancelled item under its id, no originalStartTime.
                 unset($r['recurringEventId'], $r['originalStartTime']);
                 $r['status'] = 'cancelled';
                 $r['sequence'] = (int) ($r['sequence'] ?? 0) + 1;
                 $this->events[$rid] = $r;
+                if ($dropAll && isset($occ[$key])) {
+                    $this->zoneDropped[$rid] = true;
+                }
                 continue;
             }
             if ($startChanged) {
@@ -394,6 +480,7 @@ final class FakeGoogle
 
     private function page(array $items, array $q): array
     {
+        $items = $this->arrange($items);
         $size = min(2500, (int) ($q['maxResults'] ?? 250));
         $offset = (int) ($q['pageToken'] ?? 0);
         $slice = array_slice($items, $offset, $size);
@@ -435,7 +522,7 @@ final class FakeGoogle
         $out = [];
         $seen = [];
         foreach ($this->generate($master) as $inst) {
-            $e = $this->events[$inst['id']] ?? $inst;
+            $e = isset($this->zoneDropped[$inst['id']]) ? $inst : ($this->events[$inst['id']] ?? $inst);
             $seen[$inst['id']] = true;
             if ($deleted || ($e['status'] ?? '') !== 'cancelled') {
                 $out[] = $e;

@@ -321,6 +321,108 @@ final class GoogleStand
         return ['rule' => $parts, 'start' => $utc($m['start']), 'end' => $utc($m['end']), 'allDay' => $allDay ? 1 : 0, 'title' => (string) ($m['summary'] ?? ''), 'records' => $records, 'skips' => $skips];
     }
 
+    /**
+     * The harness's own instance id (never GoogleWriter::instanceId): the series id, then the key's date for an
+     * all-day series or its UTC basic time for a timed one. $key is a UTC db instant.
+     */
+    public static function idOf(string $series, string $key, bool $allDay): string
+    {
+        return $series . '_' . str_replace(['-', ' ', ':'], ['', 'T', ''], $allDay ? substr($key, 0, 10) : $key) . ($allDay ? '' : 'Z');
+    }
+
+    /**
+     * I3, what Google holds by id (rule 1 audit, Invariants over all data): every problem found, an empty list when
+     * the stand-in and the rows agree. (1) The ids of the stand-in's records of the series (live ones that are not the
+     * series' own values, and cancelled ones and EXDATE lines as skips) equal the ids worked out from the rows (each
+     * day row that is not plain) and the stored skips, by idOf under the master's form. (2) Every record's
+     * originalStartTime has the shape of its master's start (date or dateTime). (3) Every day row's stored Google id is
+     * one the stand-in answers a GET for as a live instance of that master. Unlike held(), it does not turn ids into keys.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function idProblems(array $master, array $rows): array
+    {
+        $gid = (string) $master['google_event_id'];
+        $m = $this->fake->events[$gid] ?? null;
+        if ($m === null || ($m['status'] ?? '') === 'cancelled') {
+            return [];
+        }
+        $out = [];
+        $allDay = isset($m['start']['date']);
+        $utc = static fn(array $when): string => isset($when['date'])
+            ? Clock::db(new \DateTimeImmutable($when['date'] . ' 00:00:00', Clock::utc()))
+            : Clock::db(new \DateTimeImmutable((string) $when['dateTime']));
+        $series = [(string) ($m['summary'] ?? ''), $utc($m['start']), $utc($m['end']), (string) ($m['status'] ?? 'confirmed'), $allDay ? 1 : 0,
+            (string) ($m['description'] ?? ''), (string) ($m['location'] ?? ''), (string) ($m['source']['url'] ?? '')];
+        $heldRecords = [];
+        $heldSkips = [];
+        foreach ((array) ($m['recurrence'] ?? []) as $line) {
+            $line = (string) $line;
+            if (str_starts_with($line, 'EXDATE')) {
+                $colon = (int) strpos($line, ':');
+                $tz = preg_match('/TZID=([^;:]+)/', substr($line, 0, $colon), $z) === 1 ? Clock::zone($z[1]) : Clock::utc();
+                foreach (explode(',', substr($line, $colon + 1)) as $v) {
+                    $v = trim($v);
+                    if ($v !== '') {
+                        $heldSkips[] = self::idOf($gid, Clock::db(str_ends_with($v, 'Z') ? new \DateTimeImmutable($v) : new \DateTimeImmutable(strlen($v) === 8 ? $v . 'T000000' : $v, $tz)), $allDay);
+                    }
+                }
+            }
+        }
+        foreach ($this->fake->events as $rid => $r) {
+            if (($r['recurringEventId'] ?? '') !== $gid || !isset($r['originalStartTime'])) {
+                continue;
+            }
+            if (isset($r['originalStartTime']['date']) !== $allDay) {
+                $out[] = ['problem' => 'a record\'s originalStartTime is not in its master\'s form', 'id' => $rid, 'originalStartTime' => $r['originalStartTime'], 'masterAllDay' => $allDay];
+            }
+            if (($r['status'] ?? '') === 'cancelled') {
+                $heldSkips[] = (string) $rid;
+                continue;
+            }
+            $rec = [(string) ($r['summary'] ?? ''), $utc($r['start']), $utc($r['end']), (string) ($r['status'] ?? 'confirmed'), isset($r['start']['date']) ? 1 : 0,
+                (string) ($r['description'] ?? ''), (string) ($r['location'] ?? ''), (string) ($r['source']['url'] ?? '')];
+            if (!self::plainAt($rec, $series, $utc($r['originalStartTime']))) {
+                $heldRecords[] = (string) $rid;
+            }
+        }
+        $rowAllDay = (int) $master['all_day'] === 1;
+        $tuple = static fn(array $r): array => [(string) $r['title'], (string) $r['start_utc'], (string) $r['end_utc'], (string) $r['status'], (int) $r['all_day'],
+            (string) ($r['description'] ?? ''), (string) ($r['location'] ?? ''), (string) ($r['url'] ?? '')];
+        $mine = $tuple($master);
+        $storedRecords = [];
+        foreach ($rows as $r) {
+            if (!self::plainAt($tuple($r), $mine, (string) $r['recurrence_instance_utc'])) {
+                $storedRecords[] = self::idOf($gid, (string) $r['recurrence_instance_utc'], $rowAllDay);
+            }
+        }
+        $storedSkips = array_map(static fn(string $k): string => self::idOf($gid, $k, $rowAllDay), Recurrence::decodeExdates($master['exdates_json'] ?? null));
+        foreach ([[$heldRecords, $storedRecords, 'edited days'], [$heldSkips, $storedSkips, 'skips']] as [$h, $s, $what]) {
+            $h = array_values(array_unique($h));
+            $s = array_values(array_unique($s));
+            sort($h);
+            sort($s);
+            if ($h !== $s) {
+                $out[] = ['problem' => "the ids of the $what the stand-in holds are not the ids worked out from the rows", 'held' => $h, 'stored' => $s];
+            }
+        }
+        // Every day row's stored id answers a GET as a live instance of this master (the request log is left as it was).
+        $logged = count($this->fake->requests);
+        foreach ($rows as $r) {
+            $id = (string) ($r['google_event_id'] ?? '');
+            if ($id === '') {
+                continue;
+            }
+            $answer = $this->fake->transport()('GET', 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode(self::CALENDAR) . '/events/' . rawurlencode($id), ['Authorization: Bearer ' . ($this->fake->token ?? 'any')], null);
+            $body = json_decode((string) ($answer['body'] ?? ''), true);
+            if ((int) ($answer['status'] ?? 0) !== 200 || ($body['recurringEventId'] ?? null) !== $gid || ($body['status'] ?? '') === 'cancelled') {
+                $out[] = ['problem' => 'a day row\'s stored Google id is not one the stand-in answers as a live instance of its master', 'row' => (int) $r['id'], 'googleId' => $id, 'status' => $answer['status'] ?? null];
+            }
+        }
+        array_splice($this->fake->requests, $logged);
+        return $out;
+    }
+
     /** The rows here for a series, in held()'s shape. */
     public static function stored(array $master, array $rows): array
     {

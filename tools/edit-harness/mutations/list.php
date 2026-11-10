@@ -632,14 +632,36 @@ return [
         'cases' => ['a-day-tagged-then-given-coordinates-a-place-for-all-then-a-flip-stopped-after-its-master-write-then-put-back'],
     ],
     // Finish's entry records what the change did with the days by the function the commit uses (SeriesPlans::
-    // plannedGrounds). Recorded from the rows' difference alone again, a skip the change carried reads as the old key
-    // and the new key both changed, and the undo of an earlier delete of that day is refused as stale.
+    // plannedGrounds). Recorded from the rows' difference alone again, a skip the change carried is two skips changed
+    // and no move, so nothing says where the deleted day went and the undo of its delete is refused; and the days a
+    // finished change added are not in its record. A change that keeps every key loses only those added days. Judged
+    // by the database test: the interleaving mode accepts that refusal (not_undoable) for an undo nothing has changed since.
     [
-        'id' => 'finish-entry-from-the-row-difference', 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['x-undo-fields'], 'interleave' => true,
+        'id' => 'finish-entry-from-the-row-difference', 'file' => 'server/src/Domain/SeriesPlans.php', 'dbtest' => 'google-series-recovery-grounds',
         'what' => 'Finish\'s entry is recorded from the difference of the rows alone, without the plan\'s record of where each skip went',
         'patch' => [['is_array($plan) ? self::plannedGrounds($plan) : []));', '[]));']],
-        'cases' => ['a-day-deleted-then-a-flip-whose-master-answer-was-lost-finished-then-the-delete-undone',
-            'two-days-deleted-then-a-time-change-whose-third-answer-was-lost-finished-then-a-delete-undone'],
+        'checks' => (static function (): array {
+            $la = 'a daily series at 17:00 America/Los_Angeles';
+            $moves = 'Finish\'s entry records a move for the row and for the skip whose key the change moved, and none for a key that stays';
+            $same = 'Finish\'s entry records what the change did with the days exactly as the change\'s own entry does';
+            $undo = 'the undo of the delete goes through: the day is back on its own date, here and at Google, by writes to its own id alone';
+            $out = [];
+            foreach (["$la an hour later" => true, "$la made all-day" => true, 'a daily series at 00:00 UTC made all-day' => false,
+                "$la moved to Denver at the same clock time" => true, "$la moved to Denver at the same moment" => false, "$la ten events" => false] as $what => $moved) {
+                foreach (['stopped before its master write lands', 'stopped after its master write, the answer lost'] as $stop) {
+                    foreach ($moved ? [$moves, $same, $undo] : [$same] as $label) {
+                        $out[] = "$what, $stop: $label";
+                    }
+                }
+            }
+            return array_merge($out, [
+                'third write lost: Finish\'s entry records each skip\'s move',
+                'third write lost: the undo of the second delete goes through and that day is back on its date, the first still deleted, here and at Google',
+                "cut to three, before its master write lands: $same",
+                "cut to three, after its master write, the answer lost: $same",
+                'notes, then deleted, made all-day after its master write, the answer lost: the undo goes through and the day is back with its notes on its own date and no other',
+            ]);
+        })(),
     ],
     // The link rule (server/tests/db/lib.php, linkViolations), hung after every block of the database suite: a writer
     // that makes a day's row without its series' tags and people must fail the block that ran it, and nothing else.

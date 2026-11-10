@@ -981,4 +981,29 @@ return [
         'patch' => [['                $parsed = Rule::parse((string) $sent, $startDn);', "                \$parsed = Rule::parse((string) \$sent, \$startDn);\n                if (\$this->old->anchor !== null && \$parsed->count !== null) {\n                    \$parsed = \$parsed->withBound(\$parsed->count - 1, null);\n                }"]],
         'cases' => ['count-sent-back-unchanged-on-a-monthly-series-anchored-before-a-skipped-hour'],
     ],
+    // A change between timed and all-day sent over a resource Google holds without the held form's fields as null
+    // (GoogleWriter::overForm; decisions.md, "A start or end sent over a resource Google holds names the held form's
+    // fields as null when the form changes"). Google, and the stand-in written from the probe of 2026-11-10, refuse the
+    // start that would hold both forms (400 "Invalid start time."): every flip of google-form-nulls.test.php is refused
+    // and nothing changes, at Google or here, and the undo of the refused day's edit has nothing to put back. The control, a series moved to another clock, sends no null either way
+    // and does not fail.
+    [
+        'id' => 'form-nulls-dropped', 'file' => 'server/src/Domain/GoogleWriter.php', 'dbtest' => 'google-form-nulls',
+        'what' => 'a start or end in the other form than Google holds is sent with the new form\'s fields alone',
+        'patch' => [["                \$body[\$key] += \$sentAllDay ? ['dateTime' => null, 'timeZone' => null] : ['date' => null];\n", '']],
+        'checks' => array_merge(
+            ...array_map(static fn(string $what): array => [
+                "$what: the change goes through", "$what: the app sends the start and end with the held form's fields as null",
+                "$what: Google holds the new form alone", "$what: the row here is in the new form",
+            ], ['a series timed at 10:00 Los Angeles made all-day (3.19)', 'an all-day series made timed at 00:00 UTC (3.25)',
+                'a single event timed made all-day (3.27)', 'a single event all-day made timed (3.29)']),
+            ...[[
+                'one day made all-day (3.31): the change goes through', 'one day made all-day (3.31): the app sends the start and end with the clock fields as null',
+                'one day made all-day (3.31): Google holds the day all-day alone, under its timed id',
+                // The day's edit refused, the undo has nothing of it to take back.
+                'one day made all-day, undone: the undo goes through', 'one day made all-day, undone: the app sends the start and end with the date field as null',
+                'one day made all-day, undone: Google holds the day at its clock alone',
+            ]],
+        ),
+    ],
 ];

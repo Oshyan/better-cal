@@ -247,6 +247,35 @@ final class GoogleWriter
         foreach (array_intersect(GoogleUndo::changedKeys($before, $after), self::allowedKeys()) as $key) {
             $body[$key] = $after[$key] ?? null;
         }
+        // $before is the resource as Google holds it: its start says the form.
+        return is_array($before['start'] ?? null) ? self::overForm($body, isset($before['start']['date'])) : $body;
+    }
+
+    /**
+     * A body sent over a resource Google already holds, its start and end
+     * said against the form the resource holds them in ($heldAllDay: its
+     * start is a date). Google merges a PATCH's start into the one it holds,
+     * so a start naming only the new form's fields leaves both forms there
+     * and is refused, 400 "Invalid start time." (the probe of 2026-11-10,
+     * 3.18 to 3.30). A start or end in the other form therefore names the
+     * held form's fields as null, which removes them: `dateTime` and
+     * `timeZone` going all-day, `date` going timed, as Google took every time
+     * (3.19 to 3.31). One in the held form, or none, goes as it is: a null
+     * there is not proven. The one rule every writer of a start or end over
+     * an existing resource follows; an insert sends a whole new resource and
+     * never comes here. Pure.
+     */
+    public static function overForm(array $body, bool $heldAllDay): array
+    {
+        foreach (['start', 'end'] as $key) {
+            if (!is_array($body[$key] ?? null)) {
+                continue;
+            }
+            $sentAllDay = isset($body[$key]['date']);
+            if ($sentAllDay !== $heldAllDay) {
+                $body[$key] += $sentAllDay ? ['dateTime' => null, 'timeZone' => null] : ['date' => null];
+            }
+        }
         return $body;
     }
 

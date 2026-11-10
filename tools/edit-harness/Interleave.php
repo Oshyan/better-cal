@@ -1158,6 +1158,8 @@ final class Interleave
                     $d = (new \DateTimeImmutable((string) $g['start']['dateTime']))->setTimezone(new \DateTimeZone($tz))->format('Y-m-d');
                     $body = ['start' => ['date' => $d], 'end' => ['date' => Days::date(Days::ofDate($d) + 1)]];
                 }
+                // Set whole, as another client changes the form at Google (the probe of 2026-11-10, 3.19 to 3.29).
+                $body = \BetterCal\GoogleProbe\FakeGoogle::asSet($body);
                 [$target, $touched] = [$gid, [$touch('time'), $touch('allDay')]];
                 break;
             case 'r-day-rename':

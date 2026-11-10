@@ -372,7 +372,7 @@ return static function (Db $db): void {
             $t = $setup(['create' => $timedUtc, 'edit' => '2027-01-11T00:00:00Z', 'skip' => '2027-01-18T00:00:00Z', 'tag' => '2027-01-25T00:00:00Z']);
             try {
                 $t->s->poll();
-                [$status] = $atGoogle($t->s, 'PATCH', '/events/' . rawurlencode($t->gid), ['start' => ['date' => '2027-01-04'], 'end' => ['date' => '2027-01-05']]);
+                [$status] = $atGoogle($t->s, 'PATCH', '/events/' . rawurlencode($t->gid), \BetterCal\GoogleProbe\FakeGoogle::asSet(['start' => ['date' => '2027-01-04'], 'end' => ['date' => '2027-01-05']]));
                 checkEq("$name: the stand-in takes the flip", 200, $status);
                 if ($whole) {
                     $db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$t->s->calendarId]);

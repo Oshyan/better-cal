@@ -135,7 +135,7 @@ return static function (Db $db): void {
             };
             $remote = static function (array $body) use ($s, $gid): void {
                 $answer = ($s->fake->transport())('PATCH', 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode(GoogleStand::CALENDAR) . '/events/' . rawurlencode($gid),
-                    ['Authorization: Bearer sample-access', 'X-Harness: remote'], $body);
+                    ['Authorization: Bearer sample-access', 'X-Harness: remote'], \BetterCal\GoogleProbe\FakeGoogle::asSet($body));
                 if ((int) $answer['status'] !== 200) {
                     throw new RuntimeException('the stand-in refused the change made at Google: ' . $answer['body']);
                 }

@@ -108,7 +108,7 @@ return static function (Db $db): void {
                 $e->throwDeferred();
                 $sid = $series($id);
                 $url = 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode(GoogleStand::CALENDAR) . '/events/' . rawurlencode($sid);
-                $answer = ($s->fake->transport())('PATCH', $url, ['Authorization: Bearer sample-access', 'X-Harness: remote'], ['start' => ['date' => '2027-01-04'], 'end' => ['date' => '2027-01-05']]);
+                $answer = ($s->fake->transport())('PATCH', $url, ['Authorization: Bearer sample-access', 'X-Harness: remote'], \BetterCal\GoogleProbe\FakeGoogle::asSet(['start' => ['date' => '2027-01-04'], 'end' => ['date' => '2027-01-05']]));
                 checkEq('made all-day at Google: the stand-in takes it', 200, (int) ($answer['status'] ?? 0));
                 $s->poll();
                 checkEq('made all-day at Google: after the poll the series is all-day and the tagged day keeps its key and takes the date-form id',

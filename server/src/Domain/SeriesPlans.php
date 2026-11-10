@@ -1378,6 +1378,19 @@ trait SeriesPlans
                 return $this->recoveredUndo($userId, $calendar, $row, $plan, $undone, $how, $out);
             }
             $left = $out['left'] ?? [];
+            // The rows Finish leaves: those of every series the pending row named, and of every series and event of
+            // its own the change's targets name once it has run (a series it inserts gets its uid from Google then,
+            // and so does a day kept as an event of its own), as the commit's own entry reads the rows it leaves.
+            foreach ($was === null ? [] : (array) ($out['targets'] ?? []) as $t) {
+                if (!empty($t['uid'])) {
+                    $recovered[] = (string) $t['uid'];
+                }
+            }
+            // What it inserted, by the uid Google gave each (GoogleSeries::adoptSingles reads it the same way).
+            foreach ($was === null ? [] : (array) ($out['inserted'] ?? []) as $googleId => $resource) {
+                $recovered[] = (string) ($resource['iCalUID'] ?? $googleId);
+            }
+            $recovered = array_values(array_unique($recovered));
             $what = ($how === 'finish' ? "Finished '" . (string) $row['title'] . "' at Google" : "Put '" . (string) $row['title'] . "' back at Google")
                 . ($left !== [] ? ' ' . implode(' ', $left) : '');
             $this->googleAfter($userId, $calendar, $row['event_id'] !== null ? (int) $row['event_id'] : null, (string) $row['title'], $what, $out['differences'],

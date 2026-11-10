@@ -53,6 +53,8 @@ return static function (Db $db): void {
         'moved to Denver at the same moment' => [static fn(array $s): array => ['tzid' => 'America/Denver', 'start' => $iso('2027-07-19', $s['clock'], 'America/Denver'), 'end' => $iso('2027-07-19', '18:00', 'America/Denver')],
             ['clock' => '18:00', 'zone' => 'America/Denver'], ['zone' => 'moment']],
         'ten events' => [static fn(array $s): array => ['rrule' => 'FREQ=DAILY;COUNT=10'], [], []],
+        'three events' => [static fn(array $s): array => ['rrule' => 'FREQ=DAILY;COUNT=3'], [], []],
+        'renamed from 23 July on' => [static fn(array $s): array => ['scope' => 'following', 'instanceStart' => $iso('2027-07-23', $s['clock'], $s['zone']), 'title' => 'Sample later part'], [], []],
     ];
     $tagDay = '2027-07-22';
     $skipDay = '2027-07-24';
@@ -167,7 +169,7 @@ return static function (Db $db): void {
             }
             $taken = $s->knobs->taken;
             try {
-                planned($e, $u, $id, ['scope' => 'all', 'instanceStart' => $first] + $body($series), $choices);
+                planned($e, $u, $id, $body($series) + ['scope' => 'all', 'instanceStart' => $first], $choices);
                 $e->throwDeferred();
             } catch (HttpError $error) {
                 $stopped = $error;
@@ -292,6 +294,44 @@ return static function (Db $db): void {
         checkEq('third write lost: the undo of the second delete goes through and that day is back on its date, the first still deleted, here and at Google',
             [null, ['2027-07-21'], ['2027-07-21']], [$r['deleteRefused'], $r['afterDelete']['skips'], $r['cancelled']]);
     });
+
+    // A split ("this and following") records no move by either path: the days before its cut stay where they are, and
+    // those from it on leave the series for one the entry makes whole, which the rows' own snapshots show. So the
+    // deleted day, now a day of the new series, is no longer part of the series its delete was made in: the undo of
+    // the delete is refused as stale after the split in one go and after the split finished from Review alike.
+    $controlSplit = null;
+    foreach ([null, 'after its master write, the answer lost'] as $stop) {
+        scenario('a daily series renamed from 23 July on ' . ($stop === null ? 'in one go' : "with the answer of the old series' write lost, finished from Review") . ', a day after the cut deleted before it', function () use ($run, $la, $stop, &$controlSplit): void {
+            $r = $run(['series' => $la, 'plain' => true, 'change' => 'renamed from 23 July on'] + ($stop === null ? [] : ['stop' => $stop, 'then' => 'finish']));
+            $name = 'a split, ' . ($stop ?? 'in one go');
+            if ($stop === null) {
+                $controlSplit = $r;
+            } else {
+                checkEq("$name: the change stops half done and Finish completes it", [true, 1, true, 0], [$r['stopped'], $r['half'], $r['recovered'], $r['left']]);
+                checkEq("$name: Finish's entry records what the split did with the days exactly as the split's own entry does", $controlSplit['grounds'] ?? null, $r['grounds']);
+            }
+            checkEq("$name: its entry records no move, and the deleted day's skip leaves the old series", [[], true], [$r['moves'], in_array('series skip:2027-07-25 00:00:00', $r['grounds'], true)]);
+            checkEq("$name: the undo of the delete is refused as stale, the day having left the series it was deleted in, with nothing sent", ['stale_undo', []], [$r['deleteRefused'][0] ?? null, $r['deleteSent']]);
+        });
+    }
+
+    // The series cut to three events: the tagged day, past the new end, is kept as an event of its own or goes, as the
+    // plan says, and the deleted day's skip goes with its occurrence. Whatever the plan does with them, Finish's entry
+    // records it as the change's own entry does, the event of its own the change made among the rows it reads.
+    $controlCut = null;
+    foreach ([null, 'before its master write lands', 'after its master write, the answer lost'] as $stop) {
+        scenario('a daily series cut to three events ' . ($stop === null ? 'in one go' : "stopped at its first write ($stop), finished from Review") . ', a tagged day and a deleted day past the new end', function () use ($run, $la, $noted, $stop, &$controlCut): void {
+            $r = $run(['series' => $la, 'before' => $noted, 'change' => 'three events'] + ($stop === null ? [] : ['stop' => $stop, 'then' => 'finish']));
+            if ($stop === null) {
+                $controlCut = $r;
+                check('cut to three, in one go: the series ends on 21 July, the day with notes still in it', array_keys($r['changed']['days']) === ['2027-07-21'] && $r['changed']['skips'] === [], json_encode($r['changed']));
+                return;
+            }
+            checkEq("cut to three, $stop: the change stops half done and Finish completes it", [true, 1, true, 0], [$r['stopped'], $r['half'], $r['recovered'], $r['left']]);
+            checkEq("cut to three, $stop: finished, the series is as after the change in one go", $controlCut['changed'] ?? null, $r['changed']);
+            checkEq("cut to three, $stop: Finish's entry records what the change did with the days exactly as the change's own entry does", $controlCut['grounds'] ?? null, $r['grounds']);
+        });
+    }
 
     // Put back leaves the rows as they were before the change: its entry stands on the half-done change it closed and
     // on no row, so both undos go through as if the change had never been made.

@@ -1,0 +1,26 @@
+{
+    "about": "A weekly series at 00:00 UTC with a day given its own notes and a day deleted, made all-day for all events: the master write is taken and its answer lost, a day is renamed at Google by another client in between, then Finish (x-finish, x-identity, x-own, x-agree). The known open case: a change made at Google in the old form while the form change is stopped before its master write's answer is carried by Finish to the same key in the new form.",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 6,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2027-01-04 00:00",
+        "length": 60,
+        "flipZone": "UTC",
+        "flipClock": 0
+    },
+    "steps": [
+        {"do": "w-this-g", "pick": 0.15, "what": "description"},
+        {"do": "w-del1", "pick": 0.3},
+        {"do": "f-lost", "pick": 0.0, "k": 1, "write": "w-all", "what": "flip"},
+        {"do": "r-rename", "pick": 0.6},
+        {"do": "finish", "pick": 0.0}
+    ]
+}

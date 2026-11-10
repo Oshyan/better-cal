@@ -135,7 +135,52 @@ final class Interleave
             }
             $steps[] = self::drawStep($r, $do);
         }
-        return ['seed' => $seed, 'n' => $n, 'series' => $series, 'steps' => $steps];
+        $case = ['seed' => $seed, 'n' => $n, 'series' => $series, 'steps' => $steps];
+        // A share of the cases, chosen from the seed and case number alone so every other case draws as before, takes a
+        // change between timed and all-day (README, Interleaving: Flips).
+        if (self::$flips > 0 && crc32("flip:$seed:$n") % 10000 < (int) round(self::$flips * 10000)) {
+            $case = self::withFlip($case, new Rng(crc32("flip-draw:$seed:$n") % 1_000_003));
+        }
+        return $case;
+    }
+
+    /** The share of drawn cases given a flip between timed and all-day (withFlip); interleave-cli's --flips sets it, 0 turns it off. */
+    public static float $flips = 0.2;
+
+    /**
+     * A drawn case given a whole-series change between timed and all-day (the rule 1 audit's list for this mode): its
+     * series becomes one at 00:00 UTC at UTC, east or west of it (Delta::MIDNIGHT_UTC), or at 10:00 Los Angeles where
+     * no key coincides, timed or all-day (made timed at that clock), and one of three flips goes in among its steps:
+     * the flip alone; the flip stopped right after its master write (refused at its second write), then Finish or Put
+     * back; or the flip stopped before its master write's answer came back (taken, answer lost), a change made at the
+     * stand-in, then Finish or Put back. The stand-in's stops, remote changes and polls of the case go on around it.
+     */
+    private static function withFlip(array $case, Rng $r): array
+    {
+        [$tz, $clock] = $r->pick(array_merge(Delta::MIDNIGHT_UTC, [['America/Los_Angeles', '10:00', 'winter']]));
+        $season = $tz === 'America/Los_Angeles' && $clock === '10:00' ? 'winter' : null;
+        foreach (Delta::MIDNIGHT_UTC as $m) {
+            if ($m[0] === $tz && $m[1] === $clock) {
+                $season = $m[2];
+            }
+        }
+        $monday = $r->pick($season === 'summer' ? ['2027-07-05', '2027-07-19'] : ['2027-01-04', '2027-01-18']);
+        [$family, $rrule] = $r->pick([['weekly_bare', 'FREQ=WEEKLY'], ['daily', 'FREQ=DAILY'], ['weekly_list', 'FREQ=WEEKLY;BYDAY=MO,TU']]);
+        $allDay = $r->chance(0.4);
+        $case['series'] = ['family' => $family, 'rrule' => $rrule, 'import' => false, 'bound' => 'count', 'boundAt' => 8, 'untilForm' => 'dayend',
+            'allDay' => $allDay, 'tzid' => $allDay ? 'UTC' : $tz, 'start' => $allDay ? $monday : $monday . ' ' . $clock, 'length' => $allDay ? 1 : 60,
+            'flipZone' => $tz, 'flipClock' => (int) substr($clock, 0, 2) * 3600 + (int) substr($clock, 3, 2) * 60];
+        $flip = ['pick' => 0.0, 'what' => 'flip'];
+        $recover = ['do' => $r->pick(['finish', 'putback']), 'pick' => 0.0];
+        $insert = match ($r->weighted(['plain' => 4, 'stopAfter' => 3, 'stopBefore' => 3])) {
+            'plain' => [['do' => 'w-all'] + $flip],
+            'stopAfter' => [['do' => 'f-before', 'k' => 2, 'write' => 'w-all'] + $flip, $recover],
+            'stopBefore' => [['do' => 'f-lost', 'k' => 1, 'write' => 'w-all'] + $flip, ['do' => $r->pick(['r-rename', 'r-exc+', 'r-skip+']), 'pick' => $r->int(0, 999) / 1000], $recover],
+        };
+        $at = $r->int(1, count($case['steps']));
+        array_splice($case['steps'], $at, 0, $insert);
+        $case['flip'] = true;
+        return $case;
     }
 
     private static function drawStep(Rng $r, string $do): array
@@ -738,7 +783,22 @@ final class Interleave
         $scope = $do === 'w-all' ? 'all' : 'following';
         $in = ['scope' => $scope, 'instanceStart' => $inst];
         $fields = [];
-        if ($what === 'time' || $what === 'length') {
+        if ($what === 'flip') {
+            // Between timed and all-day for all events, from the first day, on its calendar date: an all-day series made
+            // timed at the case's clock and zone, a timed one made all-day. A time-class change for the checks.
+            if ($scope !== 'all') {
+                return ['skip' => true];
+            }
+            $date = (string) $at[1];
+            if ((int) $master['all_day'] === 1) {
+                $z = (string) ($this->spec['series']['flipZone'] ?? 'UTC');
+                $t = Clock::at(Days::ofDate($date), (int) ($this->spec['series']['flipClock'] ?? 0), $z);
+                $in += ['start' => Clock::iso($t), 'end' => Clock::iso(Clock::plus($t, 3600)), 'allDay' => false, 'tzid' => $z];
+            } else {
+                $in += ['start' => $date, 'end' => Days::date(Days::ofDate($date) + 1), 'allDay' => true];
+            }
+            $fields = ['time' => true, 'allDay' => true];
+        } elseif ($what === 'time' || $what === 'length') {
             if ((int) $master['all_day'] === 1 || $scope !== 'all') {
                 return ['skip' => true];
             }

@@ -1158,12 +1158,6 @@ final class GoogleSeries
         return array_intersect_key($body, array_flip(GoogleWriter::allowedKeys()));
     }
 
-    /** The instance id of an occurrence key under a master. */
-    public static function instanceId(string $googleId, string $key, bool $allDay): string
-    {
-        return GoogleWriter::instanceId($googleId, $key, $allDay, 'UTC');
-    }
-
     // ---- what a series holds (pure; rule B) -----------------------------------------
 
     /**
@@ -1562,7 +1556,7 @@ final class GoogleSeries
             $record = $held['records'][$key] ?? null;
             // A record the target has no edited day for is an ordinary day when it holds the series' values.
             $has = isset($held['skips'][$key]) ? 'skip' : ($record !== null && ($x !== null || !self::isPlain($record, $m, $key)) ? $record : null);
-            $id = self::instanceId((string) $t['googleId'], $key, $allDay);
+            $id = GoogleWriter::instanceId((string) $t['googleId'], $key, $allDay);
             if ($want === 'skip') {
                 if ($has !== 'skip') {
                     $out['skip'][] = ['skip', $id, ['status' => 'cancelled'], $key];
@@ -2390,8 +2384,7 @@ final class GoogleSeries
         }
         foreach ($names as $name) {
             // A day's Google id (its series' id, then its original start: GoogleWriter::instanceId) names its series too.
-            $cut = strrpos((string) $name, '_');
-            $series = $cut !== false && GoogleSync::droppedInstance((string) $name) !== null ? substr((string) $name, 0, $cut) : null;
+            $series = GoogleWriter::instanceOf((string) $name)['series'] ?? null;
             $which = $pending[(string) $name] ?? ($series !== null ? $pending[$series] ?? null : null);
             if ($which !== null) {
                 throw new HttpError('google_pending',

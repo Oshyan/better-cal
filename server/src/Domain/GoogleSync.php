@@ -454,7 +454,7 @@ final class GoogleSync
             // series' iCalUID and no originalStartTime: the record is gone,
             // the series is not, and the day is no skip. The row Google
             // knew by that id goes, nothing else.
-            $dropped = $instance === null ? self::droppedInstance((string) ($item['id'] ?? '')) : null;
+            $dropped = $instance === null ? (GoogleWriter::instanceOf((string) ($item['id'] ?? ''))['key'] ?? null) : null;
             if ($dropped !== null) {
                 return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => $dropped, 'dropped' => true];
             }
@@ -536,24 +536,6 @@ final class GoogleSync
             // an event without guests keeps whatever block it had.
             ? ['invite_json' => ($invite = Rsvp::fromGoogle($item)) !== null ? json_encode($invite) : null]
             : []);
-    }
-
-    /**
-     * The occurrence key an instance id names (`<series id>_<UTC basic time
-     * with Z>`, or `_<YYYYMMDD>` for an all-day series: GoogleWriter::instanceId),
-     * or null for an id of another form (a master's, a single event's).
-     */
-    public static function droppedInstance(string $id): ?string
-    {
-        $cut = strrpos($id, '_');
-        if ($cut === false) {
-            return null;
-        }
-        $suffix = substr($id, $cut + 1);
-        if (preg_match('/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})Z)?$/', $suffix, $m) !== 1) {
-            return null;
-        }
-        return sprintf('%s-%s-%s %s:%s:%s', $m[1], $m[2], $m[3], $m[4] ?? '00', $m[5] ?? '00', $m[6] ?? '00');
     }
 
     /**

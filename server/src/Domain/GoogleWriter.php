@@ -145,18 +145,44 @@ final class GoogleWriter
     }
 
     /**
-     * The id Google gives one occurrence of a series: the series id plus the
-     * occurrence's original start (UTC basic form for timed, date for
-     * all-day). Patching or deleting that id is how "this occurrence only"
-     * is said to the API.
+     * The id Google gives one occurrence of a series: its identity is the
+     * series id, the form (timed or all-day) and the key, never the key
+     * alone. Timed: `<series>_<UTC basic time>Z`. All-day: `<series>_<YYYYMMDD>`,
+     * the date of the key, which for an all-day series is that date at
+     * 00:00:00 UTC (stored so since migration 035). Two ids are equal exactly
+     * when series, form and key are. Patching or deleting that id is how
+     * "this occurrence only" is said to the API. The one function for it;
+     * instanceOf is its inverse.
      */
-    public static function instanceId(string $masterGoogleId, string $instanceUtc, bool $allDay, ?string $tzid = null): string
+    public static function instanceId(string $seriesId, string $key, bool $allDay): string
     {
-        $dt = Time::fromDb($instanceUtc);
-        // An all-day occurrence is named by its date in the series' zone, the
-        // date body() sends Google; its UTC date is the day before east of
-        // UTC (audit, 0.9.14).
-        return $masterGoogleId . '_' . ($allDay ? $dt->setTimezone(Time::zone($tzid))->format('Ymd') : $dt->format('Ymd\THis\Z'));
+        $dt = Time::fromDb($key);
+        return $seriesId . '_' . $dt->format($allDay ? 'Ymd' : 'Ymd\THis\Z');
+    }
+
+    /**
+     * The inverse of instanceId: the series id, the key and the form an
+     * instance id names, or null for an id that names no instance (a
+     * master's, a single event's). The series id is everything before the
+     * last `_`, so a series id with underscores of its own comes back whole.
+     *
+     * @return array{series: string, key: string, allDay: bool}|null
+     */
+    public static function instanceOf(string $id): ?array
+    {
+        $cut = strrpos($id, '_');
+        if ($cut === false) {
+            return null;
+        }
+        if (preg_match('/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})Z)?$/', substr($id, $cut + 1), $m) !== 1) {
+            return null;
+        }
+        $allDay = !isset($m[4]);
+        return [
+            'series' => substr($id, 0, $cut),
+            'key' => sprintf('%s-%s-%s %s:%s:%s', $m[1], $m[2], $m[3], $m[4] ?? '00', $m[5] ?? '00', $m[6] ?? '00'),
+            'allDay' => $allDay,
+        ];
     }
 
     /**

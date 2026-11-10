@@ -262,12 +262,12 @@ final class GoogleUndo
 
     private function dayAt(array $mutation, array $calendar, string $googleId): array
     {
-        $key = GoogleSync::droppedInstance($googleId);
-        $cut = strrpos($googleId, '_');
-        if ($key === null || $cut === false) {
+        $of = GoogleWriter::instanceOf($googleId);
+        if ($of === null) {
             return ['googleId' => $googleId, 'key' => null];
         }
-        $master = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [(int) $calendar['id'], substr($googleId, 0, $cut)]);
+        $key = $of['key'];
+        $master = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [(int) $calendar['id'], $of['series']]);
         if ($master !== null && empty($master['rrule'])) {
             return ['googleId' => $googleId, 'key' => (string) $key];
         }
@@ -275,7 +275,7 @@ final class GoogleUndo
             $at = $this->undo->dayNow((int) $mutation['id'], $master, (string) $key);
             if ($at !== null) {
                 return ['googleId' => $at === (string) $key ? $googleId
-                    : GoogleWriter::instanceId(substr($googleId, 0, $cut), $at, (int) $master['all_day'] === 1, (string) $master['tzid']), 'key' => $at];
+                    : GoogleWriter::instanceId($of['series'], $at, (int) $master['all_day'] === 1), 'key' => $at];
             }
         }
         throw HttpError::badRequest("That day is no longer part of the series this change was made in (a later change moved it into another series or ended the series before it), so this can't be undone.", 'stale_undo');
@@ -290,12 +290,12 @@ final class GoogleUndo
     private function dayBack(array $calendar, string $googleId, ?array $row): array
     {
         // A day of a series is addressed by its instance id: the series' id and the occurrence.
-        $key = GoogleSync::droppedInstance($googleId);
-        $cut = strrpos($googleId, '_');
-        if ($key === null || $cut === false) {
+        $of = GoogleWriter::instanceOf($googleId);
+        if ($of === null) {
             return [];
         }
-        $master = $this->writer()->rowByGoogleId((int) $calendar['id'], substr($googleId, 0, $cut));
+        $key = $of['key'];
+        $master = $this->writer()->rowByGoogleId((int) $calendar['id'], $of['series']);
         if ($master === null || empty($master['rrule'])) {
             return [];
         }
@@ -475,7 +475,7 @@ final class GoogleUndo
                 // it did not own before goes back to following its series:
                 // the series' value there now, not the one it showed then.
                 $changed = self::changedOf($g);
-                $dayKey = GoogleSync::droppedInstance($googleId);
+                $dayKey = GoogleWriter::instanceOf($googleId)['key'] ?? null;
                 $at = static fn(?array $r): ?array => $r === null || $dayKey === null || ($r['recurrence_instance_utc'] ?? null) === null ? $r : array_merge($r, ['recurrence_instance_utc' => (string) $dayKey]);
                 $send = self::inverse($this->beforeOver($g['before'], $at($wasRow), $row ?? $at($leftRow)), $changed);
                 // The event as it is now: its row, or, a day with no row

@@ -652,7 +652,7 @@ final class Interleave
             }
             $gid = (string) $master['google_event_id'];
             $onMaster = ($step['race'] ?? 'day') === 'master';
-            $instance = $onMaster ? $gid : GoogleWriter::instanceId($gid, $occ[0], (int) $master['all_day'] === 1, (string) $master['tzid']);
+            $instance = $onMaster ? $gid : GoogleWriter::instanceId($gid, $occ[0], (int) $master['all_day'] === 1);
             $title = $onMaster ? "Sample remote series {$this->step}" : "Sample remote day {$this->step}";
             $this->raced = [$gid, $onMaster ? null : $occ[0], $title];
             $this->lastRace = $onMaster ? null : [$gid, $occ[0], $instance];
@@ -803,7 +803,7 @@ final class Interleave
         $tz = (string) ($g['start']['timeZone'] ?? 'UTC');
         $n = $this->step;
         $occ = $this->occurrenceOf($master, fmod($step['pick'] * 13.0, 1.0));
-        $instance = $occ === null ? null : GoogleWriter::instanceId($gid, $occ[0], $allDay, (string) $master['tzid']);
+        $instance = $occ === null ? null : GoogleWriter::instanceId($gid, $occ[0], $allDay);
         $shift = static function (array $when, int $secs) use ($tz): array {
             $t = (new \DateTimeImmutable((string) $when['dateTime']))->setTimezone(new \DateTimeZone($tz))->modify(($secs >= 0 ? '+' : '') . $secs . ' seconds');
             return ['dateTime' => $t->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz];

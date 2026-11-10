@@ -681,6 +681,7 @@ final class Probe
         $utc = $allDay
             ? Time::toDb(new \DateTimeImmutable($o['date'] . ' 00:00', new \DateTimeZone($tz)))
             : Time::toDb(new \DateTimeImmutable((string) ($o['dateTime'] ?? 'now')));
+        // The zone argument stays: this tool also runs against installed copies of server/src older than the three-argument instanceId, and PHP ignores it on newer ones.
         $predicted = GoogleWriter::instanceId($masterId, $utc, $allDay, $tz);
         $form = str_replace($masterId, '{master}', $id);
         return "instance id $form" . ($predicted === $id ? " (GoogleWriter::instanceId predicts the same)" : ' (GoogleWriter::instanceId predicts ' . str_replace($masterId, '{master}', $predicted) . ')');

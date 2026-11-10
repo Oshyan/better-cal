@@ -573,7 +573,7 @@ final class Events
                 // id; the occurrence's instance id addresses it at Google.
                 $googleId = !empty($existing['google_event_id'])
                     ? (string) $existing['google_event_id']
-                    : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
+                    : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
                 $resp = $this->google()->patch($calendar, $googleId, $body, $this->googleBeforeSend($authority));
                 $undo = [$googleId, GoogleUndo::bodyOf($existing), $existing['google_etag'] ?? null];
             }
@@ -597,7 +597,7 @@ final class Events
             $occurrence = $override;
             $override = array_merge($override, $patch);
             self::refuseTimedUnderAllDay($master, (int) $override['all_day']);
-            $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
+            $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
             $body = self::patchBody($occurrence, $patchGoogle);
             if ($body !== []) {
                 $resp = $this->google()->patch($calendar, $instanceId, $body, $this->googleBeforeSend($authority));
@@ -801,7 +801,7 @@ final class Events
         );
         $googleId = $override !== null && !empty($override['google_event_id'])
             ? (string) $override['google_event_id']
-            : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
+            : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
         $shown = $override ?? $master;
         $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => (string) ($shown['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed'],
             $override['google_etag'] ?? null, null, ['local' => $override !== null ? $this->googleUndo()->localOf($override) : []]);

@@ -1555,7 +1555,7 @@ trait SeriesPlans
             $body = self::patchBody($row, array_intersect_key($set, array_flip(GoogleWriter::GOOGLE_COLUMNS)));
             if ($body !== []) {
                 $googleId = !empty($row['google_event_id']) ? (string) $row['google_event_id']
-                    : GoogleWriter::instanceId(self::requireGoogleId($master), (string) $row['recurrence_instance_utc'], (int) $master['all_day'] === 1, (string) $master['tzid']);
+                    : GoogleWriter::instanceId(self::requireGoogleId($master), (string) $row['recurrence_instance_utc'], (int) $master['all_day'] === 1);
                 $resp = $this->google()->patch($google, $googleId, $body, $this->googleBeforeSend($authority));
             }
         }

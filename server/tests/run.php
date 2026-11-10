@@ -12340,7 +12340,30 @@ use BetterCal\Domain\GoogleWriter;
 
     checkEq('google instance id: timed is UTC basic with Z', 'abc123_20261012T080000Z', GoogleWriter::instanceId('abc123', '2026-10-12 08:00:00', false));
     checkEq('google instance id: all-day is the date', 'abc123_20261012', GoogleWriter::instanceId('abc123', '2026-10-12 00:00:00', true));
-    checkEq('google instance id: all-day is the date in the series zone', 'abc123_20261010', GoogleWriter::instanceId('abc123', '2026-10-09 15:00:00', true, 'Asia/Tokyo'));
+
+    // An instance is its series, its form and its key (audit-155 rule 1): instanceId and instanceOf are one pair.
+    checkEq('google instance id: a midnight-UTC key names two instances, one per form',
+        ['abc123_20270111T000000Z', 'abc123_20270111'], [GoogleWriter::instanceId('abc123', '2027-01-11 00:00:00', false), GoogleWriter::instanceId('abc123', '2027-01-11 00:00:00', true)]);
+    foreach ([
+        'a timed key' => ['abc123', '2027-01-11 18:30:00', false],
+        'a midnight-UTC key, timed' => ['abc123', '2027-01-11 00:00:00', false],
+        'a midnight-UTC key, all-day' => ['abc123', '2027-01-11 00:00:00', true],
+        'a series id with underscores, timed' => ['sample_series_x1', '2027-02-01 09:15:00', false],
+        'a series id with underscores, all-day' => ['sample_series_x1', '2027-02-01 00:00:00', true],
+    ] as $what => [$s, $k, $f]) {
+        checkEq("google instance id round trip: $what", ['series' => $s, 'key' => $k, 'allDay' => $f], GoogleWriter::instanceOf(GoogleWriter::instanceId($s, $k, $f)));
+    }
+    foreach ([
+        'a master id' => 'abc123',
+        'an empty id' => '',
+        'a trailing underscore' => 'abc123_',
+        'an underscore id with a word suffix' => 'sample_series',
+        'a short date' => 'abc123_2027011',
+        'a time without Z' => 'abc123_20270111T000000',
+        'a date with a word after' => 'abc123_20270111x',
+    ] as $what => $id) {
+        checkEq("google instance of: $what is no instance", null, GoogleWriter::instanceOf($id));
+    }
 
     // Moving a calendar to Google (0.9.4, #55).
     $linked = ['uid' => 'evt-1@better-cal', 'title' => 'Bake sale', 'url' => 'https://partiful.com/e/abc', 'start_utc' => '2026-10-10 17:00:00', 'end_utc' => '2026-10-10 19:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY'];

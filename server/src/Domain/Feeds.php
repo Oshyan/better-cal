@@ -781,7 +781,7 @@ final class Feeds
         if (empty($row['google_event_id']) || empty($series['google_event_id'])) {
             return null;
         }
-        return GoogleWriter::instanceId((string) $series['google_event_id'], $at, (int) ($series['all_day'] ?? 0) === 1, (string) ($series['tzid'] ?? 'UTC'));
+        return GoogleWriter::instanceId((string) $series['google_event_id'], $at, (int) ($series['all_day'] ?? 0) === 1);
     }
 
     /**

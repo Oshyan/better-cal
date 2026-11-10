@@ -49,6 +49,8 @@ final class Labels
         foreach ($this->tagIds($userId, $names) as $tagId) {
             $this->db->run('INSERT IGNORE INTO event_tags (event_id, tag_id) VALUES (?, ?)', [$eventId, $tagId]);
         }
+        // A series' tags reach each day that doesn't own its own (OwnFields::follow).
+        \BetterCal\Domain\Series\OwnFields::follow($this->db, $eventId, null, ['tags']);
     }
 
     /**
@@ -110,6 +112,8 @@ final class Labels
         foreach ($personIds as $personId) {
             $this->db->run('INSERT IGNORE INTO event_people (event_id, person_id) VALUES (?, ?)', [$eventId, $personId]);
         }
+        // A series' people reach each day that doesn't own its own (OwnFields::follow).
+        \BetterCal\Domain\Series\OwnFields::follow($this->db, $eventId, null, ['people']);
     }
 
     /**

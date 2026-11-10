@@ -461,7 +461,12 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                     $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
                 }
             }
-            $afterRows = $this->db->all('SELECT * FROM events WHERE calendar_id = ? AND uid = ?', [$calendarId, $uid]);
+            // A client's PUT carries no tags or people: each day it makes,
+            // brings back or keeps holds the series' where its list doesn't
+            // name its own (OwnFields::follow), and the after snapshot below
+            // records them, so its undo takes them back with the row.
+            \BetterCal\Domain\Series\OwnFields::follow($this->db, $masterId);
+            $afterRows =$this->db->all('SELECT * FROM events WHERE calendar_id = ? AND uid = ?', [$calendarId, $uid]);
             $this->undo->record(
                 $userId,
                 'event',

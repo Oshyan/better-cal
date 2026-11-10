@@ -2126,8 +2126,6 @@ final class Undo
         $flaggedBefore = Trips::flaggedAmong($this->db, $eventIds);
         // The days' rows whose own part this undo changes: the retention rule's (below).
         $ownChanged = [];
-        // The days' rows it brings back whole: they follow their series' links (below).
-        $broughtBack = [];
         // Delete rows created by the mutation (present in after, absent from before).
         foreach (array_reverse(self::order()) as $table) {
             $beforeKeys = [];
@@ -2253,9 +2251,6 @@ final class Undo
                 if ($table === 'events' && $changed !== null && in_array('override_fields', $changed, true)) {
                     $ownChanged[] = $row;
                 }
-                if ($table === 'events' && $kept === null && ($row['recurrence_instance_utc'] ?? null) !== null) {
-                    $broughtBack[] = $row;
-                }
                 if (!$this->restoreRow($table, $row, $changed) && !self::carriedLink($table, $row, $whole)) {
                     throw HttpError::badRequest("Something this change belonged to is gone since, so it can't be put back", 'not_undoable');
                 }
@@ -2280,13 +2275,13 @@ final class Undo
         // one every remover applies (Feeds::retained). Before the rows
         // follow their series, which gives a row the series' tags and people.
         $this->retain($ownChanged);
-        // A day's row it brought back whole shows, like one it kept, the
-        // series' tags and people as they stand where it doesn't own them,
-        // never the copy its snapshot held.
-        $this->followLinks($broughtBack);
         // Every row of a series it put back follows that series as restored
         // (followRestored): the rows past a shortened end go, named.
         $removed = $this->followRestored($before, $after);
+        // Then each series it touched, as it now stands: a day's row it
+        // brought back whole, kept or changed shows the series' tags and
+        // people where it doesn't own them, never the copy its snapshot held.
+        $this->followLinks($before, $after);
         // What it put back passes the trip rules as it now stands, under
         // force too: a refusal throws, rolling all of it back, and the
         // entry stays to undo once the conflict is gone.
@@ -2750,11 +2745,11 @@ final class Undo
      * is an ordinary occurrence, with no row, as the sync leaves one. Tags
      * and people a row has without owning them are its series' copy, never
      * a reason of their own to keep it. A row that stays takes the tags
-     * and people it doesn't own from its series as it stands, through the
-     * one composition (Feeds::followSeries), so the copy an entry made
-     * with the row (named in its snapshots as links it made) never leaves
-     * a kept day without its series' tags; a set the row owns went back
-     * by its delta and is left as it is.
+     * and people it doesn't own from its series as it stands once the
+     * undo is done (followLinks, over every series it touched), so the
+     * copy an entry made with the row never leaves a kept day without its
+     * series' tags; a set the row owns went back by its delta and is left
+     * as it is.
      *
      * @param list<array> $rows
      */
@@ -2773,35 +2768,29 @@ final class Undo
                 $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
             }
         }
-        $this->followLinks($rows);
     }
 
     /**
-     * Each day's row of $rows still standing takes the tags and people it
-     * doesn't own (Feeds::ownOf) from its series as it stands, through the
-     * one composition (Feeds::followSeries, limited to the links); a set
-     * it owns is left as it is.
-     *
-     * @param list<array> $rows
+     * Each series an undo or redo touched (a master in its snapshots, or the
+     * series of a day's row in them), as it now stands: every day of it
+     * takes the tags and people it doesn't own from the series, through the
+     * one function every writer uses (OwnFields::follow); a set a day owns
+     * is left as it is. Rows an entry kept in pieces (a calendar's events)
+     * come back whole with their series and its links, as they were.
      */
-    private function followLinks(array $rows): void
+    private function followLinks(array $before, array $after): void
     {
-        $seen = [];
-        $feeds = new Feeds($this->db);
-        foreach ($rows as $r) {
-            $id = (int) ($r['id'] ?? 0);
-            if ($id <= 0 || isset($seen[$id])) {
-                continue;
+        $series = [];
+        foreach ([$before['events'] ?? [], $after['events'] ?? []] as $rows) {
+            foreach ($rows as $r) {
+                $id = !empty($r['recurrence_parent_id']) ? (int) $r['recurrence_parent_id'] : (!empty($r['rrule']) ? (int) ($r['id'] ?? 0) : 0);
+                if ($id > 0) {
+                    $series[$id] = true;
+                }
             }
-            $seen[$id] = true;
-            $now = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
-            if ($now === null || ($now['recurrence_instance_utc'] ?? null) === null) {
-                continue;
-            }
-            $master = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) ($now['recurrence_parent_id'] ?? 0)]);
-            if ($master !== null) {
-                Feeds::followSeries($this->db, $now, $master, $feeds->ownOf($now, $master), array_values(self::LINK_FIELDS));
-            }
+        }
+        foreach (array_keys($series) as $masterId) {
+            OwnFields::follow($this->db, $masterId);
         }
     }
 

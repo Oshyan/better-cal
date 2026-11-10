@@ -70,6 +70,67 @@ final class OwnFields
         return $out;
     }
 
+    /** The link tables of a day's tags and people, by own field: [table, the column naming what is linked]. */
+    public const LINKS = ['tags' => ['event_tags', 'tag_id'], 'people' => ['event_people', 'person_id']];
+
+    /**
+     * A day's tags and people follow its series (series-model.md, Own
+     * Fields): every live day row of series $masterId (or the ones $dayIds
+     * names) whose own list does not name a field of $fields holds the
+     * series' set for it as the series has it now. The one function every
+     * writer calls, in its transaction, once it has made, brought back,
+     * re-listed or re-parented a day's row or written a series' links (the
+     * link setters, Labels::setEventTags and replaceEventPeople, call it for
+     * the event they set): a day whose list names the field keeps its own
+     * set; a day with no list at all is left as it is (a form no writer here
+     * leaves; the rows a feed made before 1.5.5 under a master it did not
+     * carry are the owner's to decide); a series gone or deleted has no set
+     * to follow, and nothing is done. Only a set that differs is written.
+     * Returns the ids of the days it changed.
+     *
+     * @param ?list<int> $dayIds
+     * @param list<string> $fields
+     * @return list<int>
+     */
+    public static function follow(\BetterCal\Infra\Db $db, int $masterId, ?array $dayIds = null, array $fields = ['tags', 'people']): array
+    {
+        if ($dayIds === [] || $db->scalar('SELECT 1 FROM events WHERE id = ? AND recurrence_parent_id IS NULL AND deleted_at IS NULL', [$masterId]) === null) {
+            return [];
+        }
+        $sql = 'SELECT id, override_fields FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc IS NOT NULL AND deleted_at IS NULL';
+        $days = [];
+        foreach ($dayIds === null ? [null] : array_chunk(array_values(array_unique(array_map('intval', $dayIds))), 500) as $chunk) {
+            [$in, $params] = $chunk === null ? ['', []] : \BetterCal\Infra\Db::in($chunk);
+            foreach ($db->all($sql . ($chunk === null ? '' : " AND id IN $in"), array_merge([$masterId], $params)) as $r) {
+                $days[(int) $r['id']] = self::decode($r['override_fields'] ?? null);
+            }
+        }
+        $changed = [];
+        foreach (array_intersect_key(self::LINKS, array_flip($fields)) as $field => [$table, $col]) {
+            $follows = array_keys(array_filter($days, static fn(?array $own): bool => $own !== null && !in_array($field, $own, true)));
+            if ($follows === []) {
+                continue;
+            }
+            $set = array_map('intval', array_column($db->all("SELECT `$col` FROM `$table` WHERE event_id = ? ORDER BY `$col`", [$masterId]), $col));
+            foreach (array_chunk($follows, 500) as $chunk) {
+                [$in, $params] = \BetterCal\Infra\Db::in($chunk);
+                $has = array_fill_keys($chunk, []);
+                foreach ($db->all("SELECT event_id, `$col` FROM `$table` WHERE event_id IN $in ORDER BY event_id, `$col`", $params) as $r) {
+                    $has[(int) $r['event_id']][] = (int) $r[$col];
+                }
+                foreach ($has as $dayId => $now) {
+                    if ($now === $set) {
+                        continue;
+                    }
+                    $db->run("DELETE FROM `$table` WHERE event_id = ?", [$dayId]);
+                    $db->run($db->insertIgnore() . " INTO `$table` (event_id, `$col`) SELECT ?, `$col` FROM `$table` WHERE event_id = ?", [$dayId, $masterId]);
+                    $changed[$dayId] = true;
+                }
+            }
+        }
+        return array_keys($changed);
+    }
+
     /**
      * An edited day's own things: the fields it owns and each kind of thing
      * that refers to it ($references, "kind:reference" entries as

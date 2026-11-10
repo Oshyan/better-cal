@@ -580,19 +580,10 @@ final class Feeds
         if ($changed !== []) {
             $db->update('events', array_intersect_key($after, array_flip($changed)), 'id = ?', [$id]);
         }
-        $linked = false;
-        foreach (['tags' => ['event_tags', 'tag_id'], 'people' => ['event_people', 'person_id']] as $field => [$table, $col]) {
-            if (in_array($field, $own, true) || ($fields !== null && !in_array($field, $fields, true))) {
-                continue;
-            }
-            $of = static fn(int $event): array => array_map('intval', array_column($db->all("SELECT `$col` FROM `$table` WHERE event_id = ? ORDER BY `$col`", [$event]), $col));
-            if ($of($id) === $of((int) $master['id'])) {
-                continue;
-            }
-            $db->run("DELETE FROM `$table` WHERE event_id = ?", [$id]);
-            $db->run($db->insertIgnore() . " INTO `$table` (event_id, `$col`) SELECT ?, `$col` FROM `$table` WHERE event_id = ?", [$id, (int) $master['id']]);
-            $linked = true;
-        }
+        // Its tags and people: the one function every writer uses (OwnFields::follow).
+        $links = array_values(array_filter(array_keys(\BetterCal\Domain\Series\OwnFields::LINKS),
+            static fn(string $f): bool => !in_array($f, $own, true) && ($fields === null || in_array($f, $fields, true))));
+        $linked = $links !== [] && \BetterCal\Domain\Series\OwnFields::follow($db, (int) $master['id'], [$id], $links) !== [];
         return $changed !== [] || $linked;
     }
 
@@ -1279,6 +1270,14 @@ final class Feeds
                 }
                 $changedUids[(string) $now['uid']] = true;
                 $removedCount++;
+            }
+            // Every series this poll changed: each day not owning its tags or
+            // people holds the series' (OwnFields::follow), a day kept while
+            // its series was away and put under the series made anew included.
+            foreach (array_keys($changedUids) as $uid) {
+                if (isset($masterIdByUid[$uid])) {
+                    \BetterCal\Domain\Series\OwnFields::follow($this->db, (int) $masterIdByUid[$uid]);
+                }
             }
             self::assertSyncDeadline($deadline);
 

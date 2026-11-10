@@ -264,6 +264,60 @@ return static function (Db $db): void {
         $holds('a feed poll that brings the series back under a kept day (Feeds::sync, re-parented row)', $u);
     });
 
+    scenario('link ownership: a poll whose series\' record is unreadable, or absent, while an edited day is readable makes the day\'s row with an own list', function () use ($db, $holds, $seriesIcs, $tagsOf, $dayRow): void {
+        $nullLists = static fn(int $u): array => array_map('intval', array_column($db->all(
+            'SELECT id FROM events WHERE user_id = ? AND recurrence_parent_id IS NOT NULL AND deleted_at IS NULL AND override_fields IS NULL', [$u]), 'id'));
+        foreach (['unreadable, skipped with its uid' => 'uid', 'unreadable, skipped with no uid' => 'none', 'absent' => 'absent'] as $how => $skip) {
+            $u = freshUser($db);
+            $d = domains($db);
+            $feeds = new Feeds($db);
+            $feed = (int) $d->calendars->create($u, ['name' => 'Sample club'], 'subscribed', 'https://feeds.example.test/club.ics')['id'];
+            $row = static fn() => $db->one('SELECT * FROM calendars WHERE id = ?', [$feed]);
+            $uid = 'sample-club-weekly@example.test';
+            $feeds->sync($row(), Ics::parse($seriesIcs($uid)));
+            $master = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL', [$feed, $uid]);
+            $d->events->patch($u, $master, ['scope' => 'all', 'tagNames' => ['Sample A']]);
+            // The poll: the edited day alone, its series' record skipped (unreadable) or not there at all.
+            $days = array_values(array_filter(Ics::parse($seriesIcs($uid, ['20270111T090000Z' => 'Sample feed day'])), static fn(array $p): bool => $p['recurrence_instance_utc'] !== null));
+            $skipped = match ($skip) {
+                'uid' => [['uid' => $uid, 'reason' => 'unreadable']],
+                'none' => [['uid' => null, 'reason' => 'unreadable']],
+                default => [],
+            };
+            $feeds->sync($row(), $days, true, null, $skipped);
+            checkEq("link ownership: a poll with the series' record $how leaves no live day row without an own list", [], $nullLists($u));
+            $day = $db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NOT NULL AND deleted_at IS NULL', [$feed, $uid]);
+            check("link ownership: the poll with the series' record $how made the day's row", $day !== null);
+            if ($skip !== 'absent') {
+                checkEq("link ownership: under the series kept ($how), the day owns its title and holds the series' tag", ['["title"]', ['Sample A']],
+                    [$day['override_fields'] ?? null, $day === null ? null : $tagsOf((int) $day['id'])]);
+                $holds("a feed poll with the series' record $how (Feeds::sync, new row under a kept series)", $u);
+            } else {
+                checkEq('link ownership: with no series left, the day owns nothing, as 063 left such a day', '[]', $day['override_fields'] ?? null);
+            }
+        }
+    });
+
+    // A day's row with no own list, as a feed could leave one before 1.5.5
+    // (built here by raw SQL: no writer leaves one now). What such a row owns
+    // is the owner's to decide; until then a change to the series' tags and
+    // people for all events reaches it as it did before 1.5.5: the plan reads
+    // a set equal to the series' as not its own (Model::ownOf), gives it the
+    // new set and writes its list.
+    scenario('link ownership: a day\'s row with no own list holding the series\' tags and people takes the new ones from a change for all events', function () use ($db, $weekly, $tagsOf, $peopleOf, $dayRow): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = Settings::defaultCalendarId($db, $u);
+        $id = $weekly($d->events, $u, $cal);
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-11T09:00:00Z', 'title' => 'Sample older day']);
+        $day = (int) $dayRow($id, '2027-01-11 09:00:00')['id'];
+        $db->run('UPDATE events SET override_fields = NULL WHERE id = ?', [$day]);
+        planned($d->events, $u, $id, ['scope' => 'all', 'tagNames' => ['Sample C'], 'personNames' => ['Sam Sample']]);
+        checkEq('link ownership: the day with no own list took the series\' new tag and person, and keeps its own title', [['Sample C'], ['Sam Sample'], 'Sample older day'],
+            [$tagsOf($day), $peopleOf($day), $db->scalar('SELECT title FROM events WHERE id = ?', [$day])]);
+        checkEq('link ownership: the plan wrote the day\'s list, its title alone', '["title"]', $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]));
+    });
+
     // ---- Google: the stand-in, a writer of each kind, Finish and Put back -----
 
     $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];

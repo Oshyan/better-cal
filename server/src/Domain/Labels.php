@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Domain\Series\OwnFields;
 use BetterCal\Infra\Db;
 
 /** Shared tag/people helpers used by Events and Calendars. */
@@ -50,7 +51,7 @@ final class Labels
             $this->db->run('INSERT IGNORE INTO event_tags (event_id, tag_id) VALUES (?, ?)', [$eventId, $tagId]);
         }
         // A series' tags reach each day that doesn't own its own (OwnFields::follow).
-        \BetterCal\Domain\Series\OwnFields::follow($this->db, $eventId, null, ['tags']);
+        OwnFields::follow($this->db, $eventId, null, ['tags']);
     }
 
     /**
@@ -113,7 +114,7 @@ final class Labels
             $this->db->run('INSERT IGNORE INTO event_people (event_id, person_id) VALUES (?, ?)', [$eventId, $personId]);
         }
         // A series' people reach each day that doesn't own its own (OwnFields::follow).
-        \BetterCal\Domain\Series\OwnFields::follow($this->db, $eventId, null, ['people']);
+        OwnFields::follow($this->db, $eventId, null, ['people']);
     }
 
     /**

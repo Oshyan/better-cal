@@ -82,10 +82,12 @@ final class OwnFields
      * re-listed or re-parented a day's row or written a series' links (the
      * link setters, Labels::setEventTags and replaceEventPeople, call it for
      * the event they set): a day whose list names the field keeps its own
-     * set; a day with no list at all is left as it is (a form no writer here
-     * leaves; the rows a feed made before 1.5.5 under a master it did not
-     * carry are the owner's to decide); a series gone or deleted has no set
-     * to follow, and nothing is done. Only a set that differs is written.
+     * set; a day with no list at all is left as it is (a poll up to 1.5.4
+     * could make such a row for an edited day whose series' record it did
+     * not carry, and what one owns is the owner's to decide; a whole-series
+     * plan still gives one the series' set where the plan reads it as not
+     * its own, and writes its list); a series gone or deleted has no set to
+     * follow, and nothing is done. Only a set that differs is written.
      * Returns the ids of the days it changed.
      *
      * @param ?list<int> $dayIds

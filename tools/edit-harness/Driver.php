@@ -65,6 +65,9 @@ final class Driver
     /** The option combination being committed in isolated state (everyOption), or null for the case's own commit. */
     private ?string $trial = null;
 
+    /** The newest Activity entry before the case's main change (identityAfter's undo of an earlier "this event" change). */
+    private int $entryBeforeEdit = 0;
+
     /** A split's baseline plan (applyEdit), for the part's preselections in checkFollowing. */
     private ?array $splitBaseline = null;
 
@@ -274,6 +277,8 @@ final class Driver
             $this->wide0 = $this->wide();
         }
         try {
+            // The newest entry before the main change: an identity follow-up's undo of a "this event" change made before it.
+            $this->entryBeforeEdit = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) FROM mutations WHERE user_id = ?', [$this->userId]);
             $sent = $this->applyEdit($id, $before, $acted, $v, $s0, 'edit');
         } catch (\Throwable $e) {
             if ($e instanceof HttpError && $e->errorCode === 'trip_nested') {
@@ -1395,9 +1400,8 @@ final class Driver
             $days[] = ['date' => Days::date($occ['dn']), 'kind' => $kind, 'at' => $ex['at']];
         }
         $flipMain = ($this->spec['identityMain'] ?? 'flip') === 'flip';
-        // The entry of the last "this event" change before the main change: the second newest now.
-        $entries = array_map('intval', array_column($this->db->all('SELECT id FROM mutations WHERE user_id = ? ORDER BY id DESC LIMIT 2', [$this->userId]), 'id'));
-        $thisEntry = $entries[1] ?? null;
+        // The entry of the last "this event" change before the main change (a main change may write more than one entry).
+        $thisEntry = $this->entryBeforeEdit > 0 && $days !== [] ? $this->entryBeforeEdit : null;
         if ($flipMain) {
             $this->checkDays($id, $days, 'after the main change');
         }
@@ -1491,6 +1495,11 @@ final class Driver
                                 static fn(string $p): bool => str_starts_with($p, $gid . '_') && (preg_match('/^\d{8}$/', substr($p, strlen($gid) + 1)) === 1) !== $allDay));
                             $this->check('i-undo', $wrong === [], 'an undo of a "this event" change made before the change sends nothing to an id of the other form', ['sent' => $wrong]);
                         }
+                        if ($refused === null) {
+                            // Undone: the last day made its own before the change is the series' again, so i-days no longer expects it.
+                            array_pop($days);
+                        }
+                        $thisEntry = null;
                         break;
                 }
             } catch (\Throwable $e) {

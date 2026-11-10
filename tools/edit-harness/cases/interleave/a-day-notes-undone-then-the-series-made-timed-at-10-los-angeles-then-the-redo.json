@@ -1,0 +1,12 @@
+{
+    "about": "A weekly all-day series, a day given its own notes and a reminder, that change undone, the series made timed at 10:00 Los Angeles for all events, then the redo of the undo: the day is still a day of the series on its own date, so the redo goes through (x-undo-fields). On the tree with the R1 fix it is refused as stale ('no longer part of the series') west of UTC only (10:00 Los Angeles, 19:00 New York); at 00:00 UTC and 09:00 Tokyo it goes through.",
+    "seed": 0,
+    "n": 0,
+    "series": {"family": "weekly_bare", "rrule": "FREQ=WEEKLY", "import": false, "bound": "count", "boundAt": 8, "untilForm": "dayend", "allDay": true, "tzid": "UTC", "start": "2027-01-04", "length": 1, "flipZone": "America/Los_Angeles", "flipClock": 36000},
+    "steps": [
+        {"do": "w-this-m", "pick": 0.496, "what": "description+reminders"},
+        {"do": "u-bare", "pick": 0.064},
+        {"do": "w-all", "pick": 0, "what": "flip"},
+        {"do": "redo", "pick": 0}
+    ]
+}

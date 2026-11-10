@@ -2015,6 +2015,11 @@ final class Interleave
      */
     private function judgeUndo(string $do, array $state, array $now, array $result, array $context): void
     {
+        // changedSince frames what it is given itself; framing twice is not a no-op when the frame's clock falls on another
+        // local date than the series' clock (a series made timed west of UTC: 00:00 UTC is the evening before), so it gets
+        // the states as recorded.
+        $rawState = $state;
+        $rawNow = $now;
         $state['after'] = self::inFrame($state['before'], $state['after']);
         $now = self::inFrame($state['before'], $now);
         $result = self::inFrame($state['before'], $result);
@@ -2022,11 +2027,12 @@ final class Interleave
         // by x-readback: kept out of the comparison here as a w-race's day is kept out of its entry.
         if (($this->racedNow[1] ?? null) !== null) {
             $day = 'day:' . $this->racedNow[0] . ':' . $this->racedNow[1];
-            unset($now[$day], $result[$day]);
+            unset($now[$day], $result[$day], $rawNow[$day]);
             $state['exclude'] = array_merge($state['exclude'] ?? [], [$day]);
+            $rawState['exclude'] = $state['exclude'];
         }
         $change = self::entryChange($state);
-        $since = $this->changedSince($state, $now);
+        $since = $this->changedSince($rawState, $rawNow);
         if ($since !== []) {
             $this->ran('x-undo-fields', 'stale');
             $this->fail('x-undo-fields', "step {$this->step} ($do): an undo went through though what its entry changed has changed since (step {$state['step']}): stale_undo by the rule (A3)", $context + ['since' => $since]);

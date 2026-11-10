@@ -1,5 +1,5 @@
 {
-    "about": "A weekly series at 00:00 UTC with a day given its own notes and a day deleted, made all-day for all events: the master write is taken and its answer lost, a day is renamed at Google by another client in between, then Finish (x-finish, x-identity, x-own, x-agree). The known open case: a change made at Google in the old form while the form change is stopped before its master write's answer is carried by Finish to the same key in the new form.",
+    "about": "A weekly series at 00:00 UTC with a day given its own notes and a day deleted, made all-day for all events: the master write is taken and its answer lost, a day is renamed at Google by another client in between, then Finish (x-finish, x-identity, x-own, x-agree). The change made at Google lands after the master write did, so it is in the new form; a change in the old form before the master write lands needs a stand-in knob that fires between the series read and the master write, which the stand-in does not have.",
     "seed": 0,
     "n": 0,
     "series": {

@@ -52,11 +52,12 @@ final class Interleave
     private const LOCAL = ['tags', 'people', 'reminders', 'icon', 'coords', 'attendance'];
     /**
      * A day's content field and the own-list names that make it the day's own; a field none of them names follows its
-     * series. Tags and people are not here: a day's row holds them as its own links, the series' copy among them (ground():
-     * "a day's row holds them in its own links"), so an undo puts that set back exactly, never re-derives it from the series.
+     * series (series-model.md, Own Fields). Tags and people likewise: a day's row stores the series' copy as links, but they
+     * are its own only when its own list says so, so an undo leaves a day that doesn't own them with the series' set as it
+     * stands and puts an owned set back exactly.
      */
     private const OWN_OF = ['title' => ['title'], 'description' => ['description'], 'location' => ['location'], 'url' => ['url'], 'status' => ['status'],
-        'reminders' => ['reminders'], 'icon' => ['icon'], 'attendance' => ['attendance'],
+        'tags' => ['tags'], 'people' => ['people'], 'reminders' => ['reminders'], 'icon' => ['icon'], 'attendance' => ['attendance'],
         'lat' => ['location', 'coords', 'lat'], 'lng' => ['location', 'coords', 'lat']];
     private const OTHER_ZONES = ['America/Phoenix', 'Europe/Berlin', 'Asia/Tokyo', 'America/New_York', 'Pacific/Auckland'];
 
@@ -1314,7 +1315,20 @@ final class Interleave
                 $this->expect('x-conflict', $out['ok'], "step {$this->step} ($do): removing a series already gone at Google succeeds", $context);
             }
         }
-        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !($removal && ($s0['g']['digest'][$gid] ?? null) === null) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
+        // A request that changes nothing sends nothing and is no conflict: what x-conflict protects is the change made at
+        // Google, judged by what the step did, never by the field the request names. One that changes nothing asks Google
+        // nothing at all (no read either: a write that would change something reads the series first, rule 1) and writes
+        // nothing here. A whole-series clock asked to be the clock it already has, with the acted day's own time the same,
+        // is such a request (seed 857 case 249).
+        $asksNothing = true;
+        foreach (array_slice($this->stand->fake->requests, $s0['req'], $s1['req'] - $s0['req']) as $q) {
+            $asksNothing = $asksNothing && in_array('X-Harness: remote', $q['headers'], true);
+        }
+        $changedNothing = $out['ok'] && $asksNothing && self::sameHere($s0, $s1);
+        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && $changedNothing && $failure === null) {
+            $this->ran('x-conflict', 'nothing to change');
+        }
+        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !$changedNothing && !($removal && ($s0['g']['digest'][$gid] ?? null) === null) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
             $this->ran('x-conflict', $do);
             // What protects the change made at Google is the refusal, whatever its reason: google_conflict, google_deleted for
             // a series deleted there (rule 8), or one decided here before Google is asked (stale_undo, invalid_recurrence_instance).
@@ -1714,8 +1728,10 @@ final class Interleave
     /**
      * A day row's ground: the fields it owns, by its own list (decisions.md, "An undo is stale when a poll has since brought
      * a remote change of the same field": "each side's ground the fields that row owns where it was made or removed whole").
+     * For staleness its links count too, as the journal's grounds count them ($links); for what the row owns, its own list
+     * alone, the tags and people it holds without owning them being its series' copy.
      */
-    private static function ground(?array $row): array
+    private static function ground(?array $row, bool $links = true): array
     {
         $map = ['title' => ['title'], 'description' => ['description'], 'location' => ['location', 'lat', 'lng'], 'url' => ['url'], 'status' => ['status'],
             'date' => ['start', 'end'], 'time' => ['start', 'end', 'tz'], 'length' => ['end'], 'allDay' => ['allDay'], 'tags' => ['tags'], 'people' => ['people'],
@@ -1726,7 +1742,7 @@ final class Interleave
         }
         // Its tags and people among them: a day's row holds them in its own links (api-contract.md, `stale_undo`: "the
         // fields that row owns, its tags and people among them").
-        foreach (['tags', 'people'] as $f) {
+        foreach ($links ? ['tags', 'people'] : [] as $f) {
             if (!empty($row[$f])) {
                 $out[] = $f;
             }
@@ -1942,13 +1958,26 @@ final class Interleave
                 // The undo takes back only what the entry gave the row it made, the fields that row owned; the row stays,
                 // following its series in those fields, when a later change gave it something of its own (decisions.md,
                 // "An undo is stale when a poll has since brought a remote change of the same field", the third read F2).
-                $gave = self::ground($state['after'][$ident] ?? null);
-                $later = $c === null ? [] : array_values(array_diff(self::ground($c), $gave));
+                // What a row owns is its own list: tags and people it holds without owning them are its series' copy.
+                $gave = self::ground($state['after'][$ident] ?? null, false);
+                $later = $c === null ? [] : array_values(array_diff(self::ground($c, false), $gave));
                 if ($r === null || $later === []) {
-                    $this->expect('x-undo-fields', $r === null || array_intersect(self::ground($r), $gave) === [], "step {$this->step} ($do): an undo left a row its entry made", $where + ['now' => $r]);
+                    $this->expect('x-undo-fields', $r === null || array_intersect(self::ground($r, false), $gave) === [], "step {$this->step} ($do): an undo left a row its entry made", $where + ['now' => $r]);
                     continue;
                 }
-                $this->expect('x-undo-fields', array_intersect(self::ground($r), $gave) === [], "step {$this->step} ($do): an undo left the row its entry made owning what the entry gave it", $where + ['gave' => $gave, 'now' => $r]);
+                $this->expect('x-undo-fields', array_intersect(self::ground($r, false), $gave) === [], "step {$this->step} ($do): an undo left the row its entry made owning what the entry gave it", $where + ['gave' => $gave, 'now' => $r]);
+                // The row it keeps shows the series' tags and people as they stand where it doesn't own them, never an
+                // empty set left by taking away the copy made with it (series-model.md, Own Fields).
+                $series = preg_match('/^day:([^:]+):/', $ident, $mm) === 1 ? ($result['series:' . $mm[1]] ?? null) : null;
+                foreach ($series === null ? [] : ['tags', 'people'] as $f) {
+                    if (!in_array($f, (array) ($r['own'] ?? []), true)) {
+                        $want = (array) ($series[$f] ?? []);
+                        $got = (array) ($r[$f] ?? []);
+                        sort($want);
+                        sort($got);
+                        $this->expect('x-undo-fields', $got == $want, "step {$this->step} ($do): the row its entry made, kept for a later change, shows the series' $f as they stand", $where + ['field' => $f, 'want' => $want, 'now' => $got]);
+                    }
+                }
                 $b0 = $state['after'][$ident] ?? [];
                 foreach ($later as $f) {
                     // What the later change gave: a list's additions since the entry stay; a value stays as it was.
@@ -2016,7 +2045,16 @@ final class Interleave
                     // Google edit sends back only the fields that edit changed": "one it did not own (it followed its
                     // series) goes back to following it, at the series' value there now, so a day given its own title and
                     // undone after a rename for all events shows the new name"). A field it owned goes back exactly, below.
-                    $this->expect('x-undo-fields', ($r[$f] ?? null) == ($master[$f] ?? null), "step {$this->step} ($do): an undo gives back to the series a $f its entry gave the day, at the series' $f as it stands", $where + ['field' => $f, 'want' => $master[$f] ?? null, 'now' => $r[$f] ?? null]);
+                    $want = $master[$f] ?? null;
+                    $got = $r[$f] ?? null;
+                    if (in_array($f, ['tags', 'people'], true)) {
+                        // A set of links: compared as a set.
+                        $want = (array) $want;
+                        $got = (array) $got;
+                        sort($want);
+                        sort($got);
+                    }
+                    $this->expect('x-undo-fields', $got == $want, "step {$this->step} ($do): an undo gives back to the series a $f its entry gave the day, at the series' $f as it stands", $where + ['field' => $f, 'want' => $want, 'now' => $got]);
                     continue;
                 }
                 $want = $was[$f] ?? null;

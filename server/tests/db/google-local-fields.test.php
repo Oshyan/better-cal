@@ -110,8 +110,11 @@ return static function (Db $db): void {
         $day = $byGoogleId($s, $dayGoogleId);
         $id = (int) $day['id'];
         $s->trips->attach($s->u, $trip($s), $id);
+        // A tag and reminders of the day's own, its own list saying so (a day's tags are its series' unless it owns them).
         $s->labels->setEventTags($s->u, $id, ['sample-tag']);
-        $db->run('UPDATE events SET reminders_json = ? WHERE id = ?', ['[{"minutes":30}]', $id]);
+        $own = BetterCal\Domain\Series\OwnFields::decode($day['override_fields'] ?? null) ?? [];
+        $db->run('UPDATE events SET reminders_json = ?, override_fields = ? WHERE id = ?', ['[{"minutes":30}]',
+            BetterCal\Domain\Series\OwnFields::encode(BetterCal\Domain\Series\OwnFields::normalize([...$own, 'tags', 'reminders'])), $id]);
         $s->events->deleteEvent($s->u, $id, null, null);
         $entry = $last($s);
         $snapshot = json_decode((string) $entry['before_json'], true)['tables'] ?? [];

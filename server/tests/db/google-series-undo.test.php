@@ -187,10 +187,15 @@ return static function (Db $db): void {
     };
     // A tag on the series and a person on its day with its own title: what Google never holds.
     $ownParts = static function (object $s) use ($db, $masterId): void {
+        // The series' tag, with each day's row holding the series' copy (a day's tags are its series' unless it owns
+        // them); a person of the day's own, its own list saying so.
         $s->labels->setEventTags($s->u, $masterId($s), ['sample-tag']);
+        $db->run('INSERT IGNORE INTO event_tags (event_id, tag_id) SELECT e.id, et.tag_id FROM events e JOIN event_tags et ON et.event_id = e.recurrence_parent_id WHERE e.recurrence_parent_id = ?', [$masterId($s)]);
         $person = $db->insert('people', ['user_id' => $s->u, 'name' => 'Alex Example']);
-        $day = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND google_event_id = ?', [$s->calendarId, 'smpl2weekly_20270329T170000Z']);
-        $db->insert('event_people', ['event_id' => $day, 'person_id' => $person]);
+        $day = $db->one('SELECT id, override_fields FROM events WHERE calendar_id = ? AND google_event_id = ?', [$s->calendarId, 'smpl2weekly_20270329T170000Z']);
+        $db->insert('event_people', ['event_id' => (int) $day['id'], 'person_id' => $person]);
+        $own = BetterCal\Domain\Series\OwnFields::decode($day['override_fields'] ?? null) ?? [];
+        $db->run('UPDATE events SET override_fields = ? WHERE id = ?', [BetterCal\Domain\Series\OwnFields::encode(BetterCal\Domain\Series\OwnFields::normalize([...$own, 'people'])), (int) $day['id']]);
     };
 
     scenario('google series undo: a clock change for all events is undone, the series, its exceptions and skip back at Google and here, own parts kept; the undo undoes back', function () use ($setup, $masterId, $last, $google, $undone, $held, $stored, $own, $ownParts, $sameAfterPoll, $pending, $iso, $db): void {

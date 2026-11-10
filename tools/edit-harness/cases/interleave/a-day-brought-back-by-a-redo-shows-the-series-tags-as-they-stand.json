@@ -1,0 +1,55 @@
+{
+    "about": "A day given its own reminders, the series' clock moved at Google, the reminders undone (the row goes), then tags for all events with the answer lost, so the series here has the new tags; a redo of the reminders brings the day's row back, and it shows the series' tags as they stand, not the copy its snapshot held: a day's tags are its own only when its own list says so (decisions.md, \"A day kept by an undo shows the series' tags and people it does not own\"; seed 857 case 419; x-undo-fields)",
+    "series": {
+        "family": "onehour",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;BYHOUR=0;BYMINUTE=30",
+        "import": false,
+        "bound": "count",
+        "boundAt": 5,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Australia/Lord_Howe",
+        "start": "2028-02-29 00:30",
+        "length": 90
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.641,
+            "what": "reminders"
+        },
+        {
+            "do": "r-time",
+            "pick": 0.215
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.132
+        },
+        {
+            "do": "f-lost",
+            "pick": 0.963,
+            "k": 2,
+            "write": "w-all",
+            "what": "tags"
+        },
+        {
+            "do": "w-race",
+            "pick": 0.31,
+            "what": "title"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.926,
+            "what": "time"
+        },
+        {
+            "do": "redo",
+            "pick": 0.883
+        },
+        {
+            "do": "r-bound",
+            "pick": 0.673
+        }
+    ]
+}

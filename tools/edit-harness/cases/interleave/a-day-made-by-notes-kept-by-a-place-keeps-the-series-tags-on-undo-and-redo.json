@@ -1,5 +1,5 @@
 {
-    "about": "A day given notes (its row made then, with the series' tags and people copied onto it), then a place, then a title for all events with another day renamed at Google during it; the notes undone keep the row for its place and take away the links the notes' entry gave it, a redo gives them back, and a redo of that redo takes them away again: a day row's tags and people are its own links, put back exactly as a set, never re-derived from the series (decisions.md, \"The undo of a Google edit sends back only the fields that edit changed\"; seed 307 case 183; x-undo-fields)",
+    "about": "A day given notes (its row made then, with the series' tags and people copied onto it), then a place, then a title for all events with another day renamed at Google during it; the notes undone keep the row for its place, and the row still shows the series' tags and people, which it never owned; a redo and a redo of that redo leave them so: a day's tags and people are its own only when its own list says so, otherwise the series' copy, which an undo never takes away (series-model.md, Own Fields; decisions.md, \"A day kept by an undo shows the series' tags and people it does not own\"; seed 307 case 183; review of 94693e30 to cb2c6082, R3; x-undo-fields)",
     "series": {
         "family": "weekly_one",
         "rrule": "FREQ=WEEKLY;BYDAY=SU",

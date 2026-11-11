@@ -26,7 +26,7 @@ Why this is strict: in November 2026 a migration that rewrote older undo entries
 
 ## Before a push
 
-Every gate completes before any push to `main`: the unit suites, the database suite, both modes of the series harness at full case counts, and the interleaving mode (see [CONTRIBUTING.md](CONTRIBUTING.md) and [tools/edit-harness/README.md](tools/edit-harness/README.md)). `tools/gates.sh full` is that set, run once on the final tree. A gate that has not finished is a gate that has not passed.
+Every gate completes before any push to `main`: the unit suites, the database suite, both modes of the series harness at full case counts, and the interleaving mode (see [CONTRIBUTING.md](CONTRIBUTING.md) and [tools/edit-harness/README.md](tools/edit-harness/README.md)). `tools/gates.sh full` is that set, run once on the final tree. A gate that has not finished is a gate that has not passed. The one exception is a commit that changes only documentation, which needs no gate ([CONTRIBUTING.md](CONTRIBUTING.md), "Gates: Three Levels", which also says what counts).
 
 The full set is for the push, not for every step. While working, run `tools/gates.sh quick` with the test files near the change; after a merge, `tools/gates.sh merge`. A worker does not run seeds or the mutation list, and does not chase `main`: it hands back on the commit it was given, and the merge is gated on `main` once. Do not add a seed, a mode or a configuration to the full set because a review round used it; a recorded seed is a regression test and one is enough, and breadth belongs in background runs that block nothing ([CONTRIBUTING.md](CONTRIBUTING.md), "Gates: Three Levels").
 

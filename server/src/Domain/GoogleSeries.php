@@ -1689,7 +1689,9 @@ final class GoogleSeries
      *
      * A survivor follows a changed start onto its occurrence with the new
      * length (and a changed length alone with its end), and takes every
-     * title, notes, place or status the write sends. The state a master
+     * title, notes, place or status the write sends; on a series with no
+     * notes, a write that leaves them out clears its notes (3.52 to 3.57).
+     * The state a master
      * step journals it leaves (rule B), and what "the change's own effect"
      * is to Finish (rebase). An undo of a series change is a forward change
      * through this same function.
@@ -1711,6 +1713,13 @@ final class GoogleSeries
             if (array_key_exists($field, $body)) {
                 $set[$col] = $new[$col] ?? null;
             }
+        }
+        // A series with no notes at Google, written without them: Google clears every kept record's own notes (probe
+        // 2026-11-13, 3.52 to 3.57; with notes of its own the records keep theirs, 3.58 to 3.60). Predicted so the
+        // read-back shows it as this write's own effect and the edited day's step sends its notes back (decisions.md,
+        // "A day's own notes cleared by a master write are sent back").
+        if (!array_key_exists('description', $body) && trim((string) ($h['master']['description'] ?? '')) === '') {
+            $set['description'] = null;
         }
         $was = (int) $old['all_day'] === 1;
         $allDay = (int) $new['all_day'] === 1;

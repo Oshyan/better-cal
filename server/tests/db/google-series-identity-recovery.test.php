@@ -175,6 +175,7 @@ return static function (Db $db): void {
         // The request names the series' clock in the new zone; the "same moment" reading keeps each instant, so the series shows at 11:00 in Denver.
         'body' => ['scope' => 'all', 'instanceStart' => '2027-01-04T10:00:00-08:00', 'tzid' => 'America/Denver', 'start' => '2027-01-04T10:00:00-07:00', 'end' => '2027-01-04T11:00:00-07:00'],
         'choices' => ['zone' => 'moment'], 'before' => $laRecords, 'stop' => 'answer lost',
-        'afterMaster' => [false, $laRecords], 'left' => 'the edited day and the skip kept (probe 3.17)', 'then' => 'putBack',
+        // Kept, and on a series with no notes the master write clears the kept day's own notes (probe 3.54); Put back sends them again.
+        'afterMaster' => [false, ['20270111T180000Z' => [false, null, $place]] + $laRecords], 'left' => 'the edited day (its notes cleared by Google, 3.54) and the skip kept (probe 3.17)', 'then' => 'putBack',
     ]));
 };

@@ -16,7 +16,7 @@ It's for people who use Better-Cal with a Google calendar and wonder why it work
 
 Every claim below carries one of three labels, with a date:
 
-- **Measured:** the probe in [tools/google-probe](../tools/google-probe/README.md) sent the request and read back the result. Two runs so far: [2026-11-07](design/research/google-series/probe-2026-11-07.md) (66 cases, numbered 1.1 to 9.2) and [2026-11-10](design/research/google-series/probe-2026-11-10.md) (19 more, numbered 3.17 to 3.35). The case number is given so the request and the answer can be looked up.
+- **Measured:** the probe in [tools/google-probe](../tools/google-probe/README.md) sent the request and read back the result. Three runs so far: [2026-11-07](design/research/google-series/probe-2026-11-07.md) (66 cases, numbered 1.1 to 9.2), [2026-11-10](design/research/google-series/probe-2026-11-10.md) (19 more, numbered 3.17 to 3.35) and [2026-11-13](design/research/google-series/probe-2026-11-13.md) (19 more, 3.36 to 3.47, 4.3 and 10.1 to 10.6; every earlier case of groups 3 and 4 run again, with the same answers). The case number is given so the request and the answer can be looked up.
 - **Documented:** Google says so on a page that was live when read (2026-11-07 or 2026-11-10), linked beside the claim.
 - **Reported:** someone else wrote it up and I haven't tested it. Linked beside the claim, read 2026-11-10. Treat these as leads.
 
@@ -55,9 +55,9 @@ All Measured, on the date in the last column. "Dropped" means the day goes back 
 | The start moved to a day off the pattern | Dropped | Come back | 3.4 | 2026-11-07 |
 | The start moved along the pattern (a week later, on a weekly event) | Kept, but a day's own date and time are reset | Stay deleted | 3.5 | 2026-11-07 |
 | Different repeat days (Monday becomes Tuesday) | Dropped | Come back | 3.6, 3.11 | 2026-11-07 |
-| A repeat day added (Monday becomes Monday and Wednesday) | Kept | Come back | 3.7 | 2026-11-07 |
-| A new rule, for days still on it | Kept | Stay deleted | 3.33, 3.34 | 2026-11-10 |
-| A new rule, for days no longer on it | Dropped | Come back | 3.34 | 2026-11-10 |
+| A repeat day added (Monday becomes Monday and Wednesday) | Kept | Stay deleted, while still a day of the rule | 3.7, 3.43 | 2026-11-13 |
+| A new rule, for days still on it | Kept | Stay deleted | 3.33, 3.34, 3.42 to 3.47 | 2026-11-13 |
+| A new rule, for days no longer on it | Dropped | Come back | 3.34, 3.44, 3.47 | 2026-11-13 |
 | A new length | Kept, their ends follow | Stay deleted | 3.2 | 2026-11-07 |
 | A new end (a count or an end date) | Kept, except those past the new end | Stay deleted | 3.8 to 3.10 | 2026-11-07 |
 | Timed to all-day, or back | Dropped | Come back | 3.19 to 3.25 | 2026-11-10 |
@@ -79,9 +79,12 @@ Set against the table: the 2009 time rule still holds, the 2009 promise about ov
 
 - **Switching an event between timed and all-day fails unless you clear the old form.** Google merges the new start into the old one field by field, ends up holding both a date and a clock time, and refuses with "Invalid start time". Sending the old form's fields as empty values works, for a single event, one day, or a whole repeating event (Measured 2026-11-10, cases 3.18 to 3.31). The error is widely reported, for instance in [this unanswered thread from 2026](https://discuss.google.dev/t/google-calendar-api-disallowing-start-end-date-updates-for-a-recurring-event/329113) (which may or may not be the same cause); I found no page that gives the cause or the fix. Google's [patch reference](https://developers.google.com/workspace/calendar/api/v3/reference/events/patch) doesn't mention it.
 - **A change can report success and do nothing.** After a repeating event is split in Google's own app, a later request to extend the first half's end date returns success with the event unchanged (Reported, [developer forum, 2025](https://discuss.google.dev/t/google-calendar-api-sometimes-silently-fails-to-update-recurrence-rules/269516), by one developer; no reply from Google's engineers).
-- **Any write to a repeating event changes the version tag of every day in it** (Measured 2026-11-07, cases 5.2, 5.3). So a version tag can tell you that something in the event changed, never which day.
-- **Dropped days leave records behind.** After a change that drops edited days, their records are still listed, marked cancelled and stripped of their original start time (Measured 2026-11-07, cases 3.1, 3.3, 3.4, 3.6; and 2026-11-10, cases 3.19 to 3.25). I suspect these get in the way of later writes ([#256](https://github.com/Oshyan/better-cal/issues/256), seen on a live install on 2026-11-10), but haven't confirmed the cause.
-- **One day of an all-day event may not be able to take a clock time. Not settled.** The request was refused with "Invalid start time" (Measured 2026-11-07, case 2.2a), but it was sent before the cause above was known, without clearing the day's date, so it may be the same merge problem and not a real limit. The reverse, an all-day day inside a timed event sent with the clock fields cleared, is accepted (Measured 2026-11-10, case 3.31). Better-Cal 1.5.5 refuses the first case on the strength of the 2026-11-07 result; it needs measuring again.
+- **A day's version tag is its own once the day has a record.** A write to the whole event or to one ordinary day can change the version tag of every day (Measured 2026-11-07, cases 5.2, 5.3), but a write to a day that already has a record changes that day's tag alone, and even a first write to an ordinary day can answer with a tag the rest of the event doesn't carry (Measured 2026-11-13, cases 3.36, 3.37, 3.40, 10.2). So the tag one write answers with can't be used as the condition of the next write to another day: each day's write needs that day's own tag, read just before. Sent with the wrong one, Google refuses with "Precondition check failed" (412), which is what [#256](https://github.com/Oshyan/better-cal/issues/256) was.
+- **Dropped days leave records behind, and they come back to life.** After a change that drops edited days, their records are still listed, marked cancelled and stripped of their original start time (Measured 2026-11-07, cases 3.1, 3.3, 3.4, 3.6; and 2026-11-10, cases 3.19 to 3.25). When a later change makes those days days of the event again (a clock time changed back, timed to all-day and back, a shortened end taken back, a split taken back), Google revives the old records as ordinary days at the event's values: an edited day's own title is gone, and a day you had deleted is on the calendar again (Measured 2026-11-13, cases 3.36, 3.37, 3.40, 10.2, 10.3).
+- **One day of an all-day event can take a clock time,** once the day's date is cleared (Measured 2026-11-13, case 3.38). Sent without clearing it, Google refuses with "Invalid start time" (Measured 2026-11-07, case 2.2a): the same merge problem as above, not a limit. The reverse, an all-day day inside a timed event sent with the clock fields cleared, is accepted too (Measured 2026-11-10, case 3.31). Better-Cal 1.5.5 refuses the first on the strength of the 2026-11-07 result; that refusal can go.
+- **A deleted repeating event made live again brings every day back,** an edited day with its own values and a day deleted before the event was, which is live again (Measured 2026-11-13, case 10.4). While the event is deleted, each of its days reads as cancelled (case 10.5).
+- **A colour set on one day makes a record for that day,** with a label field Google adds by itself, and a later change to the whole event keeps both (Measured 2026-11-13, case 10.6).
+- **An event no one writes to stays as it is:** three reads ten minutes apart differed in nothing (Measured 2026-11-13, case 10.1).
 - **A repeating event stops at 730 occurrences.** A count of 1,000 is accepted, stored as 1,000, and shows 730 (Measured 2026-11-07, cases 7.3 to 7.5). The limit is in Google's [help for end users](https://support.google.com/calendar/answer/37115) and not in its developer documentation.
 - **Leave the notify setting out and guests get mail.** A change to an event with a guest, sent without saying whether to notify, mailed the guest an "Updated invitation" (Measured 2026-11-07, case 8.4). The [reference](https://developers.google.com/workspace/calendar/api/v3/reference/events/update) lists the setting's values and gives no clear default.
 - **A "this and following" delete skips the trash.** A deleted event stays in the trash for 30 days, but after "This and following events" the deleted events "are not moved to the trash and can't be restored" (Documented, [help center](https://support.google.com/calendar/answer/37113)).
@@ -160,7 +163,7 @@ The probe is a script, so it can be run again when Google changes something. It 
 
 ## Still to Do
 
-This page isn't finished. What's missing, as of 2026-11-10:
+This page isn't finished. What's missing, as of 2026-11-13:
 
 - **Search [Google's issue tracker](https://issuetracker.google.com) in depth** for each behavior above: whether it's filed, what Google answered, and whether any is marked as intended. Nothing here has been checked against it yet.
 - **Widen the page beyond Google:** CalDAV and the iCalendar standard, Thunderbird, and the big products (Outlook, Apple Calendar), each checked and linked the way the Google findings are. Decide then whether this stays one page or becomes several.
@@ -168,10 +171,8 @@ This page isn't finished. What's missing, as of 2026-11-10:
 - **Test the Reported claims** worth testing, starting with the success-that-changes-nothing after a split, or drop them.
 - **Find a better source for the refresh time of followed calendars,** ideally Google's own.
 - **Find a live source for deleted days coming back over Google's CalDAV.** A calendar app's help page said so and called it a bug in Google's CalDAV; that page no longer resolved on 2026-11-10, so the claim is left out above.
-- **Measure again whether one day of an all-day event can take a clock time,** this time with the day's date cleared (case 2.2a was sent without). If it can, a refusal in Better-Cal goes away.
 - **Measure whether a batch call can be all-or-nothing,** and what a failure in the middle of one leaves behind.
 - **Measure Google's own apps,** web and phone, for the same changes as the table. The API and the apps are known to differ.
-- **Confirm the cause of [#256](https://github.com/Oshyan/better-cal/issues/256)** with a probe case (switch, switch back, with a deleted day).
 - **Look for more write-ups:** Stack Overflow answers, other sync tools' issue trackers, and calendar vendors' engineering posts were only skimmed.
 - **Rerun the probe** before this page is published, and again whenever it's revised, and update the dates.
 

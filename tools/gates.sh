@@ -66,6 +66,7 @@ suites_light() { # no database server needed
   start mcp node tools/mcp/test.mjs
   start google-probe php tools/google-probe/test.php
   start google-replay php tools/google-probe/replay-test.php
+  start google-access php tools/google-probe/access-test.php
 }
 
 suites_all() {

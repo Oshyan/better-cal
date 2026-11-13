@@ -1,0 +1,220 @@
+<?php
+// The access probe's own plumbing, against the stand-in in lib/FakeGoogle.php
+// behind a gate that plays each stage: every stage name runs without error,
+// the state file round-trips between runs (ids, etags, the sync token and
+// the stage it came from), writer makes the single event and the series with
+// one day renamed, cleanup deletes what the state lists and leaves the
+// owner's event, the report holds a table per stage and the template and
+// nothing private, writer refuses a calendar the account owns or may only
+// read, and no write goes out without sendUpdates=none.
+//
+// What the gate answers in each state (403 on a write when view-only, 404
+// for everything when unshared or deleted, busy-only lists stripped to their
+// times) is invented: nobody has seen Google's answers yet, which is what
+// the probe is for. The test proves nothing about Google.
+//
+//   php tools/google-probe/access-test.php
+declare(strict_types=1);
+if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+    http_response_code(404);
+    exit;
+}
+
+$root = dirname(__DIR__, 2);
+require $root . '/server/src/bootstrap.php';
+require __DIR__ . '/lib/Api.php';
+require __DIR__ . '/lib/Report.php';
+require __DIR__ . '/lib/Probe.php';
+require __DIR__ . '/lib/FakeGoogle.php';
+require __DIR__ . '/lib/AccessProbe.php';
+
+use BetterCal\GoogleProbe\AccessProbe;
+use BetterCal\GoogleProbe\Api;
+use BetterCal\GoogleProbe\FakeGoogle;
+use BetterCal\GoogleProbe\Probe;
+use BetterCal\GoogleProbe\Report;
+
+$pass = 0;
+$fail = 0;
+function check(string $name, bool $cond, string $detail = ''): void
+{
+    global $pass, $fail;
+    if ($cond) {
+        $pass++;
+        return;
+    }
+    $fail++;
+    echo "FAIL: $name" . ($detail !== '' ? ": $detail" : '') . "\n";
+}
+
+const CAL = 'accesscal0example@group.calendar.google.com';
+const ACCOUNT = 'alex.example@example.com';
+const OWNER = 'sam.sample@example.org';
+
+/** Every request the gate saw, refused or passed on: [method, path, query]. */
+$seen = [];
+
+/** The stand-in behind a gate playing one access state (invented answers, see the file comment). */
+function gated(FakeGoogle $fake, string $mode, array &$seen): \Closure
+{
+    $inner = $fake->transport();
+    return static function (string $method, string $url, array $headers, ?array $payload) use ($fake, $mode, $inner, &$seen): array {
+        $parts = parse_url($url);
+        parse_str((string) ($parts['query'] ?? ''), $query);
+        $path = substr((string) $parts['path'], strlen('/calendar/v3'));
+        $seen[] = ['method' => $method, 'path' => $path, 'query' => $query, 'mode' => $mode];
+        $err = static fn(int $code, string $reason, string $message): array => ['status' => $code, 'body' => (string) json_encode(['error' => ['code' => $code, 'message' => $message, 'errors' => [['domain' => 'global', 'reason' => $reason, 'message' => $message]]]])];
+        if (in_array($mode, ['unshared', 'deleted'], true)) {
+            return $err(404, 'notFound', 'Not Found');
+        }
+        $role = ['writer' => 'writer', 'restored' => 'writer', 'reader' => 'reader', 'freebusy' => 'freeBusyReader', 'owned' => 'owner'][$mode];
+        $fake->role = $role;
+        if ($method !== 'GET' && in_array($role, ['reader', 'freeBusyReader'], true)) {
+            return $err(403, 'requiredAccessLevel', 'You need to have writer access to this calendar.');
+        }
+        $isEventGet = $method === 'GET' && preg_match('#/events/[^/]+$#', $path) === 1;
+        if ($role === 'freeBusyReader' && $isEventGet) {
+            return $err(404, 'notFound', 'Not Found');
+        }
+        $r = $inner($method, $url, $headers, $payload);
+        $body = json_decode((string) $r['body'], true);
+        if (is_array($body) && ($body['kind'] ?? '') === 'calendar#events') {
+            $body['accessRole'] = $role;
+            if ($role === 'freeBusyReader') {
+                $body['items'] = array_map(static fn(array $e) => array_intersect_key($e, array_flip(['id', 'status', 'start', 'end'])), $body['items']);
+            }
+            $r['body'] = (string) json_encode($body);
+        }
+        return $r;
+    };
+}
+
+function stageRun(FakeGoogle $fake, string $dir, string $mode, string $stage, array &$seen): array
+{
+    $api = new Api(gated($fake, $mode, $seen), static fn(): string => 'fake-token', CAL, static function (float $s): void {
+    }, 0.25);
+    $scrub = new Report($dir);
+    $scrub->secret(ACCOUNT, '{account}');
+    $scrub->secret(CAL, '{calendar}');
+    $probe = new AccessProbe($api, $scrub, $dir, false, new \DateTimeImmutable('2027-03-01T08:00:00-08:00'));
+    $before = count($seen);
+    $record = $probe->run($stage);
+    return [$probe, $record, array_slice($seen, $before)];
+}
+
+$tmp = sys_get_temp_dir() . '/google-access-test-' . bin2hex(random_bytes(4));
+mkdir($tmp, 0700, true);
+
+// ---- The stages in the README's order, with cleanup before the delete ------
+$fake = new FakeGoogle(CAL);
+$fake->owner = ACCOUNT;
+$fake->seed(['id' => 'ownerevent01', 'summary' => 'Owner event', 'creator' => ['email' => OWNER], 'start' => ['dateTime' => '2027-03-05T10:00:00-08:00'], 'end' => ['dateTime' => '2027-03-05T11:00:00-08:00']]);
+$dir = $tmp . '/stages';
+$counts = [];
+$records = [];
+foreach ([['writer', 'writer'], ['reader', 'reader'], ['freebusy', 'freebusy'], ['unshared', 'unshared'], ['restored', 'restored'], ['writer', 'writer', 'writer-2'], ['restored', 'cleanup'], ['deleted', 'deleted']] as $run) {
+    [$mode, $stage] = $run;
+    $key = $run[2] ?? $stage;
+    [$probe, $record, $sent] = stageRun($fake, $dir, $mode, $stage, $seen);
+    $records[$key] = $record;
+    $counts[$key] = count($sent);
+    check("$key: runs without stopping", !isset($record['stopped']), (string) ($record['stopped'] ?? ''));
+    check("$key: every request is a row", count($record['rows']) === count($sent), count($record['rows']) . ' rows, ' . count($sent) . ' sent');
+    if ($key === 'writer') {
+        $state = AccessProbe::loadState($probe->statePath);
+        check('writer: the state file names the single event, the series, its renamed day and the insert',
+            isset($state['single']['id'], $state['single']['etag'], $state['series']['id'], $state['series']['day']) && count($state['inserted']) === 1, json_encode($state));
+        check('writer: the series is weekly, four days, its second day renamed',
+            ($fake->events[$state['series']['id']]['recurrence'] ?? null) === ['RRULE:FREQ=WEEKLY;COUNT=4']
+            && (array_values($fake->records($state['series']['id']))[0]['summary'] ?? '') === AccessProbe::DAY_TITLE . ' (writer)');
+        check('writer: the owner\'s event is found and kept in the state', ($state['ownerEvent']['id'] ?? null) === 'ownerevent01');
+        check('writer: the sync token is saved with its stage', ($state['sync']['stage'] ?? null) === 'writer' && str_starts_with((string) ($state['sync']['token'] ?? ''), 'fake-sync-'));
+        check('writer: the setup comes between the reads and the insert',
+            implode(',', array_column($record['rows'], 'n')) === '1,2,3,4,S1,S2,S3,S4,5,6a,6b,6c,6g,6d,6e,6f,6h,7', implode(',', array_column($record['rows'], 'n')));
+        $byN = array_column($record['exchanges'], null, 'n');
+        check('writer: the single event\'s PATCH carries If-Match on the etag just read',
+            isset($byN['6a']['response']['etag'], $byN['6d']) && $byN['6d']['headers'] === ['If-Match: ' . $byN['6a']['response']['etag']] && $byN['6d']['status'] === 200);
+        $tokenAtWriter = $state['sync']['token'];
+    }
+    if ($key === 'reader') {
+        $delta = array_values(array_filter($sent, static fn(array $r) => isset($r['query']['syncToken'])));
+        check('reader: the delta sends the token writer saved', count($delta) === 1 && $delta[0]['query']['syncToken'] === $tokenAtWriter);
+        $row4d = array_values(array_filter($record['rows'], static fn(array $r) => $r['n'] === '4d'))[0] ?? [];
+        check('reader: a list row says whether a sync token came (not the token itself)', ($row4d['fields']['sync token'] ?? null) === 'given');
+        check('reader: the delta row names the stage its token came from', ($row4d['fields']['tokenFrom'] ?? null) === 'writer');
+        $writes = array_filter($record['rows'], static fn(array $r) => $r['method'] !== 'GET');
+        check('reader: every write is recorded with its status and reason', $writes !== [] && array_filter($writes, static fn(array $r) => $r['status'] !== 403 || $r['reason'] !== 'requiredAccessLevel') === []);
+        check('reader: nothing new is made', count(AccessProbe::loadState($probe->statePath)['inserted']) === 1);
+    }
+    if ($key === 'unshared') {
+        check('unshared: the token saved before is still the one from freebusy', (AccessProbe::loadState($probe->statePath)['sync']['stage'] ?? null) === 'freebusy');
+    }
+    if ($key === 'writer-2') {
+        check('a second writer run makes nothing again', array_filter($record['rows'], static fn(array $r) => str_starts_with($r['n'], 'S')) === [] && str_contains(implode(' ', $record['notes']), 'not made again'));
+    }
+    if ($key === 'cleanup') {
+        $state = AccessProbe::loadState($probe->statePath);
+        check('cleanup: only deletes', array_filter($sent, static fn(array $r) => $r['method'] !== 'DELETE') === []);
+        check('cleanup: the state lists nothing left', $state['single'] === null && $state['series'] === null && $state['inserted'] === [], json_encode($state));
+        $live = array_filter($fake->events, static fn(array $e) => Probe::isMarked($e) && empty($e['recurringEventId']) && ($e['status'] ?? '') !== 'cancelled');
+        check('cleanup: nothing the probe made is live', $live === [], implode(', ', array_keys($live)));
+        check('cleanup: the owner\'s event is untouched', ($fake->events['ownerevent01']['status'] ?? '') === 'confirmed' && ($fake->events['ownerevent01']['summary'] ?? '') === 'Owner event (writer)');
+    }
+}
+check('request counts: writer 18, a later stage 15, cleanup one per event, deleted 7 (no 6 once cleanup emptied the state)',
+    $counts['writer'] === 18 && $counts['reader'] === 15 && $counts['freebusy'] === 15 && $counts['unshared'] === 15 && $counts['restored'] === 15 && $counts['cleanup'] === 5 && $counts['writer-2'] === 15 && $counts['deleted'] === 7,
+    json_encode($counts));
+
+$writes = array_filter($seen, static fn(array $r) => $r['method'] !== 'GET');
+check('every write the probe sent carries sendUpdates=none', $writes !== [] && array_filter($writes, static fn(array $r) => ($r['query']['sendUpdates'] ?? null) !== 'none') === []);
+check('no request goes to another calendar', array_filter($seen, static fn(array $r) => !str_starts_with($r['path'], '/calendars/' . rawurlencode(CAL)) && $r['path'] !== '/users/me/calendarList/' . rawurlencode(CAL)) === []);
+
+// ---- The state file round-trips --------------------------------------------
+$state = ['single' => ['id' => 'abc0001', 'etag' => '"1"'], 'series' => ['id' => 'abc0002', 'etag' => '"2"', 'day' => 'abc0002_20270315T180000Z', 'dayEtag' => '"3"'], 'inserted' => ['abc0003'], 'ownerEvent' => null, 'sync' => ['token' => 'tok', 'stage' => 'reader', 'at' => '2027-03-01T08:00:00.000-08:00'], 'stages' => ['writer', 'reader']];
+$probe->state = $state;
+$probe->saveState();
+check('state: what is saved loads back the same', AccessProbe::loadState($probe->statePath) === $state);
+check('state: the file is named by a hash of the calendar, not its id', !str_contains($probe->statePath, 'accesscal0example') && !str_contains($probe->mdPath, 'accesscal0example'));
+check('state: a missing file is the empty state', AccessProbe::loadState($tmp . '/none.json') === AccessProbe::emptyState());
+
+// ---- The report --------------------------------------------------------------
+$md = (string) file_get_contents($probe->mdPath);
+$json = (string) file_get_contents($probe->jsonPath);
+$stages = json_decode($json, true)['stages'] ?? [];
+check('report: one table per run, in order', array_column($stages, 'stage') === ['writer', 'reader', 'freebusy', 'unshared', 'restored', 'writer', 'cleanup', 'deleted']);
+foreach (['writer', 'reader', 'freebusy', 'unshared', 'restored', 'cleanup', 'deleted'] as $s) {
+    check("report: a section for stage $s", str_contains($md, "## Stage $s\n"));
+}
+check('report: the across-stages table and the template are there', str_contains($md, '## Across Stages') && str_contains($md, '## What a Client Can Rely On') && substr_count($md, '  - Answer: ') === 8);
+foreach (['the account address' => ACCOUNT, 'the owner\'s address' => OWNER, 'the calendar id' => CAL, 'a sync token' => 'fake-sync-', 'the bearer token' => 'fake-token', 'an event link' => 'eid='] as $what => $needle) {
+    check("report: never holds $what", !str_contains($md, $needle) && !str_contains($json, $needle));
+}
+
+// ---- Refusals at writer ------------------------------------------------------
+foreach (['owned' => 'owns this calendar', 'reader' => 'Make changes to events', 'unshared' => "isn't in the connected account's list"] as $mode => $says) {
+    $fake = new FakeGoogle(CAL);
+    $before = count($seen);
+    [, $record, $sent] = stageRun($fake, "$tmp/refuse-$mode", $mode, 'writer', $seen);
+    check("refusal ($mode): writer stops and says why", str_contains((string) ($record['stopped'] ?? ''), $says), (string) ($record['stopped'] ?? ''));
+    check("refusal ($mode): nothing was written", array_filter($sent, static fn(array $r) => $r['method'] !== 'GET') === []);
+}
+$fake = new FakeGoogle(CAL);
+foreach (['other01', 'other02'] as $id) {
+    $fake->seed(['id' => $id, 'summary' => 'Sample Hall booking', 'start' => ['date' => '2027-03-02'], 'end' => ['date' => '2027-03-03']]);
+}
+[, $record, $sent] = stageRun($fake, "$tmp/refuse-others", 'writer', 'writer', $seen);
+check('refusal: a calendar with more than the owner\'s one event is refused', str_contains((string) ($record['stopped'] ?? ''), '--allow-other-events') && array_filter($sent, static fn(array $r) => $r['method'] !== 'GET') === []);
+
+// tidy up, unless ACCESS_TEST_KEEP=1 asks to keep the stand-in's report to read
+if (getenv('ACCESS_TEST_KEEP') === '1') {
+    echo "Kept: $tmp/stages\n";
+} else {
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($tmp, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
+    foreach ($it as $f) {
+        $f->isDir() ? rmdir($f->getPathname()) : unlink($f->getPathname());
+    }
+    rmdir($tmp);
+}
+
+echo "\n$pass passed, $fail failed\n";
+exit($fail === 0 ? 0 : 1);

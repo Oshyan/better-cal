@@ -95,6 +95,45 @@ Each of these is a place a real difference could hide; any other difference is a
 - **Reads that lag.** A GET whose answer differs is asked again (`--read-tries`, 2 seconds apart) before it counts; the divergence shown is the last try's. A write is never sent twice.
 - **Setup.** The PATCH that repeats a harness change outside a request is not compared, only learned from; a target that refuses it makes that scenario unreplayable there, with the target's reason.
 
+## The Access Probe
+
+What Google answers the connected account when access to a calendar shared with it is lowered step by step and then taken away: which request says "may read but not write", which says "may not see", which says "deleted", and whether a write is refused with 403 and which reason. Nobody has seen these answers yet; Better-Cal's rule for a calendar it may no longer change waits on them.
+
+It needs a second Google account, which owns a scratch calendar and shares it with the account Better-Cal is connected to. Each run is one stage and sends the same fixed set (`lib/AccessProbe.php` lists it): the account's calendar list entry, the calendar, two event lists (one from the sync token the stage before saved), an insert, a read and a title change of each event the first stage made, and a read of an event that never existed. The first stage, `writer`, also makes a single event and a weekly series of four with its second day renamed; nothing is deleted until the calendar is.
+
+### The Owner's Steps
+
+1. In the second Google account, create a new calendar named "Access probe". Add one event to it by hand, named "Owner event", any day next week.
+2. Share it with the address of the account Better-Cal is connected to, with "Make changes to events".
+3. In the connected account, open the sharing mail and add the calendar, so it shows in that account's list of calendars.
+4. Give the manager the calendar's id (the calendar's settings, "Integrate calendar", Calendar ID).
+5. When the manager asks, change the sharing to "See all event details".
+6. When asked, change it to "See only free/busy (hide details)".
+7. When asked, remove the connected account from the sharing.
+8. When asked, share it again with "Make changes to events" (and add it again from the mail if Google sends one).
+9. When asked, delete the calendar.
+
+Wait for the manager's run between steps. A sharing change can take a minute to reach the API; if a stage looks unchanged from the one before, run it again (the report keeps both).
+
+### The Manager's Commands
+
+Where the app's `.env` is, one per step, with the same `--report` folder every time (the default, `workfolder/google-access/`, is gitignored):
+
+```bash
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --stage writer     # after step 4
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --stage reader     # after step 5
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --stage freebusy   # after step 6
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --stage unshared   # after step 7
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --stage restored   # after step 8
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --stage deleted    # after step 9
+```
+
+`writer` refuses, writing nothing, when the calendar isn't in the account's list, when the account owns it, when Google doesn't say `writer`, or when it holds more than the owner's one event (`--allow-other-events` overrides the last). `--stage cleanup` sends only the deletes of what the state file lists and says what it could not delete; it is needed only when the calendar is kept instead of deleted. Requests per stage, with the owner's event: 18 for `writer`, 15 for each later stage (13 and 16 without it); a retry Google asks for adds one.
+
+Each run adds a table to `access-<hash>.md` (and `.json`, every exchange raw), where the hash stands for the calendar id; the state (event ids, their last etags, the last sync token and the stage it came from) is `access-state-<hash>.json` beside them and holds the raw token. The report opens with a table of every request's status by stage and ends with the questions to answer from it, left blank. It is scrubbed as the probe's is, and any other address in it is replaced too. Every write sends `sendUpdates=none`, and every event made carries the probe's marker.
+
+`php tools/google-probe/access-test.php` checks the plumbing against the stand-in behind a gate that plays each stage. What the gate answers in each state is invented, so the test says nothing about Google.
+
 ## Files
 
-`run.php` (the command line and the real transport), `lib/Api.php` (every request: token, `sendUpdates=none`, retries, the exchange record), `lib/Probe.php` (the groups and cases, the read-backs, the findings, cleanup), `lib/Report.php` (the report and its scrubbing), `lib/FakeGoogle.php` and `test.php` (the tests). The replay: `lib/Trace.php` (the recorder and the coverage kinds), `lib/Replay.php` (mapping, normalizing, comparing, cleanup, and the two targets), `replay.php` (the command line), `record.php` and `record-app.php` (the trace set), `replay-test.php` (its tests).
+`run.php` (the command line and the real transport), `lib/Api.php` (every request: token, `sendUpdates=none`, retries, the exchange record), `lib/Probe.php` (the groups and cases, the read-backs, the findings, cleanup), `lib/Report.php` (the report and its scrubbing), `lib/FakeGoogle.php` and `test.php` (the tests). The replay: `lib/Trace.php` (the recorder and the coverage kinds), `lib/Replay.php` (mapping, normalizing, comparing, cleanup, and the two targets), `replay.php` (the command line), `record.php` and `record-app.php` (the trace set), `replay-test.php` (its tests). The access probe: `access.php` (the command line), `lib/AccessProbe.php` (the fixed set, the state file, the report), `access-test.php` (its tests).

@@ -4,6 +4,19 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 1.5.6 (unreleased)
+
+Google calendars, after replaying Better-Cal's own requests against Google and probing what it does.
+
+- **A repeating event is no longer switched between timed and all-day where Google Calendar would stop showing some of its days.** Google does this, undocumented, when a day of the event has its own changes or was deleted and the event's time is midnight in UTC (09:00 in Tokyo, 16:00 or 17:00 in Los Angeles). Better-Cal now says so before sending anything, names the days, and gives the way that works: move the event's time first, then switch.
+- **A day keeps its own notes** when you change something for all events of a repeating event that has no notes itself (a link, its title, its time, how often it repeats). Google cleared them, and Better-Cal kept what Google had.
+- **A change that would leave a repeating event only deleted days is refused,** as one that leaves no days is ("Delete it instead?"). Google deleted the whole event.
+- **A change to all events sends fewer requests** (one per day it writes, where it sent three) and no longer stops half done because a day was changed in Google Calendar in the seconds it is being sent: the last write wins, as documented. A day the event no longer has at Google is named instead of sent.
+- **Undo's refusals read as one sentence,** without "Undo failed:" in front of one that already says what happened.
+- Maintainers: `tools/google-probe` ran three times on 2026-11-13 ([findings](docs/design/research/google-series/probe-2026-11-13.md)), and the stand-in for Google now hides days, clears notes and cancels a series as Google does. The harness's shrinker no longer stops on a case with no edit, and its interleaving mode refuses `--product` instead of ignoring it.
+
+**What the upgrade loses:** a change left half done by 1.5.5 that had already brought a deleted day back keeps it back after Finish; Put back restores it. A half-done switch between timed and all-day at such a time may be refused by Finish with the new sentence. Nothing else: no event, tag, person or setting changes.
+
 ## 1.5.5 (2026-11-10)
 
 Google calendars, CalDAV and undo after an outside review and a round of independent bug hunts: every request to Google is conditional, a change that stops half way can be finished or put back, a day keeps what only Better-Cal holds for it, and an undo refuses with its reason where it can't be sure which day it is about ([roadmap](ROADMAP.md#15-one-engine-under-the-calendar)).

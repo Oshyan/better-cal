@@ -1,6 +1,6 @@
 # A Change to All Events Under "Last Write Wins"
 
-A written model, not yet built. It replaces the way `GoogleSeries::run()` reads Google during a change to all events of a repeating event on a Google calendar, and the way Finish and Put back compare. The rule it follows is the owner's: while one of our own changes is being sent, the last write wins; between changes, Google is read first and a change made there is reported, and a change to a field we are not changing is no conflict. Evidence: [probe 2026-11-13](research/google-series/probe-2026-11-13.md) (both runs), [replay round 4](research/google-series/replay-2026-11-13.md), the outside read of `5f60dd8b..14a17871` and its probes (`server/tests/db/probe-fix-*.test.php` on `google-156-read-fixes`).
+A written model, not yet built. It replaces the way `GoogleSeries::run()` reads Google during a change to all events of a repeating event on a Google calendar, and the way Finish and Put back compare. The rule it follows is the owner's: while one of our own changes is being sent, the last write wins; between changes, Google is read first and a change made there is reported, and a change to a field we are not changing is no conflict. Evidence: [probe 2026-11-13](research/google-series/probe-2026-11-13.md) (both runs), [replay round 4](research/google-series/replay-2026-11-13.md), the outside read of `5f60dd8b..14a17871` and its probes (on `google-156-read-fixes`; on this branch the regular tests google-series-stops, google-series-request-count, google-exdate-kept-through-changes, google-day-other-form-paths, google-upgrade-from-155).
 
 ## Why
 
@@ -97,7 +97,7 @@ The refusal in `Model::compute()` does not make the mutation `refused-default-st
 - `google-series.test.php`, "Put back puts nothing back when a series changed at Google since": the stranger's title is not something Put back sends (it sends the time), so Put back goes ahead, keeps the title and names it. Today it is refused.
 - `google-series-recovery.test.php`, F1 and the "another part of the series changed elsewhere" and "only the zone changed elsewhere" cases: each goes ahead where what changed since is not something Put back sends, keeping and naming it; refused only where both touch the same day or master group. F2, F3, F5 and F6 stand.
 - `google-series-back-again.test.php`: the two "inside the window" cases go ahead as now, on the stop's read instead of the guess; "an ordinary day renamed at Google" after a clock change is still refused (its key goes away with Put back's master write), now naming the day.
-- The reader's `probe-fix-stops`: Put back with the network down through the stop goes ahead with the no-baseline sentence; no false refusals.
+- The reader's stops probe (google-series-stops): Put back with the network down through the stop goes ahead with the no-baseline sentence; no false refusals.
 - `google-etag.test.php`, "a write is conditional on a read made just before it": the master's write is; a day's is not.
 - The edit harness: `x-readback` ("kept or named") is replaced by the check below; its oracle probe "a day renamed at Google during a series write is put back to the series without a word" becomes the correct outcome, and the injected damage becomes "kept"; the Interleave mode's exclusion of a raced day from the undo comparison goes.
 - The unit tests of `afterMaster` and `rebase` go with them.
@@ -108,10 +108,11 @@ The refusal in `Model::compute()` does not make the mutation `refused-default-st
 
 The harness computes it from its own records: the target from what was asked and the rows before (its spec oracle, nothing in `server/src`), against the stand-in's store after the run. It must catch, each injected: the stand-in clearing a kept day's notes on a master write that leaves them out (cause 2) with the app not sending them again; a stranger's rename of a day between the master write and the read-back kept; a revived record left (a deleted day live again, an edited day at the series' values); any one day step dropped (a mutation skipping the k-th write, or one kind); a 404 not named.
 
-## Owner choices this leaves
+## Owner choices
 
-- **Finish anyway.** When a recovery and a change made since in Google Calendar touch the same day or field, should Finish offer to write the plan over it (last write wins by the person's choice), or only name it and leave the change in Review? The second can leave a change half done for good.
-- **No baseline.** The model goes ahead with a sentence. The alternative, refusing both Finish and Put back, leaves no way out after a network loss.
+- **Finish anyway.** Decided: when a recovery and a change made since in Google Calendar touch the same day or field, Finish offers to finish anyway, with a list of what it would write over (last write wins by the person's choice).
+- **No baseline.** Decided: with no stop's read, Finish and Put back go ahead and say so in plain words.
+- **What Google had before, in full.** The owner's requirement, in his words: "We should definitely just record, in full, what Google (and any remote!) had before our change, so we can put it back." So the redesign stores Google's whole answer for each series it changes as it was read before the change (step 1's read: the master and every record, every field Google gave, not only the fields the rows here hold), beside the stop's read. Put back sends that state back; nothing of it is rebuilt from the rows here or from a prediction. The same applies to any remote the app writes to (a CalDAV server's resource as fetched, not as parsed), so a recovery never depends on what the app kept of it.
 
 ## Size of the build
 

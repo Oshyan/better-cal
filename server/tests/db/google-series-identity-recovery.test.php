@@ -130,36 +130,36 @@ return static function (Db $db): void {
         }
     };
 
-    $timedUtc = ['start' => '2027-01-04T00:00:00Z', 'end' => '2027-01-04T01:00:00Z', 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=4'];
+    $timedUtc = ['start' => '2027-01-04T01:00:00Z', 'end' => '2027-01-04T02:00:00Z', 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=4'];
     $allDay = ['start' => '2027-01-04', 'end' => '2027-01-05', 'allDay' => true, 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=4'];
-    $toAllDay = ['scope' => 'all', 'instanceStart' => '2027-01-04T00:00:00Z', 'start' => '2027-01-04', 'end' => '2027-01-05', 'allDay' => true];
-    $toTimed = ['scope' => 'all', 'instanceStart' => '2027-01-04', 'start' => '2027-01-04T00:00:00Z', 'end' => '2027-01-04T01:00:00Z', 'allDay' => false, 'tzid' => 'UTC'];
-    $timedRecords = ['20270111T000000Z' => [false, $notes, $place], '20270118T000000Z' => [true, null, null]];
+    $toAllDay = ['scope' => 'all', 'instanceStart' => '2027-01-04T01:00:00Z', 'start' => '2027-01-04', 'end' => '2027-01-05', 'allDay' => true];
+    $toTimed = ['scope' => 'all', 'instanceStart' => '2027-01-04', 'start' => '2027-01-04T01:00:00Z', 'end' => '2027-01-04T02:00:00Z', 'allDay' => false, 'tzid' => 'UTC'];
+    $timedRecords = ['20270111T010000Z' => [false, $notes, $place], '20270118T010000Z' => [true, null, null]];
     $dayRecords = ['20270111' => [false, $notes, $place], '20270118' => [true, null, null]];
     $dayHere = ['allDay' => 1, 'zone' => 'UTC', 'skips' => ['2027-01-18 00:00:00'], 'days' => [['2027-01-11 00:00:00', $notes, $place, 1]]];
-    $timedHere = ['allDay' => 0, 'zone' => 'UTC', 'skips' => ['2027-01-18 00:00:00'], 'days' => [['2027-01-11 00:00:00', $notes, $place, 0]]];
+    $timedHere = ['allDay' => 0, 'zone' => 'UTC', 'skips' => ['2027-01-18 01:00:00'], 'days' => [['2027-01-11 01:00:00', $notes, $place, 0]]];
 
-    // A change between timed and all-day where the keys here coincide (00:00 UTC): Google drops every record on the
+    // A change between timed and all-day at 01:00 UTC (at 00:00 UTC, where the two forms' keys meet, Google would hide the days and the switch is refused: google-hidden-switch): Google drops every record on the
     // master write, the app predicts exactly that, so nothing "changed at Google since" and Put back reverses it.
-    scenario('timed at midnight UTC made all-day, stopped after the master write, put back', fn() => $run([
-        'name' => 'timed 00:00 UTC to all-day, stopped after the master write, Put back', 'create' => $timedUtc, 'edit' => '2027-01-11T00:00:00Z', 'skip' => '2027-01-18T00:00:00Z',
+    scenario('timed at 01:00 UTC made all-day, stopped after the master write, put back', fn() => $run([
+        'name' => 'timed 01:00 UTC to all-day, stopped after the master write, Put back', 'create' => $timedUtc, 'edit' => '2027-01-11T01:00:00Z', 'skip' => '2027-01-18T01:00:00Z',
         'body' => $toAllDay, 'before' => $timedRecords,
         'afterMaster' => [true, []], 'left' => 'no record', 'then' => 'putBack',
     ]));
-    scenario('all-day made timed at midnight UTC, stopped after the master write, put back', fn() => $run([
-        'name' => 'all-day to timed 00:00 UTC, stopped after the master write, Put back', 'create' => $allDay, 'edit' => '2027-01-11', 'skip' => '2027-01-18',
+    scenario('all-day made timed at 01:00 UTC, stopped after the master write, put back', fn() => $run([
+        'name' => 'all-day to timed 01:00 UTC, stopped after the master write, Put back', 'create' => $allDay, 'edit' => '2027-01-11', 'skip' => '2027-01-18',
         'body' => $toTimed, 'before' => $dayRecords,
         'afterMaster' => [false, []], 'left' => 'no record', 'then' => 'putBack',
     ]));
     // The same stops, finished instead: the edited day and the skip are sent again under the new form's ids.
-    scenario('timed at midnight UTC made all-day, stopped after the master write, finished', fn() => $run([
-        'name' => 'timed 00:00 UTC to all-day, stopped after the master write, Finish', 'create' => $timedUtc, 'edit' => '2027-01-11T00:00:00Z', 'skip' => '2027-01-18T00:00:00Z',
+    scenario('timed at 01:00 UTC made all-day, stopped after the master write, finished', fn() => $run([
+        'name' => 'timed 01:00 UTC to all-day, stopped after the master write, Finish', 'create' => $timedUtc, 'edit' => '2027-01-11T01:00:00Z', 'skip' => '2027-01-18T01:00:00Z',
         'body' => $toAllDay, 'before' => $timedRecords,
         'afterMaster' => [true, []], 'left' => 'no record', 'then' => 'finish',
         'done' => ['allDay' => true, 'zone' => null, 'records' => $dayRecords], 'doneHere' => $dayHere,
     ]));
-    scenario('all-day made timed at midnight UTC, stopped after the master write, finished', fn() => $run([
-        'name' => 'all-day to timed 00:00 UTC, stopped after the master write, Finish', 'create' => $allDay, 'edit' => '2027-01-11', 'skip' => '2027-01-18',
+    scenario('all-day made timed at 01:00 UTC, stopped after the master write, finished', fn() => $run([
+        'name' => 'all-day to timed 01:00 UTC, stopped after the master write, Finish', 'create' => $allDay, 'edit' => '2027-01-11', 'skip' => '2027-01-18',
         'body' => $toTimed, 'before' => $dayRecords,
         'afterMaster' => [false, []], 'left' => 'no record', 'then' => 'finish',
         'done' => ['allDay' => false, 'zone' => 'UTC', 'records' => $timedRecords], 'doneHere' => $timedHere,

@@ -848,7 +848,18 @@ final class GoogleSeries
                     $found[$i] = self::stateOf($before, $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $before['id']]));
                 }
                 $reads[$i] = $this->readBack($calendar, $send, !empty($t['uid']) ? (string) $t['uid'] : null, (string) $t['googleId'], null, $beforeSend);
-                $carried[$i] = self::carriedExdates(self::held($reads[$i], (string) $t['googleId']), $t);
+                // A switch between timed and all-day that would hide days at Google is refused before anything is
+                // sent, by every record Google holds, one at the series' values included, which the rows here can't
+                // show (3.65; the planner refuses by the rows: decisions.md, "A switch between timed and all-day that
+                // Google would hide days with is refused").
+                $h = self::held($reads[$i], (string) $t['googleId']);
+                if ($h['master'] !== null) {
+                    $hidden = self::hiddenRefusal($h['master'], $t['master'], array_merge(array_keys($h['records']), array_keys($h['cancelled'])), $thisYear);
+                    if ($hidden !== null) {
+                        throw new HttpError('google_hidden_days', $hidden['words'], 409, ['days' => $hidden['days'], 'toAllDay' => $hidden['toAllDay'], 'clock' => $hidden['clock']]);
+                    }
+                }
+                $carried[$i] = self::carriedExdates($h, $t);
                 if (self::masterBody($old, $t['master']) !== [] || ($t['singles'] ?? []) !== [] || self::stepsFor($t, $reads[$i]) !== []) {
                     $first[$i] = $this->condition($calendar, (string) $t['googleId'], $beforeSend, $reads[$i])['etag'];
                 }
@@ -1751,6 +1762,70 @@ final class GoogleSeries
         }
         ksort($out['records']);
         return $out;
+    }
+
+    /**
+     * The days a switch of $old to $new between timed and all-day would hide
+     * at Google (decisions.md, "A switch between timed and all-day that
+     * Google would hide days with is refused"; probe 2026-11-13, 3.48 to
+     * 3.51, 3.63 to 3.65): each of $keys (days holding a record at Google
+     * under $old, live or cancelled, whatever it holds) at whose instant
+     * $new has a day of its own, an all-day day's instant being its date at
+     * 00:00 UTC. Empty when the form doesn't change. Pure.
+     *
+     * @param list<string> $keys
+     * @return list<string>
+     */
+    public static function hiddenBySwitch(array $old, array $new, array $keys): array
+    {
+        if ((int) $old['all_day'] === (int) $new['all_day'] || (string) ($new['rrule'] ?? '') === '') {
+            return [];
+        }
+        $series = ['start_utc' => $new['start_utc'], 'end_utc' => $new['end_utc'], 'all_day' => (int) $new['all_day'], 'tzid' => (string) $new['tzid'], 'rrule' => (string) $new['rrule'], 'exdates_json' => null];
+        $out = [];
+        foreach (array_unique(array_map(static fn($k): string => Time::toDb(Time::fromDb((string) $k)), $keys)) as $key) {
+            $at = Time::fromDb($key);
+            foreach (Recurrence::occurrences($series, $at->modify('-1 day'), $at->modify('+2 days'), null, 8) as $o) {
+                if (Time::toDb($o['start']) === $key) {
+                    $out[] = $key;
+                    break;
+                }
+            }
+        }
+        sort($out);
+        return $out;
+    }
+
+    /**
+     * The refusal of such a switch, or null when it hides no day: `days`, the
+     * days it would hide, as they would show after it (dates, Y-m-d), `toAllDay`, and
+     * `clock` (H:i in the new zone) when the switch is to timed; `words`, the
+     * sentence (up to three days named, the rest counted, and the way that
+     * works, 3.63 and 3.64). The client composes the same sentence from the
+     * data in the person's own formats.
+     *
+     * @param list<string> $keys
+     * @return array{days:list<string>, toAllDay:bool, clock:?string, words:string}|null
+     */
+    public static function hiddenRefusal(array $old, array $new, array $keys, int $thisYear): ?array
+    {
+        $hidden = self::hiddenBySwitch($old, $new, $keys);
+        if ($hidden === []) {
+            return null;
+        }
+        // The days hidden are the new form's, each where it would show after the switch: a daily series' record can
+        // hide the next day's all-day day (19:00 New York is 00:00 UTC the day after).
+        $zone = Time::zone((int) $new['all_day'] === 1 ? 'UTC' : (string) $new['tzid']);
+        $dns = array_values(array_unique(array_map(static fn(string $k): int => Cal::dnOf(Time::fromDb($k)->setTimezone($zone)), $hidden)));
+        $days = array_map(static fn(int $dn): string => Words::date($dn, $thisYear), $dns);
+        $named = count($days) > 3 ? implode(', ', array_slice($days, 0, 3)) . ' and ' . (count($days) - 3) . ' more' : Words::andList($days);
+        $lose = 'Google Calendar would hide ' . (count($days) === 1 ? 'a day' : 'days') . " of this event ($named)";
+        $toAllDay = (int) $new['all_day'] === 1;
+        $clock = $toAllDay ? null : Time::fromDb((string) $new['start_utc'])->setTimezone(Time::zone((string) $new['tzid']))->format('H:i');
+        $words = $toAllDay
+            ? "$lose if it became all-day at its current time. Move it to another time first, then make it all-day."
+            : "$lose if it became timed at $clock. Make it timed at another time first, then change the time to $clock.";
+        return ['days' => array_map(static fn(int $dn): string => Cal::date($dn), $dns), 'toAllDay' => $toAllDay, 'clock' => $clock, 'words' => $words];
     }
 
     /**

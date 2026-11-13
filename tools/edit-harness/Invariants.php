@@ -528,6 +528,10 @@ trait Invariants
             $this->fail('e-refusal', 'the design refuses an edit that leaves no events, and it was applied', []);
             return;
         }
+        if ($this->google !== null && ($hidden = $x->googleHidden($out)) !== []) {
+            $this->fail('e-refusal', 'the design refuses on Google a switch that would hide days there (' . implode(', ', $hidden) . '), and it was applied', []);
+            return;
+        }
         foreach ($x->unoracled as $u) {
             $this->fail('H-oracle', 'the harness\'s mapping disagrees with itself: ' . $u, []);
         }
@@ -1130,6 +1134,21 @@ trait Invariants
         }
         $g = $google['plan'];
         $codes = array_values(array_unique(array_column($g['refusals'] ?? [], 'code')));
+        // A switch that would hide days at Google is refused there, naming them; the local plan is not (the design's
+        // googleHidden, from the chosen reading's new days).
+        $readings = $x->readings();
+        $chosen = null;
+        foreach ($readings as $r) {
+            if ($r['id'] === ($choices['reading'] ?? Expect::preselected($readings))) {
+                $chosen = $r;
+            }
+        }
+        $hidden = $chosen !== null && $chosen['enabled'] && $x->refusal() === null ? $x->googleHidden($x->outcome($chosen, $choices)) : [];
+        if ($hidden !== []) {
+            $r = array_values(array_filter($g['refusals'] ?? [], static fn(array $r): bool => ($r['code'] ?? '') === 'googleHidden'))[0] ?? null;
+            $this->check('i-google', $google['refused'] && $r !== null && ($r['days'] ?? null) === $hidden, 'a switch that would hide days at Google is refused there, naming exactly those days', ['design' => $hidden, 'refusal' => $r, 'codes' => $codes]);
+            return;
+        }
         $strip = static function (array $p): array {
             $p['notes'] = array_values(array_filter($p['notes'] ?? [], static fn(array $n): bool => ($n['kind'] ?? '') !== 'google'));
             unset($p['hash']);
@@ -1163,6 +1182,11 @@ trait Invariants
         }
         $out = $x->outcome($chosen, $choices);
         if (!empty($out['empty'])) {
+            return;
+        }
+        if ($this->google !== null && ($hidden = $x->googleHidden($out)) !== []) {
+            $r = array_values(array_filter($plan['refusals'] ?? [], static fn(array $r): bool => ($r['code'] ?? '') === 'googleHidden'))[0] ?? null;
+            $this->check('e-refusal', $r !== null && ($r['days'] ?? null) === $hidden, 'a switch that would hide days on Google is refused naming exactly those days', ['design' => $hidden, 'refusal' => $r]);
             return;
         }
         $this->fail('e-refusal', 'the edit was refused though the design allows it: ' . $e->getMessage(), ['reading' => $chosen['id'], 'refusals' => $plan['refusals'] ?? null, 'rrule' => $st['row']['rrule']]);

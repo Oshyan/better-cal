@@ -26,6 +26,12 @@ declare(strict_types=1);
 // come from the environment unless a block sets one. Every expected value
 // below is written from the spec; nothing in server/src computes one.
 // Invented data.
+//
+// Since the probe of 2026-11-13 (3.48 to 3.51, 3.63 to 3.65), a switch between timed and all-day where the two forms'
+// keys meet hides the edited and deleted days at Google for good, so on a Google calendar it is refused before anything
+// is sent, naming the days it would hide (decisions.md, "A switch between timed and all-day that Google would hide days
+// with is refused"). The blocks below at such keys now expect that refusal; the 10:00 Los Angeles controls, where no key
+// meets, still expect every day kept.
 
 use BetterCal\Domain\ReviewQueue;
 use BetterCal\Domain\Undo;
@@ -108,6 +114,25 @@ return static function (Db $db): void {
         $t->s->fake->requests = [];
         $t->e->patch($t->u, $t->id, $body + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices]]);
         $t->e->throwDeferred();
+    };
+
+    /** A switch Google would hide days with: the plan refused naming $days, the commit refused, nothing sent, no row changed. */
+    $refusedSwitch = static function (object $t, string $name, array $body, array $days) use ($db): void {
+        $plan = $t->e->previewPatch($t->u, $t->id, $body + ['plan' => ['choices' => []]]);
+        $r = array_values(array_filter($plan['refusals'] ?? [], static fn(array $x): bool => ($x['code'] ?? '') === 'googleHidden'))[0] ?? null;
+        checkEq("$name: the switch is refused on Google, naming the days it would hide there", $days, $r['days'] ?? null);
+        $rows = static fn(): array => $db->all('SELECT * FROM events WHERE id = ? OR recurrence_parent_id = ? ORDER BY id', [$t->id, $t->id]);
+        $before = $rows();
+        $t->s->fake->requests = [];
+        $error = null;
+        try {
+            $t->e->patch($t->u, $t->id, $body + ['plan' => ['hash' => $plan['hash'], 'choices' => []]]);
+            $t->e->throwDeferred();
+        } catch (HttpError $e) {
+            $error = $e->errorCode;
+        }
+        $writes = array_values(array_filter($t->s->fake->requests, static fn(array $q): bool => $q['method'] !== 'GET'));
+        checkEq("$name: the commit is refused, nothing is sent to Google and no row changes", ['series_refused', [], true], [$error, $writes, $before === $rows()]);
     };
 
     /**
@@ -195,16 +220,24 @@ return static function (Db $db): void {
     // place, the third deleted, made all-day), its other direction, the skip on either side, and the 10:00 Los Angeles
     // controls where no key coincides.
     foreach ([
-        ['timed 00:00 UTC to all-day (edit, then skip)', $timedUtc, '2027-01-11T00:00:00Z', '2027-01-18T00:00:00Z', $toAllDay('2027-01-04T00:00:00Z', '2027-01-04'), $asAllDay, '2027-01-11', '2027-01-18'],
-        ['timed 00:00 UTC to all-day (skip, then edit)', $timedUtc, '2027-01-18T00:00:00Z', '2027-01-11T00:00:00Z', $toAllDay('2027-01-04T00:00:00Z', '2027-01-04'), $asAllDay, '2027-01-18', '2027-01-11'],
-        ['timed 00:00 UTC to all-day (from the last day)', $timedUtc, '2027-01-04T00:00:00Z', '2027-01-18T00:00:00Z', $toAllDay('2027-01-25T00:00:00Z', '2027-01-25'), $asAllDay, '2027-01-04', '2027-01-18'],
-        ['timed 10:00 Los Angeles to all-day', $timedLa, '2027-01-11T10:00:00-08:00', '2027-01-18T10:00:00-08:00', $toAllDay('2027-01-04T10:00:00-08:00', '2027-01-04'), $asAllDay, '2027-01-11', '2027-01-18'],
-        ['all-day to timed 00:00 UTC (edit, then skip)', $allDay, '2027-01-11', '2027-01-18', $toUtc, $asUtc, '2027-01-11', '2027-01-18'],
-        ['all-day to timed 00:00 UTC (skip, then edit)', $allDay, '2027-01-18', '2027-01-11', $toUtc, $asUtc, '2027-01-18', '2027-01-11'],
-        ['all-day to timed 10:00 Los Angeles', $allDay, '2027-01-11', '2027-01-18', $toLa, $asLa, '2027-01-11', '2027-01-18'],
-    ] as [$name, $create, $edit, $skip, $body, $as, $edited, $skipped]) {
-        $scenario($name, function () use ($db, $setup, $change, $verify, $name, $create, $edit, $skip, $body, $as, $edited, $skipped): void {
+        ['timed 00:00 UTC to all-day (edit, then skip)', $timedUtc, '2027-01-11T00:00:00Z', '2027-01-18T00:00:00Z', $toAllDay('2027-01-04T00:00:00Z', '2027-01-04'), $asAllDay, '2027-01-11', '2027-01-18', ['2027-01-11', '2027-01-18']],
+        ['timed 00:00 UTC to all-day (skip, then edit)', $timedUtc, '2027-01-18T00:00:00Z', '2027-01-11T00:00:00Z', $toAllDay('2027-01-04T00:00:00Z', '2027-01-04'), $asAllDay, '2027-01-18', '2027-01-11', ['2027-01-11', '2027-01-18']],
+        ['timed 00:00 UTC to all-day (from the last day)', $timedUtc, '2027-01-04T00:00:00Z', '2027-01-18T00:00:00Z', $toAllDay('2027-01-25T00:00:00Z', '2027-01-25'), $asAllDay, '2027-01-04', '2027-01-18', ['2027-01-04', '2027-01-18']],
+        ['timed 10:00 Los Angeles to all-day', $timedLa, '2027-01-11T10:00:00-08:00', '2027-01-18T10:00:00-08:00', $toAllDay('2027-01-04T10:00:00-08:00', '2027-01-04'), $asAllDay, '2027-01-11', '2027-01-18', null],
+        ['all-day to timed 00:00 UTC (edit, then skip)', $allDay, '2027-01-11', '2027-01-18', $toUtc, $asUtc, '2027-01-11', '2027-01-18', ['2027-01-11', '2027-01-18']],
+        ['all-day to timed 00:00 UTC (skip, then edit)', $allDay, '2027-01-18', '2027-01-11', $toUtc, $asUtc, '2027-01-18', '2027-01-11', ['2027-01-11', '2027-01-18']],
+        ['all-day to timed 10:00 Los Angeles', $allDay, '2027-01-11', '2027-01-18', $toLa, $asLa, '2027-01-11', '2027-01-18', null],
+    ] as [$name, $create, $edit, $skip, $body, $as, $edited, $skipped, $hidden]) {
+        $scenario($name, function () use ($db, $setup, $change, $verify, $refusedSwitch, $name, $create, $edit, $skip, $body, $as, $edited, $skipped, $hidden): void {
             $t = $setup(['create' => $create, 'edit' => $edit, 'skip' => $skip]);
+            if ($hidden !== null) {
+                try {
+                    $refusedSwitch($t, $name, $body, $hidden);
+                } finally {
+                    GoogleStand::forget($db, $t->u);
+                }
+                return;
+            }
             try {
                 $w = $as + ['edited' => $edited, 'skipped' => $skipped, 'sent' => true];
                 $change($t, $name, $body, [], $w);
@@ -265,40 +298,37 @@ return static function (Db $db): void {
     // Test 5: west of UTC on consecutive days. Daily at 19:00 New York in January (00:00 UTC the next day): an edited day
     // on the 5th, a skip on the 6th, a tag on the 8th; made all-day, and the reverse. Each stays on its own date.
     $ny = ['allDay' => false, 'clock' => '19:00', 'zone' => 'America/New_York', 'window' => ['2027-01-03', '2027-01-14']];
-    $scenario('west of UTC, daily at 19:00 New York made all-day', function () use ($db, $setup, $change, $verify, $ny, $toAllDay): void {
+    // Both now refused on Google: the edited day of the 5th and the skip of the 6th hold records at 00:00 UTC on the 6th
+    // and the 7th, where the all-day series has days of its own; and the reverse, the all-day records of the 5th and the
+    // 6th sit where the 19:00 days of the 4th and the 5th fall.
+    $scenario('west of UTC, daily at 19:00 New York made all-day', function () use ($db, $setup, $refusedSwitch, $toAllDay): void {
         $name = 'daily 19:00 New York to all-day';
         $t = $setup(['create' => ['start' => '2027-01-04T19:00:00-05:00', 'end' => '2027-01-04T20:00:00-05:00', 'tzid' => 'America/New_York', 'rrule' => 'FREQ=DAILY;COUNT=8'],
             'edit' => '2027-01-05T19:00:00-05:00', 'skip' => '2027-01-06T19:00:00-05:00', 'tag' => '2027-01-08T19:00:00-05:00']);
         try {
-            $w = ['allDay' => true, 'window' => $ny['window'], 'edited' => '2027-01-05', 'skipped' => '2027-01-06', 'tagged' => '2027-01-08'];
-            $change($t, $name, $toAllDay('2027-01-04T19:00:00-05:00', '2027-01-04'), [], $w);
-            $verify($t, $name, $w);
+            $refusedSwitch($t, $name, $toAllDay('2027-01-04T19:00:00-05:00', '2027-01-04'), ['2027-01-06', '2027-01-07']);
         } finally {
             GoogleStand::forget($db, $t->u);
         }
     });
-    $scenario('west of UTC, daily all-day made 19:00 New York', function () use ($db, $setup, $change, $verify, $ny): void {
+    $scenario('west of UTC, daily all-day made 19:00 New York', function () use ($db, $setup, $refusedSwitch): void {
         $name = 'daily all-day to 19:00 New York';
         $t = $setup(['create' => ['start' => '2027-01-04', 'end' => '2027-01-05', 'allDay' => true, 'tzid' => 'UTC', 'rrule' => 'FREQ=DAILY;COUNT=8'],
             'edit' => '2027-01-05', 'skip' => '2027-01-06', 'tag' => '2027-01-08']);
         try {
-            $w = $ny + ['edited' => '2027-01-05', 'skipped' => '2027-01-06', 'tagged' => '2027-01-08'];
-            $change($t, $name, ['scope' => 'all', 'instanceStart' => '2027-01-04', 'start' => '2027-01-04T19:00:00-05:00', 'end' => '2027-01-04T20:00:00-05:00', 'allDay' => false, 'tzid' => 'America/New_York'], [], $w);
-            $verify($t, $name, $w);
+            $refusedSwitch($t, $name, ['scope' => 'all', 'instanceStart' => '2027-01-04', 'start' => '2027-01-04T19:00:00-05:00', 'end' => '2027-01-04T20:00:00-05:00', 'allDay' => false, 'tzid' => 'America/New_York'], ['2027-01-04', '2027-01-05']);
         } finally {
             GoogleStand::forget($db, $t->u);
         }
     });
 
-    // Test 6: a double flip. All-day with a skip, made timed at 00:00 UTC, made all-day again: the skip is stored after each.
-    $scenario('a double flip keeps the skip after each', function () use ($db, $setup, $change, $verify, $allDay, $toUtc, $toAllDay, $asUtc, $asAllDay): void {
+    // Test 6: a double flip. All-day with a skip, made timed at 00:00 UTC: refused on Google (the skip's record meets the
+    // timed day of the 18th), so no second flip follows.
+    $scenario('a double flip keeps the skip after each', function () use ($db, $setup, $refusedSwitch, $allDay, $toUtc): void {
         $name = 'all-day to 00:00 UTC to all-day';
         $t = $setup(['create' => $allDay, 'skip' => '2027-01-18']);
         try {
-            $change($t, "$name, first flip", $toUtc, [], ['skipped' => '2027-01-18']);
-            $verify($t, "$name, after the first flip", $asUtc + ['skipped' => '2027-01-18']);
-            $change($t, "$name, second flip", $toAllDay('2027-01-04T00:00:00Z', '2027-01-04'), [], ['skipped' => '2027-01-18']);
-            $verify($t, "$name, after the second flip", $asAllDay + ['skipped' => '2027-01-18']);
+            $refusedSwitch($t, "$name, first flip", $toUtc, ['2027-01-18']);
         } finally {
             GoogleStand::forget($db, $t->u);
         }
@@ -331,33 +361,19 @@ return static function (Db $db): void {
         }
     });
 
-    // Test 8: an undo across a flip. A "this event" rename, the series made all-day at a coinciding key, then Undo of the
-    // rename: refused as stale before anything is sent, or it lands on the date-form id; never a request to the timed id.
-    $scenario('an undo of a rename across a flip', function () use ($db, $setup, $change, $timedUtc, $toAllDay, $atGoogle): void {
+    // Test 8: an undo across a flip. A "this event" rename, then the series made all-day at a coinciding key: refused on
+    // Google (the renamed day's record meets its all-day day), so the rename's undo is an ordinary one, on the timed id.
+    $scenario('an undo of a rename across a flip', function () use ($db, $setup, $refusedSwitch, $timedUtc, $toAllDay, $atGoogle): void {
         $name = 'an undo of a day\'s rename across a flip at 00:00 UTC';
         $t = $setup(['create' => $timedUtc]);
         try {
             $t->e->patch($t->u, $t->id, ['scope' => 'this', 'instanceStart' => '2027-01-11T00:00:00Z', 'title' => 'Sample weekly, renamed day']);
             $t->e->throwDeferred();
             $entry = lastEntry($db, $t->u);
-            $change($t, $name, $toAllDay('2027-01-04T00:00:00Z', '2027-01-04'));
-            $t->s->fake->requests = [];
-            $refused = null;
-            try {
-                (new Undo($db, null, $t->s->writer))->undoById($t->u, $entry);
-            } catch (HttpError $e) {
-                $refused = $e->errorCode;
-            }
-            $writes = array_values(array_filter($t->s->fake->requests, static fn(array $r): bool => $r['method'] !== 'GET'));
-            $paths = array_map(static fn(array $r): string => $r['method'] . ' ' . rawurldecode(basename($r['path'])), $writes);
-            checkEq("$name: no request goes to the timed id", [], array_values(array_filter($paths, static fn(string $p): bool => str_contains($p, $t->gid . '_20270111T000000Z'))));
-            echo '    note: ' . $name . ': ' . ($refused !== null ? "refused ($refused)" : 'undone') . ', writes sent: ' . json_encode($paths) . "\n";
-            if ($refused !== null) {
-                checkEq("$name: refused as stale, nothing is sent", [], $paths);
-            } else {
-                [$status, $item] = $atGoogle($t->s, 'GET', '/events/' . rawurlencode($t->gid . '_20270111'));
-                checkEq("$name: undone, Google shows the day with the series' title on its date-form id", [200, 'Sample weekly'], [$status, $item['summary'] ?? null]);
-            }
+            $refusedSwitch($t, $name, $toAllDay('2027-01-04T00:00:00Z', '2027-01-04'), ['2027-01-11']);
+            (new Undo($db, null, $t->s->writer))->undoById($t->u, $entry);
+            [$status, $item] = $atGoogle($t->s, 'GET', '/events/' . rawurlencode($t->gid . '_20270111T000000Z'));
+            checkEq("$name: the rename is undone, Google shows the day with the series' title", [200, 'Sample weekly'], [$status, $item['summary'] ?? null]);
         } finally {
             GoogleStand::forget($db, $t->u);
         }

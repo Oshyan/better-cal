@@ -677,7 +677,7 @@ final class Model
                     // is disabled with the refusal's reason, never offered
                     // with a refused plan's empty data behind it.
                     $r = $alt['plan']['refusals'][0] ?? ['code' => 'refused', 'words' => ''];
-                    $plan['groups'][$gi]['options'][$oi] += ['disabled' => true, 'code' => (string) $r['code'], 'reason' => (string) $r['words']];
+                    $plan['groups'][$gi]['options'][$oi] += ['disabled' => true, 'code' => (string) $r['code'], 'reason' => (string) $r['words']] + array_diff_key($r, array_flip(['code', 'words', 'group', 'option']));
                     continue;
                 }
                 $alts[$oi] = $alt;
@@ -1296,6 +1296,21 @@ final class Model
         if ($out === null) {
             return $this->refused('empty');
         }
+        // On Google, a switch between timed and all-day that would hide days there (decisions.md, "A switch between
+        // timed and all-day that Google would hide days with is refused"): the days Google holds a record for, by the
+        // rows here (every edited day holding a field Google holds, every deleted day).
+        if ($this->google && $out['writes'] !== null) {
+            $keys = $this->exdates;
+            foreach ($this->rows as $row) {
+                if (!empty($row['recurrence_instance_utc']) && OwnFields::googleHeld(OwnFields::stored($row)) !== []) {
+                    $keys[] = (string) $row['recurrence_instance_utc'];
+                }
+            }
+            $hidden = \BetterCal\Domain\GoogleSeries::hiddenRefusal($this->master, $out['writes']['master'] + $this->master, $keys, $this->thisYear);
+            if ($hidden !== null) {
+                return $this->refused('googleHidden', $hidden['words'], ['days' => $hidden['days'], 'toAllDay' => $hidden['toAllDay'], 'clock' => $hidden['clock']]);
+            }
+        }
         return $out;
     }
 
@@ -1443,9 +1458,9 @@ final class Model
     }
 
     /** A refusal of the whole edit, with the series as it is. */
-    private function refused(string $code, ?string $words = null): array
+    private function refused(string $code, ?string $words = null, array $data = []): array
     {
-        $this->refusals[] = ['code' => $code, 'words' => $words ?? self::REASONS[$code] ?? $code];
+        $this->refusals[] = ['code' => $code, 'words' => $words ?? self::REASONS[$code] ?? $code] + $data;
         $before = Words::rule($this->r0, $this->allDay0 ? null : $this->clock0);
         return [
             'plan' => [

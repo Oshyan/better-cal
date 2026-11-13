@@ -83,7 +83,7 @@ function refusalFor(plan, groupId, optionId) {
 /** The whole plan's refusal in words (by its code), or null. */
 export function planRefusal(plan) {
   const r = (plan && plan.refusals || []).find((x) => x && x.option == null && x.group == null);
-  return r ? W.refusalWords(r.code, plan.scope) : null;
+  return r ? W.refusalWords(r.code, plan.scope, r) : null;
 }
 
 // The choice each group is on: the person's, where it is still an option,
@@ -165,7 +165,7 @@ export function planView(plan, ctx = {}) {
         const lines = CHANGE_GROUPS.has(g.id) && g.id !== 'bound' ? W.optionLines(o, { opts }) : { dates: '', note: '' };
         return {
           id: o.id, label: w.options[i].label, selected: picked[g.id] === o.id, disabled,
-          reason: disabled ? W.refusalWords(refusal ? refusal.code : o.code) : '', dates: lines.dates, note: lines.note,
+          reason: disabled ? W.refusalWords(refusal ? refusal.code : o.code, undefined, refusal || o) : '', dates: lines.dates, note: lines.note,
         };
       }),
     };

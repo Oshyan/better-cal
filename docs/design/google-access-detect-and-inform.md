@@ -2,7 +2,9 @@
 
 This model supersedes [google-access-and-leave.md](google-access-and-leave.md). The owner decided on 2026-11-13 that Better-Cal will not work around permissions lowered at Google. It reads the access level, tells the person when it drops, and runs the calendar read-only until it is back: "We do not need to try to handle every scenario in BetterCal in a way that tries to make up for the faults or config changes of remote systems." That drops "Leave as Google has it" and every repair or closing done on Google's behalf; the two independent reads failed those, and nothing of them is carried over. He then asked that a change never be refused on an old reading: "if someone genuinely attempts a change, even if they have not dealt with the review queue item, that change should trigger a recheck". So the level is read at the moment of every change as well as by the poll, from a request the change already makes wherever one exists. Revised the same day.
 
-A live probe of real Google (2026-11-13, a calendar shared from a second account: `workfolder/google-access/access-a49ac66229.md`, untracked) settles what Google answers. Code references are to the fix branch (`worktree-agent-a005dbfba679dfc71`, `9496fe08`).
+Amended on 2026-11-13, before the build, for three things the owner settled or a live run proved: every Review item about access is dismissible ("making the review item dismissible is a must. All review items must be dismissible regardless of a read-only calendar or whatever. The dismiss is not, I've dealt with it necessarily. It's, I don't care about it or I acknowledge this."), §3; a single event read through a list by its iCalUID is proven on real Google, §2; and the stand-in answers by level exactly as the access probe's rows show, §6.
+
+A live probe of real Google (2026-11-13, a calendar shared from a second account: `workfolder/google-access/access-a49ac66229.md`, untracked) settles what Google answers in each access state. A second live run the same day (`workfolder/google-access-listread/access-61fb838522.md`, untracked; stage listread of the same probe, on a calendar the account owns) settles what a list by iCalUID returns against a GET by id. Code references are to the fix branch (`worktree-agent-a005dbfba679dfc71`, `9496fe08`).
 
 ## 1. The rule, and what is stored
 
@@ -40,8 +42,16 @@ What each kind of write sends first today, and what it becomes:
 | Finish and Put back | `GoogleSeries::refresh` reads every series by list (`:3975`) | yes | unchanged | 0 |
 | Any change or undo on a calendar stored below writer | none: refused here before Google (`Events.php:1315`, `:1699`, `:2210`; `GoogleUndo.php:451`, `:693`) | not a request | one small list first (`maxResults=1`). If it says writer, the change goes on as normal | 1, only on such a calendar |
 
-**What a list by iCalUID changes against a GET by id:** a list item is the same event resource a GET returns. Two things to settle:
-- It needs the row's uid to be Google's iCalUID. The poll stores `iCalUID` as the uid, or the event's id when Google gives no iCalUID (`GoogleSync.php:438-440`). For such a row the list finds nothing, so it keeps today's GET, after one small list for the level: 1 extra, for a case Google's documentation says doesn't arise. To be confirmed for rows made by moving a calendar to Google, whose uid Google keeps through import.
+**What a list by iCalUID changes against a GET by id:** a list item is the same event resource a GET returns. Proven on real Google (stage listread, `access-61fb838522.md`):
+- A list by iCalUID returns the same resource as a GET by id, field by field, with the same etag, for a timed single event (L1), an all-day one (L2) and one imported with our own iCalUID (L3), with showDeleted true and false alike. The list's etag after a PATCH equals the PATCH answer's, and a PATCH with If-Match on the list's etag is taken (L6).
+- `accessRole` is on every such list answer (L1 to L8).
+- A second import with the same iCalUID updates the first event (it answers with the first import's id), so no two events come to share an iCalUID that way (L4).
+- A deleted single event is listed only with showDeleted=true, cancelled, and a GET of it answers 200 cancelled (L5); every first read lists with showDeleted=true, so a deleted event reads as today.
+- A list by an iCalUID that never existed answers 200 with no items, and still carries `accessRole` (L8): the level is read even when the event is missing.
+- A series listed by its iCalUID returns its master and its renamed day, each with the etag its GET gives (L7).
+
+So the main doubt is closed. What remains:
+- The row's uid must be Google's iCalUID. The poll stores `iCalUID` as the uid, or the event's id when Google gives no iCalUID (`GoogleSync.php:438-440`). For such a row the list finds nothing, so the event is then read by its id, after the list (the level is already known from it): 1 extra, for a case Google's documentation says doesn't arise. Rows made by moving a calendar to Google keep their uid through import (L3), so they are found.
 - It answers where a GET does not: the probe's busy-only stage answers 404 to a series' main record by GET (row 6b) while lists answer 200 with the level (rows 3, 4). So the list is the safer first read.
 
 Nothing else is lost that the code uses.
@@ -65,7 +75,7 @@ The owner's wording is the base. `'Team'` stands for the calendar's name.
 
 **Edit access lowered to view only, or busy times only** (learned by the poll or by a change's first read):
 - Activity, once: "Your permissions for 'Team' at Google are now read-only. If you have access, restore full editing there. Until then 'Team' works read-only here: changes, and undoing past changes, are unavailable."
-- A Review item, the same sentence. There is one per calendar while its level stays below writer, with no action, and it closes by itself when the level returns.
+- A Review item, the same sentence. There is one per calendar while its level stays below writer; its one action is Dismiss, and it closes by itself when the level returns.
 - The calendar shows as read-only, as any calendar that can't be edited does: `editable` comes from `GoogleWriter::writable` (`Calendars.php:692`, `GoogleWriter.php:68`).
 - A change attempted here asks Google first (§2). While Google still says read-only, the change is refused and nothing is sent: "'Team' is read-only: your permissions for it at Google no longer allow changes. If you have access, restore full editing there."
 - An undo is handled the same way, with: "This can't be undone while 'Team' is read-only: your permissions for it at Google no longer allow changes. If you have access, restore full editing there."
@@ -80,8 +90,27 @@ The owner's wording is the base. `'Team'` stands for the calendar's name.
 - Changes and undo get the read-only sentences with "Google no longer shows 'Team' to this account" in place of "your permissions for it at Google no longer allow changes".
 - Keeping the calendar as your own, or removing it, closes a half-done change by the existing rule (`Calendars.php:435`, `GoogleSeries::closeNeverRunnable`).
 
+**Dismissing.** Every Review item about access is dismissible, as the owner asked: a dismiss means "I acknowledge this", not "this is dealt with", so it changes nothing about the calendar, which stays read-only. A dismissed item does not come back while the level stays in its tier (view only and busy times only are one tier, read-only; not shown is another): the item is opened only when the level moves between tiers, never on a poll or a change that finds the same tier. If the level moves again (edit access given back, then taken away again; or view only, then not shown), a new item opens. A dismissed item is closed by nothing; an open one is closed (as gone) when the level returns to writer, when the calendar is kept as a calendar of its own, or when it is removed. Dismissing reuses the existing dismissal of Google notices (`ReviewQueue::dismissGoogleDifferences`, `POST /review/google-differences/:id/dismiss`, already used by `google_differs` and `google_empty`).
+
+The existing Review kinds, and whether each can be dismissed today (not changed by this model):
+
+| Kind | Dismissible today | How |
+|---|---|---|
+| `invite_new` | yes | Dismiss |
+| `invite_change` | yes | Dismiss |
+| `mail_limit`, `model_limit`, `mail_error` | yes | Dismiss |
+| `google_differs`, `google_empty` | yes | Dismiss |
+| `rsvp` | yes | Dismiss (shown quietly), without answering |
+| `proposal` | yes | Dismiss (rejects the plan) |
+| `duplicate` | yes, as a decision | "Not the same" |
+| `plugin` | yes, as a decision | "Leave off" |
+| `subscription` | no | only Keep updating, Keep a local copy or Remove |
+| `google_half` | no | only Finish and Put back; with neither runnable (the calendar read-only, its account disconnected) it has no action at all |
+
+The last two do not meet the owner's "All review items must be dismissible"; they are reported for his decision, not changed here.
+
 **The Review item.** Kinds are `ReviewQueue` constants (`ReviewQueue.php:46`, beside `KIND_GOOGLE_EMPTY`), stored in `review_items`, whose `kind` is free text (`VARCHAR(32)`), so no migration is needed. Adding the two kinds, `google_read_only` and `google_not_shown`, takes:
-- in `ReviewQueue`: a hold and a close function each, as `holdGoogleEmpty`/`closeGoogleEmpty` do (`ReviewQueue.php:1405`, `:1421`), keyed `google-access:<calendar id>`. Moving between the two closes one and opens the other;
+- in `ReviewQueue`: one hold and one close for both, as `holdGoogleEmpty`/`closeGoogleEmpty` do (`ReviewQueue.php:1405`, `:1421`), keyed `google-access:<calendar id>`, called only on a move between tiers. A move closes whatever open item the calendar had and opens the one for the tier it is in now (none for editable). The dismissal above takes the two kinds;
 - in `ReviewController`: their listing and count (`:362`);
 - on the web Review page: their label and icon (`ReviewPage.js:40-41`);
 - in `docs/api-contract.md`: one line each.
@@ -144,12 +173,13 @@ The damage it must catch:
 - a Review item left open after access returns;
 - a half-done change offered an action while read-only.
 
-The stand-in must match the probe:
-- **Every list answer:** `accessRole`, plain and delta (rows 3, 4, 4d).
-- **Any change of role:** invalidates earlier tokens with 410 `fullSyncRequired` (row 4d).
-- **`reader`:** reads 200; insert 403 `requiredAccessLevel`; patch 403 `forbidden` (rows 5, 6d-6h).
-- **`freeBusyReader`:** lists 200; single events and days 200 without a title; a series' main record 404 on read and patch; other writes 403 (stage freebusy).
-- **`none`:** 404 on every list, get, insert and patch, except an event the account created: it reads 200, and its patch answers 412 (stage unshared, rows 6a, 6d).
+The stand-in (`tools/google-probe/lib/FakeGoogle.php`) answers by level exactly as the probe's rows show, each cited beside the code, and `tools/google-probe/test.php` checks each row against it (each check fails on the stand-in before this change, which answered every level as a writer):
+- **Every list answer:** `accessRole`, plain, by iCalUID and delta (rows 3, 4, 4d; L1 to L8).
+- **Any change of level:** invalidates every earlier sync token: the next delta answers 410 `fullSyncRequired` (row 4d at stages writer, reader, freebusy and the first restored); a token given after the last change still answers 200 (row 4d at the second restored).
+- **`reader`:** lists and reads 200 (rows 1 to 4, 6a to 6c, 6g); an insert 403 `requiredAccessLevel` "You need to have writer access to this calendar." (row 5); every PATCH 403 `forbidden` (rows 6d to 6h).
+- **`freeBusyReader`:** lists 200 (rows 3, 4); a single event, a day and another's event 200 with no title (rows 6a, 6c, 6g); a series' main record 404 on read and on PATCH (rows 6b, 6e); other PATCHes 403 `forbidden` (rows 6d, 6f, 6h); an insert 403 `requiredAccessLevel` (row 5).
+- **`none`:** 404 on the calendar list entry, the calendar, every list and an insert (rows 1 to 5), and on every read and PATCH (rows 6b, 6c, 6e to 6h), except a single event this account made: it reads 200 (row 6a) and its PATCH with If-Match answers 412 (row 6d). A series this account made answers 404 like the rest (rows 6b, 6e), so the exception is a single event only.
+- **Not probed, answered as the nearest proven request and said so in the code:** a DELETE (as a PATCH of the same target), a series' instances list (as a list).
 
 The brief 403 after access returns (stage restored, row 6e) stays out of the stand-in: it is not reproducible.
 

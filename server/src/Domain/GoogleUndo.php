@@ -491,6 +491,13 @@ final class GoogleUndo
                 $current = $row === null && $send !== [] ? $writer->get($calendar, $googleId) : null;
                 $parsed = $current !== null ? GoogleSync::toParsed($current) : null;
                 if ($current !== null && (!is_array($parsed) || !empty($parsed['cancelled']))) {
+                    // A day reads cancelled under a series deleted at Google (probe 10.5, 2026-11-13): that is what
+                    // happened, and the sentence says so and what to do, not that the day changed.
+                    $of = GoogleWriter::instanceOf($googleId);
+                    $series = $of === null ? null : $writer->get($calendar, $of['series']);
+                    if (is_array($series) && (string) ($series['status'] ?? '') === 'cancelled') {
+                        throw new HttpError('google_deleted', self::SERIES_DELETED, 409, ['googleStatus' => 410]);
+                    }
                     throw self::conflict();
                 }
                 $now = $row !== null ? self::bodyOf($row) : ($parsed !== null ? self::bodyOf($parsed) : []);
@@ -1092,6 +1099,9 @@ final class GoogleUndo
     }
 
     /** Changed at Google since: the stale-undo words and the conflict's sentence. */
+    /** Why an undo of one day is refused when its repeating event was deleted at Google. */
+    public const SERIES_DELETED = 'The repeating event this day belongs to was deleted in Google Calendar, so this change can\'t be undone here. Refresh to see the calendar as Google has it; if you want the event back, make it again or restore it in Google Calendar.';
+
     public static function conflict(): HttpError
     {
         return new HttpError('google_conflict', 'Newer changes exist for this item; undoing would overwrite them. This event changed at Google since you last saw it.', 409);

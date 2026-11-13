@@ -264,15 +264,17 @@ return static function (Db $db): void {
         checkEq('a second sync changes nothing', $before, $after);
     });
 
-    scenario('google series: a weekday added brings the skipped day back at Google, and it is cancelled again', function () use ($setup, $masterId, $held, $stored, $secondSync): void {
+    // A weekday added keeps every record still on a day of the new rule, the cancelled one included (probe 3.43,
+    // 2026-11-13; the 3.7 of 2026-11-07 dropped its cancelled day only because it fell past that rule's end).
+    scenario('google series: a weekday added keeps the skipped day cancelled at Google, so no day is sent again', function () use ($setup, $masterId, $held, $stored, $secondSync): void {
         $s = $setup();
         $id = $masterId($s);
         planned($s->events, $s->u, $id, ['scope' => 'all', 'rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE;COUNT=20']);
         $h = $held($s, 'smpl1weekly');
-        checkEq('Mondays and Wednesdays: the exceptions kept with their keys, the skip a cancelled record again', [
+        checkEq('Mondays and Wednesdays: the exceptions kept with their keys, the skip still a cancelled record', [
             'RRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=20', ['20270315T170000Z', '20270322T170000Z', '20270329T170000Z'], ['20270405T170000Z'],
         ], [$h['rule'], array_keys($h['records']), $h['cancelled']]);
-        checkEq('the one step after the master is the skip\'s, after a read of the series for its etag', ['GET', 'PATCH', 'GET', 'GET', 'PATCH', 'GET'], array_column($s->t->calls, 0));
+        checkEq('the master alone is written: the series read, the master, its read-back, the final read-back (3.43)', ['GET', 'PATCH', 'GET', 'GET'], array_column($s->t->calls, 0));
         checkEq('the rows here hold what the stand-in holds', $h, $stored($s, 'smpl1weekly'));
         [$before, $after] = $secondSync($s);
         checkEq('a second sync changes nothing', $before, $after);

@@ -135,9 +135,15 @@ return static function (Db $db): void {
     $held = static function (object $s, string $googleId): array {
         $m = $s->fake->events[$googleId];
         $out = ['rule' => $m['recurrence'][0] ?? null, 'start' => $m['start']['dateTime'] ?? $m['start']['date'], 'title' => $m['summary'], 'status' => $m['status'] ?? 'confirmed', 'records' => [], 'cancelled' => []];
+        $at = static fn(array $w): string => isset($w['date']) ? (string) $w['date'] : (string) (new DateTimeImmutable((string) $w['dateTime']))->getTimestamp();
         foreach ($s->fake->records($googleId) as $k => $r) {
             if (($r['status'] ?? '') === 'cancelled') {
                 $out['cancelled'][] = $k;
+            } elseif (($r['summary'] ?? '') === ($m['summary'] ?? '') && $at($r['start']) === $at($r['originalStartTime'])) {
+                // A record at the series' title on its own occurrence is an ordinary day (series-model.md, "What a record of
+                // Google's becomes here"): Google leaves one when a change brings a dropped record back to life (probe
+                // 3.36, 10.2, 2026-11-13), and the rows here hold none for it.
+                continue;
             } else {
                 $out['records'][$k] = [$r['summary'], $r['start']['dateTime'] ?? $r['start']['date']];
             }

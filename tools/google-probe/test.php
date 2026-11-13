@@ -336,6 +336,98 @@ $rec = $fake->records('ad0001')['20270308'] ?? [];
 check('stand-in, 10.6: a colour on one day makes a record with a label Google adds, both kept through a master rename',
     isset($c['eventLabelId']) && ($rec['colorId'] ?? null) === '5' && isset($rec['eventLabelId']) && ($rec['summary'] ?? null) === 'Sample all-day, renamed', json_encode($rec));
 
+// ---- The stand-in against the second and third runs of 2026-11-13 (3.48 to 3.66) ----
+// A weekly series of six in zone UTC at 00:00 from 2027-03-01, occurrence 2 renamed with notes, 3 deleted (as 3.48 starts).
+$utc = static fn(string $l): array => ['dateTime' => (new DateTimeImmutable($l, new DateTimeZone('UTC')))->format('Y-m-d\TH:i:sP'), 'timeZone' => 'UTC'];
+$midnight = static function (bool $edits = true, string $clock = '00:00') use ($call, $utc): FakeGoogle {
+    $fake = new FakeGoogle(CAL);
+    $fake->token = null;
+    $fake->seed(['id' => 'mid0001', 'summary' => 'Sample midnight', 'start' => $utc("2027-03-01 $clock"), 'end' => $utc('2027-03-01 ' . sprintf('%02d', (int) $clock + 1) . ':00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']]);
+    if ($edits) {
+        $call($fake, 'PATCH', 'mid0001_20270308T000000Z', ['summary' => 'Sample midnight (own)', 'description' => 'Own notes']);
+        $call($fake, 'DELETE', 'mid0001_20270315T000000Z');
+    }
+    return $fake;
+};
+$midAllDay = ['start' => ['date' => '2027-03-01', 'dateTime' => null, 'timeZone' => null], 'end' => ['date' => '2027-03-02', 'dateTime' => null, 'timeZone' => null], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']];
+$shownDays = static function (FakeGoogle $fake) use ($call): array {
+    [, $l] = $call($fake, 'GET', '', null, ['iCalUID' => 'mid0001@google.com', 'singleEvents' => 'true', 'showDeleted' => 'false']);
+    return array_map(static fn(array $e): string => (string) $e['id'], $l['items'] ?? []);
+};
+// 3.48: after the switch the renamed and the deleted day are hidden; no write brings the renamed one back.
+$fake = $midnight();
+$call($fake, 'PATCH', 'mid0001', $midAllDay);
+[$get] = $call($fake, 'GET', 'mid0001_20270308');
+[$withEtag] = $call($fake, 'PATCH', 'mid0001_20270308', ['summary' => 'Sample midnight (own)', '_ifMatch' => $fake->events['mid0001']['etag']]);
+[$without] = $call($fake, 'PATCH', 'mid0001_20270308', ['summary' => 'Sample midnight (own)']);
+[$revive] = $call($fake, 'PATCH', 'mid0001_20270308T000000Z', ['status' => 'confirmed']);
+[$delete] = $call($fake, 'DELETE', 'mid0001_20270308T000000Z');
+$shown = $shownDays($fake);
+check('stand-in, 3.48: a switch hides the renamed and the deleted day at a meeting instant: 4 of 6 shown, GET 404, a PATCH 412 with an If-Match and 404 without, the dropped record 400 to revive and 410 to delete',
+    count($shown) === 4 && !in_array('mid0001_20270308', $shown, true) && [$get, $withEtag, $without, $revive, $delete] === [404, 412, 404, 400, 410], json_encode([$shown, $get, $withEtag, $without, $revive, $delete]));
+// 3.51: with no record, every day survives.
+$fake = $midnight(false);
+$call($fake, 'PATCH', 'mid0001', $midAllDay);
+check('stand-in, 3.51: with no day edited or deleted every day survives the switch', count($shownDays($fake)) === 6, json_encode($shownDays($fake)));
+// 3.63: an hour later first (the records dropped), the days sent again, then the switch: nothing hidden.
+$fake = $midnight();
+$call($fake, 'PATCH', 'mid0001', ['start' => $utc('2027-03-01 01:00'), 'end' => $utc('2027-03-01 02:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']]);
+$call($fake, 'PATCH', 'mid0001_20270308T010000Z', ['summary' => 'Sample midnight (own)']);
+$call($fake, 'PATCH', 'mid0001_20270315T010000Z', ['status' => 'cancelled']);
+$call($fake, 'PATCH', 'mid0001', $midAllDay);
+[$w2] = $call($fake, 'PATCH', 'mid0001_20270308', ['summary' => 'Sample midnight (own)']);
+check('stand-in, 3.63: the time moved an hour first, then the switch: every day listed and the renamed day written', count($shownDays($fake)) === 6 && $w2 === 200, json_encode([$shownDays($fake), $w2]));
+// 3.65: the days made ordinary first (records at the series' values): still hidden.
+$fake = $midnight();
+$call($fake, 'PATCH', 'mid0001_20270308T000000Z', ['summary' => 'Sample midnight', 'description' => null]);
+$call($fake, 'PATCH', 'mid0001_20270315T000000Z', ['status' => 'confirmed']);
+$call($fake, 'PATCH', 'mid0001', $midAllDay);
+[$w3] = $call($fake, 'PATCH', 'mid0001_20270308', ['summary' => 'Sample midnight (own)']);
+check('stand-in, 3.65: records at the series\' values are hidden by the switch all the same', count($shownDays($fake)) === 4 && $w3 === 404, json_encode([$shownDays($fake), $w3]));
+
+// 3.52 to 3.61: a master write that leaves out the notes clears a kept day's own notes on a series with none.
+$notes = static function (?string $series) use ($call): FakeGoogle {
+    $fake = new FakeGoogle(CAL);
+    $fake->token = null;
+    $la = static fn(string $l): array => ['dateTime' => (new DateTimeImmutable($l, new DateTimeZone('America/Los_Angeles')))->format('Y-m-d\TH:i:sP'), 'timeZone' => 'America/Los_Angeles'];
+    $fake->seed(['id' => 'notes001', 'summary' => 'Sample notes', 'start' => $la('2027-03-01 10:00'), 'end' => $la('2027-03-01 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']] + ($series !== null ? ['description' => $series] : []));
+    $call($fake, 'PATCH', 'notes001_20270308T180000Z', ['summary' => 'Sample notes (own)', 'description' => 'Own notes', 'location' => 'Own room']);
+    return $fake;
+};
+$link = ['source' => ['url' => 'https://example.test/sample', 'title' => 'example.test'], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']];
+$day = static fn(FakeGoogle $f): array => $f->records('notes001')['20270308T180000Z'] ?? [];
+$fake = $notes(null);
+$call($fake, 'PATCH', 'notes001', $link);
+$cleared = $day($fake);
+$fake = $notes('Series notes');
+$call($fake, 'PATCH', 'notes001', $link);
+$keptWithNotes = $day($fake);
+$fake = $notes(null);
+$call($fake, 'PATCH', 'notes001', $link + ['description' => '']);
+$keptSent = $day($fake);
+check('stand-in, 3.52, 3.58, 3.61: a link set on a series with no notes clears the day\'s own notes (title and place kept); with series notes, or the empty notes sent, they stay',
+    !isset($cleared['description']) && ($cleared['summary'] ?? null) === 'Sample notes (own)' && ($cleared['location'] ?? null) === 'Own room'
+    && ($keptWithNotes['description'] ?? null) === 'Own notes' && ($keptSent['description'] ?? null) === 'Own notes', json_encode([$cleared, $keptWithNotes, $keptSent]));
+
+// 3.62: a rule change leaving only a deleted day cancels the series, and a status sent after does not bring it back.
+$fake = new FakeGoogle(CAL);
+$fake->token = null;
+$fake->seed(['id' => 'only0001', 'summary' => 'Sample only', 'start' => $utc('2027-03-01 10:00'), 'end' => $utc('2027-03-01 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=3']]);
+$call($fake, 'DELETE', 'only0001_20270301T100000Z');
+[, $cut] = $call($fake, 'PATCH', 'only0001', ['recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=1']]);
+[, $back] = $call($fake, 'PATCH', 'only0001', ['status' => 'confirmed', 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=1']]);
+check('stand-in, 3.62: a rule change leaving only a deleted day cancels the series; status confirmed after leaves it cancelled',
+    ($cut['status'] ?? null) === 'cancelled' && ($back['status'] ?? null) === 'cancelled', json_encode([$cut['status'] ?? null, $back['status'] ?? null]));
+
+// 3.66: a day's PATCH with no If-Match is taken in every state a change to all events meets (passes on the stand-in before too).
+$fake = $four();
+[$a] = $call($fake, 'PATCH', 'four0001_20270308T180000Z', ['summary' => 'Sample four (again)']);
+[$b] = $call($fake, 'PATCH', 'four0001_20270315T170000Z', ['status' => 'confirmed', 'summary' => 'Sample four (was deleted)']);
+[$c2] = $call($fake, 'PATCH', 'four0001_20270308T180000Z', ['status' => 'cancelled']);
+[$d] = $call($fake, 'PATCH', 'four0001_20270322T170000Z', ['status' => 'cancelled']);
+check('stand-in, 3.66: a day\'s PATCH with no If-Match is taken on a live record, a cancelled record made live, a record cancelled and an ordinary day cancelled',
+    [$a, $b, $c2, $d] === [200, 200, 200, 200] && ($fake->records('four0001')['20270315T170000Z']['status'] ?? null) === 'confirmed', json_encode([$a, $b, $c2, $d]));
+
 // ---- Report scrubbing on its own ---------------------------------------------
 $r = new Report($tmp . '/scrub');
 $r->secret('someone@example.net', '{account}');

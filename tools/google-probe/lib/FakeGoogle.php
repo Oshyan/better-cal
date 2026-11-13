@@ -14,7 +14,12 @@
 // time on an all-day series' instance, a GET that can lag, and (the probe of
 // 2026-11-10, 3.18 to 3.31) a PATCH's start and end merged into the held ones,
 // a field sent as null removed and 400 "Invalid start time." for a start or
-// end that would hold a date and a clock time at once.
+// end that would hold a date and a clock time at once. And (the second and
+// third runs of 2026-11-13): a switch between timed and all-day hides each day
+// of the new form at the instant of a record of the old (3.48 to 3.51, 3.63 to
+// 3.65); a master write that leaves out the notes clears every kept record's
+// own notes on a series with none (3.52 to 3.61); a rule change that leaves
+// only deleted days cancels the series for good (3.62).
 //
 // Occurrences come from $expand when the caller gives one (the harness's
 // own evaluator; the database suite's tests the product's expander, since
@@ -84,6 +89,10 @@ final class FakeGoogle
     private array $zoneDropped = [];
     /** @var array<string,array{start:array,end:array}> instance ids that were once days of a series, by what they were (the cancelled stub, find) */
     private array $wereDays = [];
+    /** @var array<string,true> instance ids a switch between timed and all-day hid (hidden(): 3.48 to 3.51, 3.63 to 3.65) */
+    private array $hidden = [];
+    /** @var array<string,true> masters Google cancelled because a rule change left them only deleted days (3.62) */
+    private array $emptied = [];
 
     public function __construct(public readonly string $calendarId)
     {
@@ -317,6 +326,14 @@ final class FakeGoogle
     {
         $e = $this->find($id, true);
         if ($e === null) {
+            // A day a switch hid: a write with an If-Match is 412, one without is 404 (3.48). A dropped record, under an
+            // id that names no day now, refuses being made live with 400 (3.48, "revive dropped").
+            if (isset($this->hidden[$id]) && $ifMatch !== null) {
+                return self::error(412, 'Precondition Failed');
+            }
+            if (isset($this->events[$id]) && $this->isDropped($this->events[$id])) {
+                return self::error(400, 'Bad Request');
+            }
             return self::error(404, 'Not Found');
         }
         if ($ifMatch !== null && $ifMatch !== '*' && $ifMatch !== $e['etag']) {
@@ -395,8 +412,28 @@ final class FakeGoogle
         $newLen = self::lengthOf($new);
         $startChanged = json_encode($old['start']) !== json_encode($new['start']);
         $patternChanged = self::pattern($old) !== self::pattern($new);
+        // A series Google cancelled because a rule change left it only deleted days stays cancelled: a later status sent
+        // is taken and changes nothing (3.62).
+        $emptied = isset($this->emptied[(string) $old['id']]);
+        if ($emptied) {
+            unset($body['status']);
+            $new['status'] = 'cancelled';
+        }
         $fields = array_intersect_key($body, array_flip(['summary', 'description', 'location', 'status', 'source']));
+        // A series with no notes, written without them: every kept record's own notes are cleared (3.52 to 3.57; with
+        // notes of its own, or its empty notes sent, they stay: 3.58 to 3.61).
+        $clearNotes = !array_key_exists('description', $body) && (string) ($old['description'] ?? '') === '';
+        // Those empty notes sent to a series that has none change nothing and are written into no record (3.61).
+        if (($fields['description'] ?? null) === '' && (string) ($old['description'] ?? '') === '') {
+            unset($fields['description']);
+        }
         $exdates = self::exdateKeys($new);
+        // A switch between timed and all-day hides each day of the new form whose instant is a record's (live or
+        // cancelled, with its originalStartTime) under the old: not listed, not readable, not writable (3.48 to 3.51,
+        // 3.65), whatever the record holds; a dropped record there hides nothing (3.63, 3.64).
+        if ($allDay !== isset($old['start']['date'])) {
+            $this->hide($old, $new);
+        }
         // The zone alone changed (both timed, another timeZone): under the 'dropped' setting every record goes (Q2).
         $zoneAlone = isset($old['start']['dateTime'], $new['start']['dateTime']) && ($old['start']['timeZone'] ?? null) !== ($new['start']['timeZone'] ?? null);
         $dropAll = $zoneAlone && $this->zoneAlone === 'dropped';
@@ -443,6 +480,9 @@ final class FakeGoogle
                 }
                 $r[$k] = $v;
             }
+            if ($clearNotes) {
+                unset($r['description']);
+            }
             $this->events[$rid] = $r;
         }
         // A record an earlier master change dropped, whose id is a day of the master again (a clock or form changed back,
@@ -457,13 +497,52 @@ final class FakeGoogle
                 $this->events[$rid] = ['sequence' => (int) ($r['sequence'] ?? 0) + 1] + $generated[$rid];
             }
         }
-        if ($startChanged || $patternChanged || isset($fields['status'])) {
+        // A rule change that leaves the series no day but deleted ones: Google cancels the series (3.62).
+        if (!$emptied && ($new['status'] ?? 'confirmed') !== 'cancelled' && isset($body['recurrence'])) {
+            $live = false;
+            foreach ($this->generate($new) as $inst) {
+                $r = $this->events[(string) $inst['id']] ?? null;
+                if (!isset($this->hidden[(string) $inst['id']]) && ($r === null || !isset($r['originalStartTime']) || ($r['status'] ?? '') !== 'cancelled')) {
+                    $live = true;
+                    break;
+                }
+            }
+            if (!$live) {
+                $new['status'] = 'cancelled';
+                $this->emptied[$id] = true;
+            }
+        }
+        if ($startChanged || $patternChanged || isset($fields['status']) || isset($this->emptied[$id])) {
             $new['sequence'] = (int) ($old['sequence'] ?? 0) + 1;
         }
         $new['updated'] = gmdate('Y-m-d\TH:i:s.000\Z');
         $this->events[$id] = $new;
         $this->bump($id);
         return self::ok($this->events[$id]);
+    }
+
+    /**
+     * The days a switch between timed and all-day hides (3.48 to 3.51, 3.65): each occurrence of $new at the instant of
+     * a record of $old (live or cancelled, with its originalStartTime), an all-day day's instant being its date at 00:00
+     * UTC. Before the switch drops those records.
+     */
+    private function hide(array $old, array $new): void
+    {
+        $id = (string) $old['id'];
+        $instant = static fn(string $key): string => strlen($key) === 8 ? $key . 'T000000Z' : $key;
+        $held = [];
+        foreach ($this->events as $r) {
+            if (($r['recurringEventId'] ?? '') === $id && isset($r['originalStartTime'])) {
+                $held[$instant(self::keyOf($r['originalStartTime'], $r['start']['timeZone'] ?? $this->zone))] = true;
+            }
+        }
+        $allDay = isset($new['start']['date']);
+        foreach ($this->occurrences($new) as $s) {
+            $key = self::keyOfStart($s, $allDay);
+            if (isset($held[$instant($key)])) {
+                $this->hidden[$id . '_' . $key] = true;
+            }
+        }
     }
 
     /**
@@ -629,7 +708,7 @@ final class FakeGoogle
             return null;
         }
         foreach ($this->generate($this->events[$masterId]) as $inst) {
-            if ($inst['id'] === $id) {
+            if ($inst['id'] === $id && !isset($this->hidden[$id])) {
                 return $inst;
             }
         }
@@ -670,6 +749,9 @@ final class FakeGoogle
         $out = [];
         $seen = [];
         foreach ($this->generate($master) as $inst) {
+            if (isset($this->hidden[$inst['id']])) {
+                continue;
+            }
             $e = isset($this->zoneDropped[$inst['id']]) ? $inst : ($this->events[$inst['id']] ?? $inst);
             $seen[$inst['id']] = true;
             if ($deleted || ($e['status'] ?? '') !== 'cancelled') {

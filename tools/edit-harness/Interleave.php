@@ -419,6 +419,11 @@ final class Interleave
                 continue;
             }
             $o = array_intersect_key($e, array_flip(self::GOOGLE_ONLY));
+            // Google's own reminders on a resource once it has been all-day (useDefault false, replay of 2026-11-13, F)
+            // are Google's doing, not a write's here.
+            if (($o['reminders'] ?? null) === ['useDefault' => false]) {
+                unset($o['reminders']);
+            }
             if ($o !== []) {
                 ksort($o);
                 $only[$id] = $o;

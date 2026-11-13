@@ -1697,8 +1697,7 @@ final class GoogleSeries
      * unchanged, a key that is no longer an occurrence is dropped (a new
      * clock or start day, 3.1 and 3.4; days past a new end, 3.9 and 3.10).
      *
-     * S2, Google's own resets. A cancelled record goes with any change of
-     * the rule's days (3.7); a status sent makes a surviving cancelled
+     * S2, Google's own resets. A status sent makes a surviving cancelled
      * record a live one (3.15). A skip held as an EXDATE line stays
      * exactly when the write carries its line ($carried, masterBody):
      * Google replaces the whole `recurrence` with what the write sends
@@ -1773,14 +1772,16 @@ final class GoogleSeries
         foreach (array_keys($h['skips']) as $key) {
             $key = (string) $key;
             unset($out['cancelled'][$key], $out['skips'][$key]);
-            // S2: an EXDATE line stays when the write carries it, a cancelled record goes with any change of the rule's days.
+            // S2: an EXDATE line stays when the write carries it; a cancelled record is kept as a live one is, by identity
+            // alone (a rule change keeps it exactly while its key is a day of the new rule: 3.33, 3.34, 3.42 to 3.47 of
+            // 2026-11-10 and 2026-11-13; 3.7's cancelled day went because it fell past the new end).
             if (!isset($h['cancelled'][$key])) {
                 if (in_array($key, $carried, true) && $named($key)) {
                     $out['skips'][$key] = true;
                 }
                 continue;
             }
-            if ($patternChanged || !$proven || !$named($key)) {
+            if (!$proven || !$named($key)) {
                 continue;
             }
             if (array_key_exists('status', $set)) {
@@ -3848,7 +3849,16 @@ final class GoogleSeries
                 }
             }
             $base = $last ?? ($targets[$i]['etag'] ?? null);
-            $current = self::masterEtag($this->readBack($calendar, $send, null, (string) $b['googleId'], null, $beforeSend), (string) $b['googleId']);
+            $nowItems = $this->readBack($calendar, $send, empty($b['remove']) && !empty($b['uid']) ? (string) $b['uid'] : null, (string) $b['googleId'], null, $beforeSend);
+            $current = self::masterEtag($nowItems, (string) $b['googleId']);
+            // With no step of it answered, nothing changed since exactly while Google holds the series as it was before
+            // the change, compared as the change's condition compared it (by content): the master's etag says nothing
+            // of a day's record, whose write leaves it unmoved (probe 2026-11-13, 3.36, 10.2), so it is no measure.
+            // A series the change inserted (its before a removal) keeps the readings it had: its insert step's digest decides.
+            $asBefore = empty($b['remove']) && self::held($nowItems, (string) $b['googleId'])['master'] !== null
+                && self::digest(self::state(self::held($nowItems, (string) $b['googleId']))) === self::digest(self::state(self::heldOf($b)));
+            $unmoved = empty($b['remove']) ? $asBefore : ($base === null || $current === null || $current === $base);
+            $unmovedNone = empty($b['remove']) ? $asBefore : ($base !== null && $current === $base);
             // Nothing changed since, judged by content (the digest, rule B,
             // decided 2026-11-09): Google holds what the last answered step
             // left, or, the last step's answer lost, what it would leave or
@@ -3858,9 +3868,9 @@ final class GoogleSeries
             // written), and the same content is no conflict. A step
             // journaled without a digest (a removal: whether it is still
             // gone; one from before rule B: its etag) is read as before.
-            $answered = function (?array $step) use ($calendar, $send, $targets, $b, $i, $base, $current, $beforeSend): bool {
+            $answered = function (?array $step) use ($calendar, $send, $targets, $b, $i, $unmoved, $beforeSend): bool {
                 if ($step === null || (!isset($step['expect']) && !in_array($step['kind'], ['remove', 'record-remove'], true))) {
-                    return $base === null || $current === null || $current === $base;
+                    return $unmoved;
                 }
                 $sent = empty($step['back']) ? ($targets[$i] ?? null) : $b;
                 return $sent !== null && $this->unchangedSince($calendar, $send, $sent, $step, $beforeSend);
@@ -3868,7 +3878,7 @@ final class GoogleSeries
             $uncertain = $lastStep !== null && ($lastStep['state'] ?? self::DONE) === self::SENT;
             if ($uncertain) {
                 $sent = empty($lastStep['back']) ? ($targets[$i] ?? null) : $b;
-                $safe = ($lastDone !== null ? $answered($lastDone) : ($base !== null && $current === $base))
+                $safe = ($lastDone !== null ? $answered($lastDone) : $unmovedNone)
                     || ($sent !== null && $this->unchangedSince($calendar, $send, $sent, $lastStep, $beforeSend));
             } else {
                 $safe = $answered($lastDone);

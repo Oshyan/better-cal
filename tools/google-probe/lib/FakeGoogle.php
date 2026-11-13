@@ -400,8 +400,10 @@ final class FakeGoogle
         // The zone alone changed (both timed, another timeZone): under the 'dropped' setting every record goes (Q2).
         $zoneAlone = isset($old['start']['dateTime'], $new['start']['dateTime']) && ($old['start']['timeZone'] ?? null) !== ($new['start']['timeZone'] ?? null);
         $dropAll = $zoneAlone && $this->zoneAlone === 'dropped';
-        // And moved no instant (3.17): each kept record's end stays where it was.
-        $sameInstants = $zoneAlone && (new \DateTimeImmutable((string) $old['start']['dateTime']))->getTimestamp() === (new \DateTimeImmutable((string) $new['start']['dateTime']))->getTimestamp();
+        // And moved no instant, the length unchanged (3.17; replay of 2026-11-13, D): each kept record's end stays where
+        // it was. With the length changed too, the ends follow the new length as before (no live case shows otherwise).
+        $sameInstants = $zoneAlone && $newLen === $oldLen
+            && (new \DateTimeImmutable((string) $old['start']['dateTime']))->getTimestamp() === (new \DateTimeImmutable((string) $new['start']['dateTime']))->getTimestamp();
         $occ = [];
         foreach ($this->occurrences($new) as $start) {
             $occ[self::keyOfStart($start, $allDay)] = $start;

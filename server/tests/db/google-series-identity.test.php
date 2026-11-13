@@ -381,11 +381,14 @@ return static function (Db $db): void {
 
     // Test 9: the stale-local case. The flip is made at Google by another client, over an edited day, a skip and a tagged
     // day; then a delta poll, and separately a whole read. Google dropped the edited day and the skip (a form change drops
-    // every exception), so no old-form row or skip is left here, and the tag stays on its day.
+    // every exception), so no old-form row or skip is left here, and the tag stays on its day. At 01:00 UTC: at 00:00 the
+    // edited day's and the skip's records meet days of the all-day series, which Google then hides for good (probe
+    // 2026-11-13, 3.48), its own fault, filed and not asserted here; the meeting is not this case's subject.
+    $timedUtc1 = ['start' => '2027-01-04T01:00:00Z', 'end' => '2027-01-04T02:00:00Z'] + $timedUtc;
     foreach (['a delta poll' => false, 'a whole read' => true] as $how => $whole) {
-        $scenario("a flip made at Google, then $how", function () use ($db, $setup, $timedUtc, $atGoogle, $tagsOf, $tag, $how, $whole): void {
+        $scenario("a flip made at Google, then $how", function () use ($db, $setup, $timedUtc1, $atGoogle, $tagsOf, $tag, $how, $whole): void {
             $name = "a flip made at Google over an edited day, a skip and a tagged day, then $how";
-            $t = $setup(['create' => $timedUtc, 'edit' => '2027-01-11T00:00:00Z', 'skip' => '2027-01-18T00:00:00Z', 'tag' => '2027-01-25T00:00:00Z']);
+            $t = $setup(['create' => $timedUtc1, 'edit' => '2027-01-11T01:00:00Z', 'skip' => '2027-01-18T01:00:00Z', 'tag' => '2027-01-25T01:00:00Z']);
             try {
                 $t->s->poll();
                 [$status] = $atGoogle($t->s, 'PATCH', '/events/' . rawurlencode($t->gid), \BetterCal\GoogleProbe\FakeGoogle::asSet(['start' => ['date' => '2027-01-04'], 'end' => ['date' => '2027-01-05']]));

@@ -17,6 +17,10 @@ declare(strict_types=1);
 // From the rule: a tag given to one day and notes given to the next are
 // each on their own day at every point: after the stop, after Finish, and
 // after Put back, which leaves the rows here and Google as they were.
+// Since the probe of 2026-11-13 that meeting makes the switch refused on a
+// Google calendar (Google would hide the day for good: google-hidden-switch),
+// so the stop, Finish and Put back this file walked through can't happen
+// there; it now checks the refusal, with the state before it.
 // Every expected key and id is written by this file's own two functions,
 // the rows are read by SQL and Google by the stand-in's store. Google is
 // the edit harness's stand-in. Invented data.
@@ -92,54 +96,20 @@ return static function (Db $db): void {
                 [!$to, [$suffixOf(!$to, $was(7)) => $notes]],
             ], [$hereBefore, $googleBefore]);
 
-            // The stop: the write after the master's is refused, or it is taken and its answer lost.
-            if ($c['stop'] === 'after the master write') {
-                $s->knobs->beforeAt = $s->knobs->writes + 2;
-            } else {
-                $s->knobs->loseAt = $s->knobs->writes + 2;
-            }
-            $stopped = null;
+            // Since the probe of 2026-11-13 (3.48 to 3.51, 3.63 to 3.65): the notes' record sits at the instant of a day of
+            // the new form (that meeting is this file's subject), and Google would hide that day for good, so on a Google
+            // calendar the switch is refused before anything is sent, and nothing stops half way.
+            $s->fake->requests = [];
+            $refused = null;
             try {
                 planned($e, $u, $id, ['scope' => 'all', 'instanceStart' => $at(4)] + ($to ? $days : $timed));
                 $e->throwDeferred();
             } catch (HttpError $error) {
-                $stopped = $error;
+                $refused = $error->errorCode;
             }
-            $pending = $db->all('SELECT id, status FROM google_pending WHERE user_id = ? ORDER BY id', [$u]);
-            $landed = $c['stop'] !== 'after the master write';
-            checkEq("$name: the change stops half done, with Google holding the series in its new form" . ($landed ? " and the notes' record under its new id" : ' and no record'), [
-                true, 'half', [$to, $landed ? [$suffixOf($to, $now(7)) => $notes] : []],
-            ], [$stopped !== null && isset($stopped->extra['pending']), $pending[0]['status'] ?? null, $google($s, $gid)]);
-            // What Google holds is stored: the tag, held here alone, is on its own day in the new form, and the
-            // notes are on their day exactly when Google holds them.
-            $stored = $here($id);
-            checkEq("$name: after the stop the tag is on its own day at the new form's key, with no notes, and no row is without a key",
-                [[(int) $to, null, ['sample-day']], 0],
-                [isset($stored[$now($tagged)]) ? [$stored[$now($tagged)][0], $stored[$now($tagged)][1], $stored[$now($tagged)][3]] : null, $settledHere($u, $s->calendarId)[1]]);
-            checkEq("$name: after the stop the notes are " . ($landed ? 'on their own day, with no tag' : 'on no day, as Google holds none'),
-                $landed ? [$now(7) => [(int) $to, []]] : [],
-                array_map(static fn(array $r): array => [$r[0], $r[3]], array_filter($stored, static fn(array $r): bool => $r[1] === $notes)));
-            checkEq("$name: after the stop no other row holds the tag", [$now($tagged)], array_keys(array_filter($stored, static fn(array $r): bool => $r[3] !== [])));
-
-            $refused = null;
-            try {
-                $c['then'] === 'Put back' ? $e->googlePutBack($u, (int) $pending[0]['id']) : $e->googleFinish($u, (int) $pending[0]['id']);
-                $e->throwDeferred();
-            } catch (HttpError $error) {
-                $refused = $error;
-            }
-            if ($c['then'] === 'Put back') {
-                checkEq("$name: Put back goes through, nothing left to settle and no row without a key", [null, [0, 0]], [$refused?->errorCode, $settledHere($u, $s->calendarId)]);
-                checkEq("$name: after Put back Google holds the series as it was, the notes' record under its old id", $googleBefore, $google($s, $gid));
-                checkEq("$name: after Put back the rows here are as they were: the tag and the notes each on their own day in the old form", $hereBefore, $here($id));
-                checkEq("$name: and they are the rows they were", $rowsBefore, $db->all('SELECT id, recurrence_instance_utc FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [$id]));
-            } else {
-                checkEq("$name: Finish goes through, nothing left to settle and no row without a key", [null, [0, 0]], [$refused?->errorCode, $settledHere($u, $s->calendarId)]);
-                checkEq("$name: after Finish Google holds the series in its new form and the notes' record under its new id, nothing on the tagged day", [$to, [$suffixOf($to, $now(7)) => $notes]], $google($s, $gid));
-                $expected = [$now($tagged) => [(int) $to, null, '["tags"]', ['sample-day']], $now(7) => [(int) $to, $notes, '["description"]', []]];
-                ksort($expected);
-                checkEq("$name: after Finish the tag and the notes are each on their own day at the new form's keys", $expected, $here($id));
-            }
+            $writes = array_values(array_filter($s->fake->requests, static fn(array $r): bool => $r['method'] !== 'GET'));
+            checkEq("$name: the switch is refused on Google, nothing sent, nothing half done, Google and the rows here as they were", [true, [], [0, 0], $googleBefore, $hereBefore],
+                [in_array($refused, ['series_refused', 'google_hidden_days'], true), $writes, $settledHere($u, $s->calendarId), $google($s, $gid), $here($id)]);
         } finally {
             GoogleStand::forget($db, $u);
         }
@@ -148,12 +118,6 @@ return static function (Db $db): void {
     // Made all-day, the record of 7 January has the key 19:00 on the 6th had: the tag is on the 6th. Made 19:00 New
     // York, the record of 7 January has the key the all-day 8th had: the tag is on the 8th.
     foreach (['19:00 New York made all-day, a tag on 6 January and notes on the 7th' => [true, 6], 'all-day made 19:00 New York, notes on 7 January and a tag on the 8th' => [false, 8]] as $what => [$toAllDay, $tagged]) {
-        foreach (['after the master write', 'with the notes\' write taken and its answer lost'] as $stop) {
-            foreach (['Finish', 'Put back'] as $then) {
-                scenario("sync form recovery, $what, stopped $stop, then $then", fn() => $run([
-                    'name' => "$what, stopped $stop, $then", 'toAllDay' => $toAllDay, 'tagged' => $tagged, 'stop' => $stop, 'then' => $then,
-                ]));
-            }
-        }
+        scenario("sync form recovery, $what: refused on Google", fn() => $run(['name' => $what, 'toAllDay' => $toAllDay, 'tagged' => $tagged]));
     }
 };

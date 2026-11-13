@@ -936,7 +936,7 @@ final class GoogleSeries
                     $readbacks[(string) ($uid ?? $t['googleId'])] = $items;
                     continue;
                 }
-                // The If-Match of the master's write: the series' read above (each day's is its own, dayCondition).
+                // The If-Match of the master's write: the series' read above (a day's step goes with none, sendDayStep).
                 $chain = $first[$i] ?? null;
                 $read = $reads[$i] ?? null;
                 if (!empty($t['insert'])) {
@@ -1001,29 +1001,33 @@ final class GoogleSeries
                 $now = self::held($items, (string) $t['googleId']);
                 $len = max(0, Time::fromDb($t['master']['end_utc'])->getTimestamp() - Time::fromDb($t['master']['start_utc'])->getTimestamp());
                 $daySteps = 0;
+                $notSent = []; // key => words: a day this run wrote nothing to, named instead of the read-back's comparison
+                $heldMaster = $now['master'];
                 foreach (self::stepsFor($t, $items) as [$kind, $id, $body, $key]) {
+                    // A step goes only to a day of the series as Google holds it after the master step (decisions.md,
+                    // "Inside a change to all events a day is written with no condition"): an id that names no day
+                    // there is not what the write would reach (Google refuses a write to a dropped record with 400,
+                    // probe 3.48), so nothing is sent and an edited day there is named.
+                    if ($heldMaster !== null && !self::named($heldMaster, (string) $key, (int) $heldMaster['all_day'] === 1)) {
+                        if ($kind === 'exception') {
+                            $notSent[(string) $key] = self::dayOf($t['master'], (string) $key, $thisYear) . " is not a day of this event in Google Calendar now, so this change's own version of it was not sent there.";
+                        }
+                        continue;
+                    }
                     $row = $kind === 'exception' ? $t['exceptions'][$key] : ($kind === 'plain' ? self::plainAt($t['master'], $key, $len) : null);
                     $after = self::heldAfter($now, $kind, $key, $row);
-                    // Each day's write is conditional on that day's own etag, read just before it (dayCondition): the etag one write answers with is not the one the next day holds (probe 2026-11-13, 3.36, 3.37, 3.40; issue 256).
-                    $ifMatch = $this->dayCondition($calendar, $send, $t, $now, $id, $key, $beforeSend);
-                    if ($ifMatch === null) {
-                        continue; // Google has no such day (a GET answered 404): as a 404 to the write below
-                    }
                     $daySteps++;
                     try {
-                        $resource = $step($kind, $id, $key, fn() => $send('PATCH', '/' . rawurlencode($id), $body, $ifMatch), ['expect' => self::digest(self::state($after, true)), 'extras' => true]);
+                        // With no condition and no read before it: after the series' own conditional write, the last
+                        // write wins (decisions.md; Google takes it in every state a run meets, probe 2026-11-13, 3.66).
+                        $resource = $step($kind, $id, $key, fn() => $this->writer->sendDayStep($calendar, '/' . rawurlencode($id), $body, $beforeSend), ['expect' => self::digest(self::state($after, true)), 'extras' => true]);
                     } catch (HttpError $e) {
-                        // Google lists no such instance (404): a day past the
-                        // 730 occurrences an unbounded series expands to
-                        // there (the contract's cap). The day stays as Google
-                        // has it, and the read-back names the difference.
-                        // No step is meant to go to a key that is no day of
-                        // the series (rebase carries nothing from one keying
-                        // into another); one that did would be passed over
-                        // here too, since stopping the change on it would
-                        // leave it half done with every Finish stopping the
-                        // same way.
+                        // Google has no such instance (404): a day past the 730 occurrences an unbounded series
+                        // expands to there (the contract's cap), or one Google hides. The day stays as Google has it,
+                        // and is named; stopping the change on it would leave it half done with every Finish
+                        // stopping the same way.
                         if ((int) ($e->extra['googleStatus'] ?? 0) === 404) {
+                            $notSent[(string) $key] = 'Google Calendar would not take this change for ' . self::dayOf($t['master'], (string) $key, $thisYear) . ': it has no such day of this event.';
                             continue;
                         }
                         throw $e;
@@ -1034,7 +1038,7 @@ final class GoogleSeries
                 $items = $this->readBack($calendar, $send, $t['uid'], (string) $t['googleId'], $daySteps === 0 ? $chain : null, $beforeSend);
                 $readbacks[(string) $t['uid']] = $items;
                 $settled($i, $items, (string) $t['googleId']);
-                $differences = array_merge($differences, self::differences($t, $items, $thisYear));
+                $differences = array_merge($differences, array_values($notSent), self::differences($t, $items, $thisYear, array_keys($notSent)));
             }
         } catch (\Throwable $e) {
             // Nothing reached Google (no step journaled, or each one
@@ -1122,53 +1126,6 @@ final class GoogleSeries
             }
             return $this->writer->patch($calendar, $id, GoogleWriter::patchOf($found, $body + ['status' => 'confirmed']), $beforeSend, $found, false);
         }
-    }
-
-    /**
-     * The If-Match of one day's write in a change to all events: the etag
-     * Google holds for that day's own id, read just before the write, never
-     * an etag chained from another resource's answer. Google gives each
-     * resource of a series an etag of its own once a day has a record: a
-     * write to one day moves that day's etag and may leave the master's and
-     * the others' as they were, so the etag one step answers with is not
-     * the etag the next day holds (probe 2026-11-13, 3.36, 3.37, 3.40, 10.2;
-     * issue 256). The read is the series' list (a day with a record, live,
-     * cancelled or dropped, is listed under its id), else a GET of the id
-     * (an ordinary day). Before that etag is used, the day must hold what
-     * the change read back and has sent since ($now): a day changed at
-     * Google meanwhile is refused as a conflict, so "This event changed at
-     * Google since you last saw it" stays true, and the If-Match then
-     * guards the moment between this read and the write. Null when Google
-     * has no such day (a GET answered 404): a day past the 730 occurrences
-     * an unbounded series expands to, which run() passes over.
-     */
-    private function dayCondition(array $calendar, \Closure $send, array $t, array $now, string $id, string $key, ?\Closure $beforeSend): ?string
-    {
-        $googleId = (string) $t['googleId'];
-        $items = $this->readBack($calendar, $send, !empty($t['uid']) ? (string) $t['uid'] : null, $googleId, null, $beforeSend);
-        $fresh = self::held($items, $googleId);
-        if ($fresh['master'] === null || $now['master'] === null || self::dayIn($fresh, $key) !== self::dayIn($now, $key)) {
-            throw new HttpError('google_conflict', GoogleWriter::CONFLICT_MESSAGE, 409);
-        }
-        // The listed etag under that id, unless what is listed there is a dropped record (cancelled, no originalStartTime):
-        // no day of the series, so not what a write to the id addresses, and its etag is a GET's.
-        $etag = null;
-        foreach ($items as $item) {
-            if ((string) ($item['id'] ?? '') === $id && !((string) ($item['status'] ?? '') === 'cancelled' && !isset($item['originalStartTime']))) {
-                $etag = isset($item['etag']) && is_string($item['etag']) ? $item['etag'] : null;
-            }
-        }
-        if ($etag === null) {
-            try {
-                $etag = $send('GET', '/' . rawurlencode($id), null, null)['etag'] ?? null;
-            } catch (HttpError $e) {
-                if ((int) ($e->extra['googleStatus'] ?? 0) === 404) {
-                    return null;
-                }
-                throw $e;
-            }
-        }
-        return is_string($etag) && $etag !== '' ? $etag : null;
     }
 
     /** A DELETE, conditional on the etag of a read (GoogleWriter refuses one without); an event already gone (404, or 410 once deleted) is gone. */
@@ -2028,13 +1985,16 @@ final class GoogleSeries
      *
      * @return list<string>
      */
-    public static function differences(array $t, array $items, int $thisYear): array
+    public static function differences(array $t, array $items, int $thisYear, array $named = []): array
     {
         $held = self::held($items, (string) $t['googleId']);
         $m = $t['master'];
         $allDay = (int) $m['all_day'] === 1;
         $tz = $allDay ? 'UTC' : (string) $m['tzid'];
-        $day = static fn(string $key): string => Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone(Time::zone($tz))), $thisYear);
+        $day = static fn(string $key): string => self::dayOf($m, $key, $thisYear);
+        // Days the run named already (not sent, or refused by Google): not named twice.
+        $t['exceptions'] = array_diff_key($t['exceptions'], array_flip($named));
+        $t['skips'] = array_values(array_diff(array_map('strval', $t['skips']), $named));
         $shown = static fn(array $r): string => self::shown($r, $tz, $thisYear);
         $out = [];
         $g = $held['master'];
@@ -2097,6 +2057,13 @@ final class GoogleSeries
             }
         }
         return $out;
+    }
+
+    /** A day of a series, in words: its key's date in the series' own frame (its zone, or its date when all-day). */
+    private static function dayOf(array $m, string $key, int $thisYear): string
+    {
+        $tz = (int) $m['all_day'] === 1 ? 'UTC' : (string) $m['tzid'];
+        return Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone(Time::zone($tz))), $thisYear);
     }
 
     /** When an event is, in words: its day, and its time in its own zone ($tz for one that names none) unless it is all-day. */

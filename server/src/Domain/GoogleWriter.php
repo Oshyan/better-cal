@@ -373,6 +373,19 @@ final class GoogleWriter
     }
 
     /**
+     * The one write that goes with no If-Match: a day's step inside a change
+     * to all events, after the change's conditional write to the series
+     * (GoogleSeries::run). While our own change is sent the last write wins
+     * (decisions.md, "Inside a change to all events a day is written with no
+     * condition"); Google takes such a write in every state a run meets (probe
+     * 2026-11-13, 3.66). Every other PATCH and DELETE stays conditional.
+     */
+    public function sendDayStep(array $calendar, string $path, array $body, ?\Closure $beforeSend = null): array
+    {
+        return $this->call($calendar, 'PATCH', $path, $body, [], $beforeSend, null, true);
+    }
+
+    /**
      * The If-Match for a write to $googleId: the etag of a read (made now,
      * or the caller's $read), once what was read is the series (or event)
      * as stored here (GoogleSeries::condition, the one rule every write
@@ -527,7 +540,7 @@ final class GoogleWriter
         return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => $instanceUtc];
     }
 
-    private function call(array $calendar, string $method, string $path, ?array $payload, array $query = [], ?\Closure $beforeSend = null, ?string $ifMatch = null): array
+    private function call(array $calendar, string $method, string $path, ?array $payload, array $query = [], ?\Closure $beforeSend = null, ?string $ifMatch = null, bool $dayStep = false): array
     {
         $account = $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [(int) $calendar['google_account_id']]);
         if ($account === null) {
@@ -542,9 +555,10 @@ final class GoogleWriter
             $url .= '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
         }
         // Only a write is conditional: what it changes must be what was read,
-        // and none goes without the etag of a read (condition).
+        // and none goes without the etag of a read (condition), but for the
+        // one exemption, a run's day step (sendDayStep).
         $headers = [];
-        if ($method === 'PATCH' || $method === 'DELETE') {
+        if (($method === 'PATCH' || $method === 'DELETE') && !$dayStep) {
             if ($ifMatch === null || $ifMatch === '') {
                 throw new HttpError('google_write_failed', 'Nothing was sent to Google: no version of the event was read to write to.', 502);
             }

@@ -1,5 +1,5 @@
 {
-    "about": "A daily series at 19:00 New York, one day deleted, the series made all-day for all events (the planner carries the skip to its day's key in the new form and records that move), then the delete undone: the day is a day again on its own date, and neither neighbour is touched (x-day; the gate's third anchor, a recorded move).",
+    "about": "At 20:00 New York since the probe of 2026-11-13: at 19:00 (00:00 UTC) a switch over a day Google holds a record for would hide days there (3.48), refused on Google and not this case's subject. A daily series at 20:00 New York, one day deleted, the series made all-day for all events (the planner carries the skip to its day's key in the new form and records that move), then the delete undone: the day is a day again on its own date, and neither neighbour is touched (x-day; the gate's third anchor, a recorded move).",
     "seed": 0,
     "n": 0,
     "series": {
@@ -11,10 +11,10 @@
         "untilForm": "dayend",
         "allDay": false,
         "tzid": "America/New_York",
-        "start": "2027-01-04 19:00",
+        "start": "2027-01-04 20:00",
         "length": 60,
         "flipZone": "America/New_York",
-        "flipClock": 68400,
+        "flipClock": 72000,
         "otherZone": "Asia/Tokyo"
     },
     "steps": [

@@ -1,5 +1,5 @@
 {
-    "about": "The control clock: a daily series at 00:00 UTC, a day given its own notes and the change undone, the series made all-day, then the redo. Since the gate (decisions.md, \"An undo acts on a day only where the journal says exactly where it is\") the redo is refused as not_undoable, with nothing written here or sent: the day had no row and no skip when the series was re-placed, so nothing recorded where it went, and it is never placed by its key or its date (x-day). Here the equal key happens to be the day; it is refused all the same, as at every clock.",
+    "about": "The control clock: a daily series at 01:00 UTC (at 00:00 UTC, since the probe of 2026-11-13, the undone notes leave a record where the two forms meet and the switch is refused on Google, 3.48 and 3.65, which is not this case's subject), a day given its own notes and the change undone, the series made all-day, then the redo. Since the gate (decisions.md, \"An undo acts on a day only where the journal says exactly where it is\") the redo is refused as not_undoable, with nothing written here or sent: the day had no row and no skip when the series was re-placed, so nothing recorded where it went, and it is never placed by its key or its date (x-day). It is refused all the same, as at every clock.",
     "seed": 0,
     "n": 0,
     "series": {
@@ -11,10 +11,10 @@
         "untilForm": "dayend",
         "allDay": false,
         "tzid": "UTC",
-        "start": "2027-01-04 00:00",
+        "start": "2027-01-04 01:00",
         "length": 60,
         "flipZone": "UTC",
-        "flipClock": 0,
+        "flipClock": 3600,
         "otherZone": "Europe/Berlin"
     },
     "steps": [

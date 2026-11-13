@@ -332,6 +332,20 @@ final class Driver
                 // The product's default in 1.5.5: a whole-series change on a Google calendar stays.
                 return $this->result($path);
             }
+            // An undo that switches the series back between timed and all-day where Google would hide days is refused with
+            // the same sentence as the change itself would be (the harness's own reading: GoogleStand::hidesOnSwitch).
+            $gid = (string) $this->db->scalar('SELECT google_event_id FROM events WHERE id = ?', [$id]);
+            if ($gid !== '' && ($before['row'] ?? []) !== [] && $this->google->hidesOnSwitch($gid, $before['row'])) {
+                try {
+                    $this->undo->undoLatest($this->userId);
+                    $this->fail('f-undo', 'an undo that would hide days at Google went through', []);
+                } catch (\Throwable $e) {
+                    $this->check('f-undo', $e instanceof HttpError && $e->errorCode === 'google_hidden_days', 'an undo that would hide days at Google is refused with google_hidden_days',
+                        ['error' => $e instanceof HttpError ? $e->errorCode : get_class($e)]);
+                    $this->same('f-undo', self::withoutEtags($s1), self::withoutEtags($this->snapshot()), 'a refused undo writes nothing');
+                }
+                return $this->result($path);
+            }
             if ($this->undoLatest('f-undo', 'undo')) {
                 $this->same('f-undo', self::roles(self::withoutEtags($s0), $id), self::roles(self::withoutEtags($this->snapshot()), $id),
                     'after Undo on a Google calendar every row is as before the edit by its place in the series, but for the etags Google changes on every write (a day Google gives back may come back under a new id here)');

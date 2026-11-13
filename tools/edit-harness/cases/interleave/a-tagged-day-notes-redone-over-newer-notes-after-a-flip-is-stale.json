@@ -1,5 +1,5 @@
 {
-    "about": "A daily series at 19:00 New York, a day given a tag (a row), then notes and that undone, the series made all-day, other notes given to the same day, then the first notes redone: the day is placed by its own row, so staleness answers, stale_undo, with nothing written here or sent (x-day).",
+    "about": "A daily series at 20:00 New York (at 19:00, 00:00 UTC, since the probe of 2026-11-13 the undone notes leave a record where the two forms meet and the switch is refused on Google, 3.48 and 3.65, which is not this case's subject), a day given a tag (a row), then notes and that undone, the series made all-day, other notes given to the same day, then the first notes redone: the day is placed by its own row, so staleness answers, stale_undo, with nothing written here or sent (x-day).",
     "seed": 0,
     "n": 0,
     "series": {
@@ -11,10 +11,10 @@
         "untilForm": "dayend",
         "allDay": false,
         "tzid": "America/New_York",
-        "start": "2027-01-04 19:00",
+        "start": "2027-01-04 20:00",
         "length": 60,
         "flipZone": "America/New_York",
-        "flipClock": 68400,
+        "flipClock": 72000,
         "otherZone": "Asia/Tokyo"
     },
     "steps": [

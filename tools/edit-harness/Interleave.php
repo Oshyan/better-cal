@@ -1603,9 +1603,18 @@ final class Interleave
             $this->fail('x-honest', "step {$this->step} ($do): the product threw $error instead of answering", $context);
         }
 
-        // x-conditional: every PATCH and DELETE the app sends carries If-Match.
+        // x-conditional: every PATCH and DELETE the app sends carries If-Match, but a day's PATCH inside a change to all
+        // events, after the series' own conditional write or a recovery's read (decisions.md, "Inside a change to all
+        // events a day is written with no condition"): a step that writes a series (a write to a non-instance id) or
+        // recovers one (Finish, Put back), and the PATCH to one of its instance ids.
+        $instance = static fn(array $q): bool => preg_match('/_\d{8}(T\d{6}Z)?$/', rawurldecode(basename((string) $q['path']))) === 1;
+        $seriesRun = in_array($do, ['finish', 'putback'], true) || str_starts_with($do, 'f-')
+            || array_filter($writes, static fn(array $q): bool => !$instance($q) && $q['method'] === 'PATCH' && preg_grep('/^If-Match:\s*\S/i', $q['headers']) !== []) !== [];
         foreach ($writes as $q) {
             $this->ran('x-conditional', $do);
+            if ($seriesRun && $q['method'] === 'PATCH' && $instance($q)) {
+                continue;
+            }
             if (in_array($q['method'], ['PATCH', 'DELETE'], true) && preg_grep('/^If-Match:\s*\S/i', $q['headers']) === []) {
                 $this->fail('x-conditional', "step {$this->step} ($do): a {$q['method']} went to Google without If-Match", $context + ['path' => rawurldecode(basename((string) $q['path']))]);
                 break;
@@ -2095,7 +2104,15 @@ final class Interleave
                 // gate, and Google's refusal of a series changed there and not yet read (x-conflict's to judge).
                 $gids = array_map(static fn(string $i): string => substr($i, strlen('series:')), array_filter(array_keys(self::entryChange($state)), static fn(string $i): bool => str_starts_with($i, 'series:')));
                 $unread = array_intersect($gids, array_keys($this->dirty)) !== [] || isset($this->dirty[(string) ($asked['gid'] ?? '')]);
-                $allowed = in_array($error, ['google_pending', 'not_undoable'], true) || ($unread && in_array($error, ['google_conflict', 'google_deleted'], true));
+                // An undo that switches a series back between timed and all-day where Google would hide days is refused with
+                // the change's own sentence (google_hidden_days), judged by the harness's own reading of the stand-in.
+                $hides = false;
+                foreach ($gids as $g) {
+                    $was = $state['before']['series:' . $g] ?? null;
+                    $hides = $hides || ($was !== null && $this->stand->hidesOnSwitch($g, ['start_utc' => $was['start'], 'end_utc' => $was['end'], 'all_day' => $was['allDay'], 'tzid' => $was['tz'], 'rrule' => $was['rrule']]));
+                }
+                $allowed = in_array($error, ['google_pending', 'not_undoable'], true) || ($unread && in_array($error, ['google_conflict', 'google_deleted'], true))
+                    || ($error === 'google_hidden_days' && $hides);
                 if (!$allowed) {
                     $this->fail('x-undo-fields', $error === 'stale_undo'
                         ? "step {$this->step} ($do): an undo of the entry step {$state['step']} made was refused as stale though nothing it changed has changed since"

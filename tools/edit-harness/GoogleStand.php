@@ -219,6 +219,36 @@ final class GoogleStand
         return array_map(static fn(string $key): \DateTimeImmutable => Clock::parse($key)->setTimezone(Clock::zone($zone)), $keys);
     }
 
+    /**
+     * Whether switching series $gid, as the stand-in holds it, to the series $target (a row: start_utc, end_utc, all_day,
+     * tzid, rrule) in the other form would hide days at Google (decisions.md, "A switch between timed and all-day that
+     * Google would hide days with is refused"; probe 2026-11-13, 3.48 to 3.51, 3.65): a record of the series, live or
+     * cancelled, at the instant of a day of $target, an all-day day's instant being its date at 00:00 UTC. The harness's
+     * own reading, from the stand-in's store and the harness's expander, sharing nothing with the product.
+     */
+    public function hidesOnSwitch(string $gid, array $target): bool
+    {
+        $m = $this->fake->events[$gid] ?? null;
+        $allDay = (int) ($target['all_day'] ?? 0) === 1;
+        if ($m === null || empty($target['rrule']) || isset($m['start']['date']) === $allDay) {
+            return false;
+        }
+        $held = [];
+        foreach ($this->fake->records($gid) as $key => $r) {
+            $k = (string) $key;
+            $held[strlen($k) === 8 ? $k . 'T000000Z' : $k] = true;
+        }
+        $row = ['start_utc' => (string) $target['start_utc'], 'end_utc' => (string) $target['end_utc'], 'all_day' => $allDay ? 1 : 0, 'tzid' => $allDay ? 'UTC' : (string) $target['tzid'], 'rrule' => (string) $target['rrule'], 'exdates_json' => null];
+        $ev = clone Rfc::ofRow($row);
+        $keys = $ev->refused ? array_column(array_slice(Truth::expand($row)['occ'], 0, 730), 'key') : array_map(static fn(array $o): string => gmdate('Y-m-d H:i:s', $o[0]), $ev->first(730));
+        foreach ($keys as $key) {
+            if (isset($held[Clock::parse($key)->format('Ymd\THis\Z')])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public function calendar(): array
     {
         return $this->db->one('SELECT * FROM calendars WHERE id = ?', [$this->calendarId]);

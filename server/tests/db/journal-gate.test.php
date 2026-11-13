@@ -623,7 +623,7 @@ return static function (Db $db): void {
     });
 
     scenario('journal gate: a calendar that no longer writes to Google for this account (disconnected, paused, a role that can\'t write) is listed with no action and the reason, and keeping it as a copy goes through and closes the change', function () use ($db, $setup, $halfChange, $reviewItem, $caught, $pendingRow, $closed, $closedLine, $disconnected, $paused): void {
-        foreach (['disconnected' => $disconnected, 'paused' => $paused, 'reader' => 'This account can no longer edit this calendar at Google, so Finish and Put back can no longer run for this change.'] as $how => $words) {
+        foreach (['disconnected' => $disconnected, 'paused' => $paused, 'reader' => "This change stopped part way, and your permissions for 'Sample crew' at Google are now read-only, so it can't be finished or put back. It stays here, and the event takes no other change, until full editing is restored at Google or you remove the calendar."] as $how => $words) {
             $s = $setup();
             $p = $halfChange($s);
             $title = (string) $pendingRow($s)['title'];

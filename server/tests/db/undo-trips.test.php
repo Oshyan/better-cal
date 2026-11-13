@@ -414,7 +414,9 @@ return static function (Db $db): void {
         $transport = static function (string $method, string $url, ?array $payload) use (&$calls, &$resource): array {
             $calls[] = $method;
             $resource = array_merge($resource, $payload ?? []);
-            return ['status' => 200, 'body' => json_encode($resource)];
+            // A write's first read is a list by the event's iCalUID, which states the account's level (the access probe, L1).
+            $list = $method === 'GET' && str_ends_with((string) parse_url($url, PHP_URL_PATH), '/events');
+            return ['status' => 200, 'body' => json_encode($list ? ['kind' => 'calendar#events', 'accessRole' => 'owner', 'items' => [$resource]] : $resource)];
         };
         $events = new BetterCal\Domain\Events($db, new BetterCal\Domain\Recurrence(), $d->undo, new BetterCal\Domain\Labels($db),
             new BetterCal\Domain\Filters($db, $d->undo, new BetterCal\Infra\JobQueue($db)), new Trips($db, $d->undo), null,

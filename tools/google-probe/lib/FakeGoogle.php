@@ -195,7 +195,7 @@ final class FakeGoogle
         if ($auth === [] || $n === $this->unauthorizedAt) {
             return self::error(401, 'Invalid Credentials');
         }
-        $answer = $this->route($method, $path, $query, $headers, $payload);
+        $answer = $this->shapedAnswer($method, $this->route($method, $path, $query, $headers, $payload));
         // The status the stand-in answered, beside the request: a write it refused (4xx) took nothing. A lost answer was
         // taken, so its status is recorded before the answer is lost.
         $this->requests[$n - 1]['status'] = (int) $answer['status'];
@@ -869,6 +869,76 @@ final class FakeGoogle
     private static function ok(array $body): array
     {
         return ['status' => 200, 'body' => (string) json_encode($body, JSON_UNESCAPED_SLASHES)];
+    }
+
+    /**
+     * Every answer as Google shapes it on the way out, the store left as it is (docs/design/research/google-series/
+     * replay-2026-11-13.md): each event resource (a single answer, or each item of a list) through shaped(), and an error
+     * with the reason and wording Google gives where a live answer has shown them.
+     */
+    private function shapedAnswer(string $method, array $answer): array
+    {
+        $body = json_decode((string) $answer['body'], true);
+        if (!is_array($body)) {
+            return $answer;
+        }
+        if (isset($body['error'])) {
+            // As probed (2026-11-10 and 2026-11-13): reason and domain per status; a PATCH's 412 has its own wording and a status.
+            $reasons = [400 => 'invalid', 404 => 'notFound', 410 => 'deleted'];
+            $code = (int) $answer['status'];
+            if ($code === 412 && $method === 'PATCH') {
+                $body = ['error' => ['code' => 412, 'message' => 'Precondition check failed.', 'errors' => [['message' => 'Precondition check failed.', 'domain' => 'global', 'reason' => 'failedPrecondition']], 'status' => 'FAILED_PRECONDITION']];
+            } elseif (isset($reasons[$code])) {
+                $message = (string) $body['error']['message'];
+                $body = ['error' => ['errors' => [['domain' => 'global', 'reason' => $reasons[$code], 'message' => $message]], 'code' => $code, 'message' => $message]];
+            }
+            return ['status' => $answer['status'], 'body' => (string) json_encode($body, JSON_UNESCAPED_SLASHES)];
+        }
+        if (($body['kind'] ?? 'calendar#event') === 'calendar#event' && isset($body['id'])) {
+            $body = $this->shaped($body);
+        } elseif (isset($body['items']) && is_array($body['items'])) {
+            $body['items'] = array_map(fn(array $e): array => $this->shaped($e), $body['items']);
+        } else {
+            return $answer;
+        }
+        return ['status' => $answer['status'], 'body' => (string) json_encode($body, JSON_UNESCAPED_SLASHES)];
+    }
+
+    /**
+     * One event resource as Google returns it, as the live answers show (3,244 resources in the probe of 2026-11-13, the
+     * replay of the same day): no field held as null, no description or location held as "", no recurrence held as [];
+     * every dateTime (start, end, originalStartTime) written with the calendar's own offset at that instant, whatever
+     * zone the event names; reminders {useDefault: true} on a timed event and false on an all-day one when none are held;
+     * eventType "default" and kind "calendar#event" always.
+     */
+    private function shaped(array $e): array
+    {
+        $e = array_filter($e, static fn($v): bool => $v !== null);
+        foreach (['description', 'location'] as $k) {
+            if (($e[$k] ?? null) === '') {
+                unset($e[$k]);
+            }
+        }
+        if (($e['recurrence'] ?? null) === []) {
+            unset($e['recurrence']);
+        }
+        foreach (['start', 'end', 'originalStartTime'] as $k) {
+            if (isset($e[$k]['dateTime']) && is_string($e[$k]['dateTime'])) {
+                $e[$k]['dateTime'] = (new \DateTimeImmutable($e[$k]['dateTime']))->setTimezone(new \DateTimeZone($this->zone))->format('Y-m-d\TH:i:sP');
+            }
+        }
+        // originalStartTime names the zone the resource's own start names, none when that start is a date (3,472 of
+        // 3,472 resources in the probes of 2026-11-10 and 2026-11-13; replay round 2).
+        if (isset($e['originalStartTime']['dateTime'], $e['start'])) {
+            unset($e['originalStartTime']['timeZone']);
+            if (isset($e['start']['timeZone'])) {
+                $e['originalStartTime']['timeZone'] = $e['start']['timeZone'];
+            }
+        }
+        if (!isset($e['reminders']) && isset($e['start'])) {
+            $e['reminders'] = ['useDefault' => !isset($e['start']['date'])];
+        }
+        return $e + ['kind' => 'calendar#event', 'eventType' => 'default'];
     }
 
     private static function error(int $status, string $message): array

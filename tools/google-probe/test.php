@@ -216,6 +216,42 @@ check('rerun: deletes what the aborted run left', liveMarked($fake) === [], impl
 $json = json_decode((string) file_get_contents($report->jsonPath), true);
 check('rerun: notes the leftovers it deleted', preg_match('/Deleted \d+ marked events an earlier run left/', implode(' ', $json['run']['notes'] ?? [])) === 1);
 
+// ---- The stand-in against the live runs ---------------------------------------
+// A weekly 10:00 Los Angeles series of ten with occurrence 3 moved a day later and occurrence 6 cancelled.
+$standIn = static function (): FakeGoogle {
+    $fake = new FakeGoogle(CAL);
+    $fake->token = null;
+    $la = static fn(string $local): array => ['dateTime' => (new DateTimeImmutable($local, new DateTimeZone('America/Los_Angeles')))->format('Y-m-d\TH:i:sP'), 'timeZone' => 'America/Los_Angeles'];
+    $fake->seed(['id' => 'standin01', 'summary' => 'Sample weekly', 'start' => $la('2027-03-01 10:00'), 'end' => $la('2027-03-01 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=10']]);
+    $fake->seed(['id' => 'standin01_20270315T170000Z', 'iCalUID' => 'standin01@google.com', 'recurringEventId' => 'standin01', 'summary' => 'Sample weekly',
+        'originalStartTime' => $la('2027-03-15 10:00'), 'start' => $la('2027-03-16 10:00'), 'end' => $la('2027-03-16 11:00')]);
+    $fake->seed(['id' => 'standin01_20270405T170000Z', 'iCalUID' => 'standin01@google.com', 'recurringEventId' => 'standin01', 'summary' => 'Sample weekly', 'status' => 'cancelled',
+        'originalStartTime' => $la('2027-04-05 10:00'), 'start' => $la('2027-04-05 10:00'), 'end' => $la('2027-04-05 11:00')]);
+    return $fake;
+};
+$patch = static fn(FakeGoogle $fake, array $body): array => ($fake->transport())('PATCH', Api::BASE . '/calendars/' . rawurlencode(CAL) . '/events/standin01', ['Authorization: Bearer x'], $body);
+
+// 3.32 (2026-11-10): a link set on a series is written into every record, the cancelled one included.
+$fake = $standIn();
+$r = $patch($fake, ['source' => ['url' => 'https://example.test/sample', 'title' => 'example.test'], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=10']]);
+check('stand-in, 3.32: a link set on the series is written into the moved record and the cancelled one, both kept',
+    $r['status'] === 200 && ($fake->events['standin01_20270315T170000Z']['source']['url'] ?? null) === 'https://example.test/sample'
+    && ($fake->events['standin01_20270405T170000Z']['source']['url'] ?? null) === 'https://example.test/sample'
+    && isset($fake->events['standin01_20270405T170000Z']['originalStartTime']), json_encode($fake->events['standin01_20270315T170000Z']));
+
+// 3.17 (2026-11-10): the zone alone (10:00 Los Angeles is 11:00 Denver, the same instants): every record kept, its
+// start reset to the pattern's in the new zone, its end where it was.
+$fake = $standIn();
+$den = static fn(string $local): array => ['dateTime' => (new DateTimeImmutable($local, new DateTimeZone('America/Denver')))->format('Y-m-d\TH:i:sP'), 'timeZone' => 'America/Denver'];
+$r = $patch($fake, ['start' => $den('2027-03-01 11:00'), 'end' => $den('2027-03-01 12:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=10']]);
+$moved = $fake->events['standin01_20270315T170000Z'];
+check('stand-in, 3.17: a zone change moving no instant keeps the moved record, its start reset to the pattern\'s, its end where it was',
+    $r['status'] === 200 && isset($moved['originalStartTime']) && ($moved['start']['timeZone'] ?? null) === 'America/Denver'
+    && (new DateTimeImmutable($moved['start']['dateTime']))->getTimestamp() === (new DateTimeImmutable('2027-03-15 10:00', new DateTimeZone('America/Los_Angeles')))->getTimestamp()
+    && (new DateTimeImmutable($moved['end']['dateTime']))->getTimestamp() === (new DateTimeImmutable('2027-03-16 11:00', new DateTimeZone('America/Los_Angeles')))->getTimestamp(),
+    json_encode($moved));
+check('stand-in, 3.17: the cancelled record is kept too', ($fake->events['standin01_20270405T170000Z']['status'] ?? null) === 'cancelled' && isset($fake->events['standin01_20270405T170000Z']['originalStartTime']));
+
 // ---- Report scrubbing on its own ---------------------------------------------
 $r = new Report($tmp . '/scrub');
 $r->secret('someone@example.net', '{account}');

@@ -354,7 +354,11 @@ final class FakeGoogle
      * end) and while no EXDATE line names it (3.16). A kept record follows a
      * changed start onto the pattern's time (3.5), takes a field or status
      * set on the master (3.12 to 3.15, a cancelled record un-cancelled by a
-     * status), and its end follows a changed length (3.2); a pattern change
+     * status) and a link set on it (3.32: `source` written into every kept
+     * record, the cancelled one included), and its end follows a changed
+     * length (3.2). A zone change that moves no instant (3.17) resets a kept
+     * record's start to the pattern's in the new zone and leaves its end
+     * where it was, in the new zone; a pattern change
      * drops the cancelled records it would keep (3.7). A dropped record
      * stays readable as a cancelled item with no originalStartTime, which
      * the next delta lists (3.1).
@@ -378,11 +382,13 @@ final class FakeGoogle
         $newLen = self::lengthOf($new);
         $startChanged = json_encode($old['start']) !== json_encode($new['start']);
         $patternChanged = self::pattern($old) !== self::pattern($new);
-        $fields = array_intersect_key($body, array_flip(['summary', 'description', 'location', 'status']));
+        $fields = array_intersect_key($body, array_flip(['summary', 'description', 'location', 'status', 'source']));
         $exdates = self::exdateKeys($new);
         // The zone alone changed (both timed, another timeZone): under the 'dropped' setting every record goes (Q2).
         $zoneAlone = isset($old['start']['dateTime'], $new['start']['dateTime']) && ($old['start']['timeZone'] ?? null) !== ($new['start']['timeZone'] ?? null);
         $dropAll = $zoneAlone && $this->zoneAlone === 'dropped';
+        // And moved no instant (3.17): each kept record's end stays where it was.
+        $sameInstants = $zoneAlone && (new \DateTimeImmutable((string) $old['start']['dateTime']))->getTimestamp() === (new \DateTimeImmutable((string) $new['start']['dateTime']))->getTimestamp();
         $occ = [];
         foreach ($this->occurrences($new) as $start) {
             $occ[self::keyOfStart($start, $allDay)] = $start;
@@ -404,13 +410,21 @@ final class FakeGoogle
                 }
                 continue;
             }
-            if ($startChanged) {
+            if ($sameInstants && isset($r['end']['dateTime'])) {
+                $tz = (string) $new['start']['timeZone'];
+                [$r['start']] = $this->span($occ[$key], $newLen, $allDay, $tz);
+                $r['end'] = ['dateTime' => (new \DateTimeImmutable((string) $r['end']['dateTime']))->setTimezone(new \DateTimeZone($tz))->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz];
+            } elseif ($startChanged) {
                 [$r['start'], $r['end']] = $this->span($occ[$key], $newLen, $allDay, (string) ($new['start']['timeZone'] ?? $this->zone));
             } elseif ($newLen !== $oldLen) {
                 // In the record's own form: an all-day day of a timed series keeps whole days.
                 $r['end'] = $this->endOf($r['start'], $newLen, isset($r['start']['date']));
             }
             foreach ($fields as $k => $v) {
+                if ($v === null) {
+                    unset($r[$k]); // a link cleared (a PATCH's null removes a field)
+                    continue;
+                }
                 $r[$k] = $v;
             }
             $this->events[$rid] = $r;

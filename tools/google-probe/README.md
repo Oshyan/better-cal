@@ -14,7 +14,7 @@ php tools/google-probe/run.php --calendar <googleCalendarId> --account <google_a
 
 - `--calendar`: the throwaway calendar's id, from its settings in Google Calendar ("Integrate calendar", Calendar ID). It doesn't need to be connected in Better-Cal, and it's quieter if it isn't.
 - `--account`: the connected account, by its `google_accounts` id or its address as stored. The probe takes its access token through `GoogleAuth`, as the worker does.
-- `--only 1,3`: run some of the nine groups.
+- `--only 1,3`: run some of the ten groups.
 - `--guest <address>`: runs group 8 (mail), inviting that address. Use a mailbox you own and can read; it is the only case that leaves out `sendUpdates=none`, once, to see the default.
 - `--report <dir>`: where the report goes; `workfolder/google-probe/` by default (gitignored).
 - `--allow-other-events`: run on a calendar that has events the probe didn't make.
@@ -23,7 +23,7 @@ It loads the app's config and database the way `server/bin/worker.php` does, so 
 
 ## What It Does
 
-Nine groups, as the survey lists them: rule forms, each exception kind alone (timed and all-day, plus Pacific/Auckland and Asia/Tokyo for the instance keys), master changes over exceptions, the split, etags and If-Match, deletes and their reverse, sync, mail, and the two live checks from the audit. Each case starts from a state it makes itself, reads it back (the master, `events.instances`, the `singleEvents=false` list of the series), takes a sync token, writes, then reads back again and lists the sync-token delta from that token, and finally runs a second delta to see whether anything still moves. The finding is written only from what came back. Group 8 can't read a mailbox, so its findings give the times to check against. Group 9 runs through the app, not the API, and the report gives its steps to do by hand.
+Ten groups: the nine the survey lists (rule forms, each exception kind alone (timed and all-day, plus Pacific/Auckland and Asia/Tokyo for the instance keys), master changes over exceptions, the split, etags and If-Match, deletes and their reverse, sync, mail, and the two live checks from the audit), and group 10, what an undo of a change to all events would meet (its first case waits ten minutes on purpose). Each case starts from a state it makes itself, reads it back (the master, `events.instances`, the `singleEvents=false` list of the series), takes a sync token, writes, then reads back again and lists the sync-token delta from that token, and finally runs a second delta to see whether anything still moves. The finding is written only from what came back. Group 8 can't read a mailbox, so its findings give the times to check against. Group 9 runs through the app, not the API, and the report gives its steps to do by hand.
 
 A read-back is retried on a 404 or on a delta that doesn't yet show the write, a bounded number of times with backoff, and the report says how many tries it took. Nothing waits on a timer for correctness.
 

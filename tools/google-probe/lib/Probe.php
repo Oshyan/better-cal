@@ -1,5 +1,5 @@
 <?php
-// The probe itself (docs/design/google-series-survey.md, "The Probe"): nine
+// The probe itself (docs/design/google-series-survey.md, "The Probe"): ten
 // groups of cases against one throwaway calendar. Each case makes its own
 // starting state, reads it back, writes, reads back again (the master,
 // events.instances, a singleEvents=false list of the series and a

@@ -4,16 +4,18 @@ declare(strict_types=1);
 
 // Issue 256 and the baseline of "changed at Google since", against the stand-in as the probe of 2026-11-13 found
 // Google (docs/design/research/google-series/probe-2026-11-13.md; decisions.md, "Each day's write in a change to all
-// events carries that day's own etag" and "A step's expectation is Google's answer to its write").
+// events carries that day's own etag" and "The last write wins while one of our changes is being sent").
 //
 // First, from the rule (each day's write carries that day's own etag): a weekly series of four with a renamed day and
 // a deleted day, changed for all events and changed back (timed to all-day and back, all-day to timed and back, 10:00
 // to 11:00 and back), completes each time in one go, the renamed day keeping its title and the deleted day staying
 // deleted, at Google and here, nothing half done (3.36, 3.37, 3.40 live: the third request refused).
 //
-// Then the two requirements on what Put back compares Google with: a field Google sets by itself on our write (its
-// reminders, once all-day) is ours and Put back runs; a change someone else makes at Google between our master write
-// and our next read is never ours, and Put back is refused.
+// Then what Put back compares Google with, by the rule (the last write wins while our change is being sent; between
+// changes Google is read first): what Google held when the stopped change read it at its stop. A field Google sets by
+// itself on our write (its reminders, once all-day) is no change, and Put back runs; a change someone else makes inside
+// the window, before that read, is not detected, and Put back goes ahead (documented); the same change made after the
+// stop is refused.
 //
 // Expectations by date from the rules; nothing in server/src computes one. Google is the edit harness's stand-in.
 // Invented data.
@@ -89,32 +91,48 @@ return static function (Db $db): void {
         }
     });
 
-    // Requirement 2: a change someone else makes at Google between our master write and our next read is never ours. A
-    // clock change for all events (10:00 to 11:00), with someone renaming an ordinary day (22 March) at Google right after
-    // the master write; the change's first day step lands and its second meets the network down. Put back is refused.
-    // The same with the stranger's change on the master (its place), the change stopped right after its master write.
+    // The window: a change someone else makes at Google between our master write and the read where the change stopped is
+    // inside the last-write-wins window, so it is not detected and Put back goes ahead (an ordinary day renamed; the
+    // series' place changed). The change stops with a write Google refuses (403), so its stop read happens. The
+    // counterpart: the same rename made after the change stopped is a change since, and Put back is refused.
+    $stopAfterRace = static function (object $t, ?\Closure $race, int $refusedAt) use ($to): ?string {
+        $t->s->knobs->race = $race;
+        $t->s->knobs->writes = 0;
+        $t->s->knobs->beforeAt = $refusedAt; // 3: the master's write and the first day's land; 2: the master's alone
+        [, $stopped] = H::tryChange($t, $to('10:00', '11:00'));
+        $t->s->knobs->beforeAt = null;
+        $t->s->knobs->race = null;
+        return $stopped;
+    };
     foreach ([
         'an ordinary day renamed' => ['_20270322T180000Z', ['summary' => 'Renamed in Google Calendar'], 3, 'a day step'],
         'the series\' place changed' => ['', ['location' => 'Sample hall, theirs'], 2, 'its master write'],
-    ] as $what => [$suffix, $body, $downAt, $after]) {
-        scenario("google back again: a clock change, $what at Google right after its master write, stopped after $after: Put back is refused", function () use ($begin, $to, $what, $suffix, $body, $downAt, $after): void {
+    ] as $what => [$suffix, $body, $refusedAt, $after]) {
+        scenario("google back again, last write wins: a clock change, $what at Google right after its master write (inside the window), stopped after $after: Put back goes ahead", function () use ($begin, $stopAfterRace, $what, $suffix, $body, $refusedAt, $after): void {
             $t = $begin('10:00');
             try {
-                $t->s->knobs->race = static function () use ($t, $suffix, $body): void {
+                $stopped = $stopAfterRace($t, static function () use ($t, $suffix, $body): void {
                     H::atGoogle($t, 'PATCH', '/events/' . rawurlencode($t->gid . $suffix), $body);
-                };
-                $t->s->knobs->writes = 0;
-                $t->s->knobs->netAt = $downAt; // 3: the master's write and the first day's land; 2: the master's alone
-                [, $stopped] = H::tryChange($t, $to('10:00', '11:00'));
-                $t->s->knobs->netAt = null;
-                $t->s->knobs->down = false;
-                $t->s->knobs->race = null;
+                }, $refusedAt);
                 checkEq("$what: the change stops half done after $after", [true, 1], [$stopped !== null, count(H::halfDone($t))]);
                 [, $refused] = H::recover($t, 'putback');
-                check("$what: Put back is refused as changed at Google since, and still listed half done", $refused !== null && str_contains($refused, 'google_changed_since') && count(H::halfDone($t)) === 1, (string) $refused);
+                checkEq("$what: Put back goes ahead, nothing left half done (the change inside the window is not detected: the last write wins)", [null, 0], [$refused, count(H::halfDone($t))]);
             } finally {
                 H::done($t);
             }
         });
     }
+    scenario('google back again: a clock change stopped after a day step, then an ordinary day renamed at Google: Put back is refused', function () use ($begin, $stopAfterRace): void {
+        $t = $begin('10:00');
+        try {
+            $stopped = $stopAfterRace($t, null, 3);
+            checkEq('the change stops half done after a day step', [true, 1], [$stopped !== null, count(H::halfDone($t))]);
+            [$status] = H::atGoogle($t, 'PATCH', '/events/' . rawurlencode($t->gid . '_20270322T180000Z'), ['summary' => 'Renamed in Google Calendar']);
+            checkEq('the stand-in takes the rename made after the stop', 200, $status);
+            [, $refused] = H::recover($t, 'putback');
+            check('Put back is refused as changed at Google since, and the change still listed half done', $refused !== null && str_contains($refused, 'google_changed_since') && count(H::halfDone($t)) === 1, (string) $refused);
+        } finally {
+            H::done($t);
+        }
+    });
 };

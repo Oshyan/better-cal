@@ -2847,6 +2847,11 @@ final class Model
                     $personSkipped++;
                 }
             }
+            // A series left with no day but deleted ones has no events (decisions.md, "A plan that leaves no undeleted
+            // day is refused as leaving no events"; Google cancels such a series for good, probe 3.62).
+            if ($allKeys !== [] && array_diff($allKeys, $newExdates) === []) {
+                return null;
+            }
         }
         // Losses: old occurrences whose image isn't in the new series. One
         // whose exception gets an outcome of its own (an event of its own,

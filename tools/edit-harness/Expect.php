@@ -1183,7 +1183,9 @@ final class Expect
             $rows[$id] = ['img' => $img, 'inside' => $inside($img), 'acted' => false];
         }
         return [
-            'empty' => $days === [] || ($gen !== [] && count($gen) === count($days)),
+            // No events: no day, or a bounded series whose every day is skipped (decisions.md, "A plan that leaves no
+            // undeleted day is refused as leaving no events").
+            'empty' => $days === [] || ($gen !== [] && count($gen) === count($days)) || ($bound['kind'] !== 'none' && array_diff($days, $skips) === []),
             'start' => $days[0] ?? $earliest,
             'days' => $days,
             'bounded' => $bound['kind'] !== 'none',

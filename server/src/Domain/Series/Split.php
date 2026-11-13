@@ -79,6 +79,11 @@ final class Split
         $skips = Recurrence::decodeExdates($master['exdates_json'] ?? null);
         $oldSkips = array_values(array_filter($skips, static fn(string $k): bool => $k < $acted));
         $partSkips = array_values(array_filter($skips, static fn(string $k): bool => $k >= $acted));
+        // The old part left with no day but deleted ones has no events (decisions.md, "A plan that leaves no undeleted
+        // day is refused as leaving no events"; Google cancels such a series for good, probe 3.62).
+        if (array_diff(array_column($before, 1), $oldSkips) === []) {
+            return self::refused($master, $opts, 'empty');
+        }
         $kept = [];
         $partRows = [];
         foreach ($overrides as $row) {
@@ -265,8 +270,13 @@ final class Split
         $partChoices = array_diff_key($choices, ['bound' => true]);
         foreach ($counts as $id => $n) {
             $option = ['id' => $id, 'label' => $labels[$id]];
+            $alt = $n >= 1 ? Model::plan($partMaster, $partRows, ['rrule' => $sent->withBound($n, null)->text(), 'boundSent' => true] + $partEdit, $partChoices, $opts) : null;
+            // A reading whose part keeps no day but deleted ones leaves no events, as one that keeps none does.
+            if ($alt !== null && $alt['writes'] === null && in_array('empty', array_column($alt['plan']['refusals'] ?? [], 'code'), true)) {
+                $n = 0;
+            }
             if ($n >= 1) {
-                $alts[$id] = Model::plan($partMaster, $partRows, ['rrule' => $sent->withBound($n, null)->text(), 'boundSent' => true] + $partEdit, $partChoices, $opts);
+                $alts[$id] = $alt;
                 $alt = $alts[$id]['plan'];
                 $option += ['bound' => $alt['bound'], 'next' => array_map(static fn(array $e): array => array_intersect_key($e, ['start' => 1, 'allDay' => 1, 'tz' => 1]), array_slice($alt['next'], 0, 3))];
             } else {

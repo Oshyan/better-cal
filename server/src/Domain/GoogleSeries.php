@@ -681,45 +681,16 @@ final class GoogleSeries
      * the rest). The one comparison condition() makes. Pure.
      *
      * A day's row is read with the series' value for every field it does
-     * not own (exceptionOf), which is what Google's record holds only where
-     * Google writes a series' field into its records. For a field that is
-     * not proven of (UNWRITTEN: the link), the record may as well still
-     * hold what it held before the series' value changed, and that is no
-     * change made at Google: the record holding either the series' value
-     * or the value its row stores (the sync writes a record's value into
-     * its row's column, owned or not) is as stored. Without this a link
-     * given to a series left every edited day's record reading as changed
-     * at Google, and every later write to the series refused.
+     * not own (exceptionOf), which is what Google's record holds: Google
+     * writes a series' title, notes, place, status and link into its
+     * records (probe 3.12 to 3.15; the link 3.32, 2026-11-10, and 3.52,
+     * 3.58, 3.61, 2026-11-13).
      */
     public static function sameAsStored(array $items, string $googleId, array $master, array $rows): bool
     {
         $held = self::held($items, $googleId);
-        foreach ($rows as $row) {
-            $key = (string) ($row['recurrence_instance_utc'] ?? '');
-            if ($held['master'] === null || !isset($held['records'][$key])) {
-                continue;
-            }
-            // Its own list, by the one reader (every day row has one since migration 078; issue 240).
-            $owned = OwnFields::googleHeld(OwnFields::stored($row));
-            foreach (self::UNWRITTEN as $field => $col) {
-                if (!in_array($field, $owned, true) && self::fieldsOf([$col => $held['records'][$key][$col] ?? null] + $row)[$col] === self::fieldsOf($row)[$col]) {
-                    $held['records'][$key][$col] = $master[$col] ?? null;
-                }
-            }
-        }
         return self::digest(self::state($held)) === self::digest(self::state(self::heldOf(self::stateOf($master, $rows))));
     }
-
-    /**
-     * The fields of a series it is not proven that Google writes into the
-     * series' records when the master's value changes (own field => its
-     * column). Title, notes, place and status are written in (probe 3.12
-     * to 3.15) and a new time resets or drops the records (3.1 to 3.5);
-     * the link, Google's `source`, has no case yet (3.32 asks). The same
-     * fact as the link's place in unproven(): a field leaves both when a
-     * live probe shows what Google does with it.
-     */
-    private const UNWRITTEN = ['url' => 'url'];
 
     /** How many steps of a pending change may have reached Google, answered or not (0: nothing did). */
     public function stepsDone(int $pendingId): int
@@ -1671,6 +1642,10 @@ final class GoogleSeries
                 $set[$col] = $new[$col] ?? null;
             }
         }
+        // A link set is written into every kept record, as a title is (3.32, 2026-11-10; 3.52, 2026-11-13).
+        if (array_key_exists('source', $body)) {
+            $set['url'] = $new['url'] ?? null;
+        }
         // A series with no notes at Google, written without them: Google clears every kept record's own notes (probe
         // 2026-11-13, 3.52 to 3.57; with notes of its own the records keep theirs, 3.58 to 3.60). Predicted so the
         // read-back shows it as this write's own effect and the edited day's step sends its notes back (decisions.md,
@@ -1849,11 +1824,11 @@ final class GoogleSeries
      * class moves to the proven side by leaving this function once a live
      * probe shows Google keeps records through it.
      *
-     * - The zone of a timed series. A zone change that moves the instants
-     *   drops every record (3.3); one that moves none (10:00 Los Angeles
-     *   to 11:00 Denver) is not answered yet (3.17).
-     * - The link. Google's `source` has no probe case, on the master or
-     *   written into its records.
+     * - The zone of a timed series where the instants move. A zone change
+     *   that moves them drops every record (3.3); one that moves none
+     *   (10:00 Los Angeles to 11:00 Denver) keeps them (3.17, 2026-11-10;
+     *   3.54, 3.60, 2026-11-13), so it is proven. A link set keeps them
+     *   too (3.32; 3.52, 3.58, 3.61), so it is proven.
      * - The rule's days, other than weekdays added to a weekly rule (3.7).
      *   A weekday changed and the clamped month-end form dropped every
      *   record (3.6, 3.11); a change of frequency or interval that leaves
@@ -1864,11 +1839,9 @@ final class GoogleSeries
     private static function unproven(array $old, array $new, array $body): array
     {
         $out = [];
-        if ((int) $old['all_day'] === 0 && (int) $new['all_day'] === 0 && Time::normalizeTzid((string) $old['tzid']) !== Time::normalizeTzid((string) $new['tzid'])) {
+        if ((int) $old['all_day'] === 0 && (int) $new['all_day'] === 0 && Time::normalizeTzid((string) $old['tzid']) !== Time::normalizeTzid((string) $new['tzid'])
+            && (string) $old['start_utc'] !== (string) $new['start_utc']) {
             $out[] = 'zone';
-        }
-        if (array_key_exists('source', $body)) {
-            $out[] = 'link';
         }
         if (self::patternOf((string) $old['rrule']) !== self::patternOf((string) $new['rrule']) && !self::addsWeekdays($old, $new)) {
             $out[] = 'rule';

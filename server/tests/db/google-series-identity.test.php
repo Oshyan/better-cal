@@ -415,8 +415,9 @@ return static function (Db $db): void {
     }
 
     // Test 10: the zone alone (10:00 Los Angeles to 11:00 Denver, the dialog's "same moment"), an edited day and a skip:
-    // both there after, with the stand-in set each way for the open question Q2.
-    foreach (['kept', 'dropped'] as $zoneAlone) {
+    // both there after. Q2 is answered: Google keeps the records (3.17, 3.54, 3.60), so the stand-in's 'dropped' setting, which
+    // modelled the other answer, is no longer run here (the app predicts what Google was seen to do).
+    foreach (['kept'] as $zoneAlone) {
         $scenario("the zone alone, the stand-in's zone change $zoneAlone", function () use ($db, $setup, $change, $verify, $timedLa, $zoneAlone): void {
             $name = "10:00 Los Angeles to 11:00 Denver at the same moment (stand-in: the zone alone $zoneAlone)";
             $t = $setup(['create' => $timedLa, 'edit' => '2027-01-11T10:00:00-08:00', 'skip' => '2027-01-18T10:00:00-08:00', 'stand' => ['zoneAlone' => $zoneAlone]]);

@@ -744,30 +744,6 @@ return [
             'F2 (master write sent and not taken (the network down); Wed 6 Jan (the day with its own notes) given other notes at Google): the change made at Google is named once, by its date, as not kept',
         ],
     ],
-    // What the condition believes a record holds of a field its day does not own (GoogleSeries::sameAsStored): the
-    // link read as the series' value alone, as before. A series given a link then reads as changed at Google wherever
-    // Google left a record's link as it was, and every later write to it is refused.
-    [
-        'id' => 'google-condition-unowned-link-as-series', 'file' => 'server/src/Domain/GoogleSeries.php', 'dbtest' => 'google-link-unproven',
-        'what' => 'the condition reads a day\'s unowned link as the series\' alone, so a record Google left without the series\' new link reads as changed at Google',
-        'patch' => [["                if (!in_array(\$field, \$owned, true) && self::fieldsOf([\$col =>", "                if (false && !in_array(\$field, \$owned, true) && self::fieldsOf([\$col =>"]],
-        'checks' => [
-            'F1 sibling: an ordinary day can be renamed here after the poll',
-            'F1 sibling: the edited day can be renamed here after the poll',
-            'F1 (second write refused): Finish completes the change',
-            'F1 (second write refused): Finish completes after Put back was refused',
-            'F1 (second write refused): Finish completes after a poll',
-            'F1 (second write refused): Review lists nothing half done once Finish or Put back has run',
-            'F1 (second write refused): a day of the series can be renamed afterwards',
-            'F1 (second write refused): the series can be deleted afterwards',
-            'F1 (second write the network down): Finish completes the change',
-            'F1 (second write the network down): Finish completes after Put back was refused',
-            'F1 (second write the network down): Finish completes after a poll',
-            'F1 (second write the network down): Review lists nothing half done once Finish or Put back has run',
-            'F1 (second write the network down): a day of the series can be renamed afterwards',
-            'F1 (second write the network down): the series can be deleted afterwards',
-        ],
-    ],
     // What a write's answer says of a series' skipped days (rule 7 of the merge): every answer taken as whole for its
     // series, as before the writer said what it sent. An answer to an invitation, and its undo, then bring every skipped
     // day back until the next poll.

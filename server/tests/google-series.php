@@ -187,9 +187,12 @@ checkEq('google after a master write, probe 3.16: a skip held as an EXDATE line 
     $gKeys(GoogleSeries::afterMaster($gh($m0, $probeRecords, [], [$k6]), $m0, $gm(['title' => 'Sample weekly renamed']))));
 checkEq('google after a master write: nothing changed, nothing sent, the series as it was', $h0, GoogleSeries::afterMaster($h0, $m0, $m0));
 // What the probe has not seen keep records is predicted dropped (decisions.md): wrong that way costs a refused Put back, never a day.
+// The zone alone at the same moments and a link set keep every record (3.17, 3.32; 3.52 to 3.61, 2026-11-13), the link written into each.
+checkEq('google after a master write, probe 3.17 and 3.54: the zone alone, no instant moved, keeps every record and skip', $whole, $gKeys(GoogleSeries::afterMaster($h0, $m0, $gm(['tzid' => 'America/Denver']))));
+$linked = GoogleSeries::afterMaster($h0, $m0, $gm(['url' => 'https://example.test/sample']));
+checkEq('google after a master write, probe 3.32 and 3.52: a link set keeps every record and skip, the link written into each record', [$whole, ['https://example.test/sample']],
+    [$gKeys($linked), array_values(array_unique(array_column($linked['records'], 'url')))]);
 foreach ([
-    ['the zone alone, no instant moved (10:00 Los Angeles to 11:00 Denver; probe case 3.17 not answered yet)', ['tzid' => 'America/Denver']],
-    ['the link (Google\'s source has no probe case)', ['url' => 'https://example.test/sample']],
     ['a new frequency that leaves the days where they were (weekly to daily; no probe case)', ['rrule' => 'FREQ=DAILY;COUNT=70']],
     ['a new interval that leaves some days where they were (every week to every second week; no probe case)', ['rrule' => 'FREQ=WEEKLY;INTERVAL=2;COUNT=10']],
 ] as [$class, $change]) {
@@ -325,7 +328,8 @@ $target = GoogleSeries::stateOf(['id' => 1, 'uid' => 'smpl6@google.com', 'google
 $kept = $nowOf($target, false);
 $kept['records'][$k4] = ['start_utc' => '2027-03-22 22:00:00', 'end_utc' => '2027-03-22 23:30:00'] + $wk;
 $kept['cancelled'][$k6] = $kept['skips'][$k6] = true;
-foreach (['Google kept the record, its end following the new length' => $kept, 'Google dropped the record and the skip' => $nowOf($target, false)] as $answer => $now) {
+// The link is proven since (3.32, 3.52): Google keeps the record, so that is the one answer read here.
+foreach (['Google kept the record, its end following the new length' => $kept] as $answer => $now) {
     [$rebased, $words, $conflicts] = GoogleSeries::rebase($before, $target, $now, $year);
     checkEq("google rebase: the link and the length changed together, $answer: the day keeps its own time and length, the skip stands, nothing said",
         [['2027-03-22 22:00:00', '2027-03-23 00:30:00', ['length', 'time']], [$k6], [], []],
@@ -465,9 +469,9 @@ checkEq('google rebase: a drag that landed, the day the edited day moves onto de
     [array_keys($rebased['exceptions']), $rebased['skips'], $words, $conflicts]);
 
 // ---- What the condition believes a record holds of a field the day does not own (sameAsStored) ----
-// The series was given a link. It is not proven that Google writes a series' link into its records, so an edited
-// day's record holding either the series' link or the link it held before (none) is as stored; under each answer
-// Google may give, the series is no "changed at Google", and the steps send the day its link where it lacks it.
+// The series was given a link. Google writes a series' link into its records (3.32, 2026-11-10; 3.52, 3.58, 3.61,
+// 2026-11-13), so an edited day's record holding the series' link is as stored, and one left without it reads as
+// changed at Google.
 $linkUrl = 'https://example.test/sample';
 $linkMaster = ['id' => 1, 'uid' => 'smpl7@google.com', 'google_event_id' => 'smpl7', 'title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'url' => $linkUrl,
     'start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-04 01:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=4', 'exdates_json' => null];
@@ -479,10 +483,8 @@ $linkItem = ['id' => 'smpl7', 'iCalUID' => 'smpl7@google.com', 'etag' => '"e3"',
 $linkRecord = static fn(?string $url): array => ['id' => 'smpl7_20270111T000000Z', 'iCalUID' => 'smpl7@google.com', 'etag' => '"e3"', 'status' => 'confirmed', 'summary' => 'Sample series',
     'description' => 'Own notes for the day.', 'recurringEventId' => 'smpl7', 'originalStartTime' => $utc('2027-01-11T00:00:00Z'), 'start' => $utc('2027-01-11T00:00:00Z'), 'end' => $utc('2027-01-11T01:00:00Z')] + $source($url);
 $linkTarget = GoogleSeries::stateOf($linkMaster, [$linkRow]);
-checkEq('google condition: a series given a link, Google leaving the edited day\'s record without it: as stored, and the day is sent its link',
-    [true, [['exception', 'smpl7_20270111T000000Z', $linkUrl]]],
-    [GoogleSeries::sameAsStored([$linkItem, $linkRecord(null)], 'smpl7', $linkMaster, [$linkRow]),
-        array_map(static fn(array $s): array => [$s[0], $s[1], $s[2]['source']['url'] ?? null], GoogleSeries::stepsFor($linkTarget, [$linkItem, $linkRecord(null)]))]);
+checkEq('google condition: a series given a link, the edited day\'s record without it: not as stored (Google writes the link into its records)',
+    false, GoogleSeries::sameAsStored([$linkItem, $linkRecord(null)], 'smpl7', $linkMaster, [$linkRow]));
 checkEq('google condition: Google having written the link into the record: as stored, nothing to send',
     [true, []], [GoogleSeries::sameAsStored([$linkItem, $linkRecord($linkUrl)], 'smpl7', $linkMaster, [$linkRow]), GoogleSeries::stepsFor($linkTarget, [$linkItem, $linkRecord($linkUrl)])]);
 $droppedRecord = ['id' => 'smpl7_20270111T000000Z', 'iCalUID' => 'smpl7@google.com', 'etag' => '"e3"', 'status' => 'cancelled', 'summary' => 'Sample series'];

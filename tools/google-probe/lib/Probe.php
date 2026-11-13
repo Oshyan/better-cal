@@ -1240,6 +1240,24 @@ final class Probe
             });
             $c->finding = implode('; ', $words) . '; ' . $this->seriesFinding($c, $m);
         });
+
+        // Cause 1's ways out: the refusal's sentence may offer only what works. The time moved an hour first, then the
+        // switch, in both directions; the days made ordinary first (records at the series' values), then the switch and
+        // the day's changes made again. Each day write with no If-Match, as the model of a change under "last write
+        // wins" sends it (docs/design/google-change-under-last-write-wins.md).
+        $this->probeCase('3', '3.63', 'midnight UTC, a renamed and a deleted day: every event an hour later first (01:00 UTC), then to all-day, the days sent again after each', function (CaseRun $c): void {
+            $this->wayOut($c, 'hour first');
+        });
+        $this->probeCase('3', '3.64', 'all-day, a renamed and a deleted day: to timed at 01:00 UTC first, then an hour earlier (00:00 UTC), the days sent again after each', function (CaseRun $c): void {
+            $this->wayOut($c, 'hour first, to timed');
+        });
+        $this->probeCase('3', '3.65', 'midnight UTC, a renamed and a deleted day: both made ordinary first (records at the series\' values), then every event to all-day, then the day\'s changes made again', function (CaseRun $c): void {
+            $this->wayOut($c, 'ordinary first');
+        });
+        // The model's day writes: a PATCH with no If-Match in each state a change to all events can meet.
+        $this->probeCase('3', '3.66', 'a day written with no If-Match: a live record, a revived record, a cancelled record made an edited day, a record put back to the series\' values, a record cancelled, an ordinary day cancelled', function (CaseRun $c): void {
+            $this->unconditionalDays($c);
+        });
     }
 
     // ---- 3.48 to 3.51: a day hidden where its two forms meet at 00:00 UTC (replay round 4, cause 1) ----
@@ -1304,9 +1322,7 @@ final class Probe
             [$w, $list] = $this->idSnapshot($c, $m, $uid, $days, $etag, "after the switch to $to", true, is_string($x['response']['etag'] ?? null) ? $x['response']['etag'] : null);
             $story[] = $w;
             if ($personView) {
-                $v = $this->pages($c, 'read', 'what a person sees: singleEvents=true, no showDeleted', '/events', ['singleEvents' => 'true', 'showDeleted' => 'false', 'timeMin' => '2027-02-28T00:00:00Z', 'timeMax' => '2027-04-12T00:00:00Z']);
-                $shown = array_values(array_filter($v['items'], static fn(array $e): bool => ($e['recurringEventId'] ?? '') === $m));
-                $story[] = 'what a person sees (singleEvents=true, no showDeleted): ' . ($shown === [] ? 'no day of the series' : implode(' | ', array_map(static fn(array $e): string => (string) ($e['start']['date'] ?? substr((string) ($e['start']['dateTime'] ?? '?'), 0, 16)) . ' ' . (string) ($e['summary'] ?? ''), $shown)));
+                $story[] = $this->personView($c, $m);
             }
             $newId = $days[2]['ids'][$to];
             $oldId = $days[2]['ids'][$from];
@@ -1373,6 +1389,182 @@ final class Probe
         });
         $c->sent = 'setup: a weekly series of six ' . ($allDayFirst ? 'all-day' : "at $clock $tz (00:00 UTC)") . ' from 2027-03-01' . ($edits ? ', occurrence 2 renamed with its own notes, occurrence 3 deleted' : '') . "; every event to $to as the app sends it; then "
             . ($attempts === [] ? 'nothing more' : 'occurrence 2 written back: ' . implode(', ', $attempts)) . '; every id of occurrences 2 and 3 in both forms, the showDeleted list and events.instances read after each request';
+        $c->finding = implode('; ', $story) . '; ' . $this->syncStory($c);
+    }
+
+    /** What a person sees of the series in Google Calendar over its weeks: the plain singleEvents=true list without showDeleted. */
+    private function personView(CaseRun $c, string $m): string
+    {
+        $v = $this->pages($c, 'read', 'what a person sees: singleEvents=true, no showDeleted', '/events', ['singleEvents' => 'true', 'showDeleted' => 'false', 'timeMin' => '2027-02-28T00:00:00Z', 'timeMax' => '2027-04-12T00:00:00Z']);
+        $shown = array_values(array_filter($v['items'], static fn(array $e): bool => ($e['recurringEventId'] ?? '') === $m));
+        return 'what a person sees (singleEvents=true, no showDeleted): ' . ($shown === [] ? 'no day of the series' : implode(' | ', array_map(static fn(array $e): string => (string) ($e['start']['date'] ?? substr((string) ($e['start']['dateTime'] ?? '?'), 0, 16)) . ' ' . (string) ($e['summary'] ?? ''), $shown)));
+    }
+
+    // ---- 3.63 to 3.66: ways out of a hidden day, and day writes with no If-Match ----
+
+    /**
+     * A way out of a hidden day (3.63 to 3.65). A weekly series of six from 2027-03-01 in zone UTC (at 00:00, or
+     * all-day for 'hour first, to timed'), occurrence 2 renamed with its own notes, occurrence 3 deleted; then $way's
+     * requests in order, each followed by a read of every id of occurrences 2 and 3 (timed at 00:00 UTC, at 01:00 UTC,
+     * and all-day), the showDeleted list and events.instances; at the end, what a person sees. Master writes as the app
+     * sends them (If-Match the listed etag; on a switch the held form's fields null); day writes with no If-Match.
+     *   hour first: an hour later, the days sent again at 01:00; then all-day, the days sent again.
+     *   hour first, to timed: to timed at 01:00, the days sent again; then an hour earlier (00:00), the days sent again.
+     *   ordinary first: both days put back to the series' values (occurrence 3 made live), then all-day, then
+     *     occurrence 2 given its own values again and occurrence 3 deleted again.
+     */
+    private function wayOut(CaseRun $c, string $way): void
+    {
+        $rule = ['RRULE:FREQ=WEEKLY;COUNT=6'];
+        $allDayFirst = $way === 'hour first, to timed';
+        $at = static fn(string $date, string $clock): array => self::clockAt('UTC', "$date $clock", 60);
+        $dates = static fn(string $date): array => ['start' => ['date' => $date], 'end' => ['date' => (new \DateTimeImmutable($date))->modify('+1 day')->format('Y-m-d')]];
+        $x = $this->insert($c, 'setup', 'insert the series', ['summary' => 'Probe hidden', 'description' => 'Probe series notes', 'location' => 'Probe room 1', 'recurrence' => $rule]
+            + ($allDayFirst ? $dates('2027-03-01') : $at('2027-03-01', '00:00')));
+        $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+        $uid = (string) ($x['response']['iCalUID'] ?? '');
+        $series = ['summary' => (string) ($x['response']['summary'] ?? ''), 'description' => (string) ($x['response']['description'] ?? ''), 'location' => (string) ($x['response']['location'] ?? '')];
+        $date = static fn(int $n): string => (new \DateTimeImmutable('2027-03-01'))->modify('+' . (7 * ($n - 1)) . ' days')->format('Y-m-d');
+        $days = [];
+        foreach ([2 => 'renamed, own notes', 3 => 'deleted'] as $n => $kind) {
+            $d = $date($n);
+            $ids = ['00:00 UTC' => GoogleWriter::instanceId($m, "$d 00:00:00", false), '01:00 UTC' => GoogleWriter::instanceId($m, "$d 01:00:00", false), 'all-day' => GoogleWriter::instanceId($m, "$d 00:00:00", true)];
+            $days[$n] = ['kind' => $kind, 'label' => "occurrence $n ($kind)", 'date' => $d, 'ids' => $ids];
+            foreach ($ids as $id) {
+                $c->labels[substr($id, strlen($m) + 1)] = "occurrence $n ($kind)";
+            }
+        }
+        $first = $allDayFirst ? 'all-day' : '00:00 UTC';
+        $r = $this->send($c, 'setup', 'rename occurrence 2 with its own notes', 'PATCH', '/events/' . rawurlencode($days[2]['ids'][$first]), [], self::HIDDEN_OWN);
+        $d = $this->send($c, 'setup', 'delete occurrence 3', 'DELETE', '/events/' . rawurlencode($days[3]['ids'][$first]));
+        if ($r['status'] >= 300 || $d['status'] >= 300) {
+            throw new \RuntimeException("setting up the days failed: HTTP {$r['status']}, {$d['status']}");
+        }
+        $whenOf = static fn(int $n, string $form): array => $form === 'all-day' ? $dates($date($n)) : $at($date($n), substr($form, 0, 5));
+        $own = static fn(int $n, string $form): array => self::HIDDEN_OWN + $whenOf($n, $form);
+        $plain = static fn(int $n, string $form): array => $series + ['status' => 'confirmed'] + $whenOf($n, $form);
+        $cancel = ['status' => 'cancelled'];
+        $toAllDay = self::overHeld($dates('2027-03-01'), false) + ['recurrence' => $rule];
+        $plan = match ($way) {
+            'hour first' => [
+                ['master', 'every event an hour later (01:00 UTC)', $at('2027-03-01', '01:00') + ['recurrence' => $rule]],
+                ['day', 2, '01:00 UTC', 'occurrence 2 sent again with its own values', $own(2, '01:00 UTC')],
+                ['day', 3, '01:00 UTC', 'occurrence 3 cancelled again', $cancel],
+                ['master', 'every event to all-day', $toAllDay],
+                ['day', 2, 'all-day', 'occurrence 2 sent again with its own values', $own(2, 'all-day')],
+                ['day', 3, 'all-day', 'occurrence 3 cancelled again', $cancel],
+            ],
+            'hour first, to timed' => [
+                ['master', 'every event to timed at 01:00 UTC', self::overHeld($at('2027-03-01', '01:00'), true) + ['recurrence' => $rule]],
+                ['day', 2, '01:00 UTC', 'occurrence 2 sent again with its own values', $own(2, '01:00 UTC')],
+                ['day', 3, '01:00 UTC', 'occurrence 3 cancelled again', $cancel],
+                ['master', 'every event an hour earlier (00:00 UTC)', $at('2027-03-01', '00:00') + ['recurrence' => $rule]],
+                ['day', 2, '00:00 UTC', 'occurrence 2 sent again with its own values', $own(2, '00:00 UTC')],
+                ['day', 3, '00:00 UTC', 'occurrence 3 cancelled again', $cancel],
+            ],
+            'ordinary first' => [
+                ['day', 2, '00:00 UTC', 'occurrence 2 put back to the series\' values', $plain(2, '00:00 UTC')],
+                ['day', 3, '00:00 UTC', 'occurrence 3 brought back at the series\' values', $plain(3, '00:00 UTC')],
+                ['master', 'every event to all-day', $toAllDay],
+                ['day', 2, 'all-day', 'occurrence 2 given its own values again', $own(2, 'all-day')],
+                ['day', 3, 'all-day', 'occurrence 3 deleted again', $cancel],
+            ],
+        };
+        $etag = self::etagNamer();
+        $story = [];
+        $this->standard($c, function (CaseRun $c) use ($m, $uid, $days, $plan, $etag, &$story): void {
+            [$w, $list] = $this->idSnapshot($c, $m, $uid, $days, $etag, 'before', true);
+            $story[] = $w;
+            foreach ($plan as $p) {
+                $expect = null;
+                if ($p[0] === 'master') {
+                    [, $what, $body] = $p;
+                    $im = self::etagIn($list, $m);
+                    $x = $this->send($c, 'write', $what, 'PATCH', '/events/' . rawurlencode($m), [], $body, $im !== null ? ['If-Match: ' . $im] : []);
+                    $story[] = "$what, PATCH master (If-Match " . $etag($im) . '): ' . self::answer($x, $etag);
+                    $expect = is_string($x['response']['etag'] ?? null) ? $x['response']['etag'] : null;
+                } else {
+                    [, $n, $form, $what, $body] = $p;
+                    $x = $this->send($c, 'write', $what, 'PATCH', '/events/' . rawurlencode($days[$n]['ids'][$form]), [], $body);
+                    $story[] = "$what, PATCH its $form id, no If-Match: " . self::answer($x, $etag);
+                }
+                [$w, $list] = $this->idSnapshot($c, $m, $uid, $days, $etag, 'after that', true, $expect);
+                $story[] = $w;
+            }
+            $story[] = $this->personView($c, $m);
+        });
+        $c->sent = 'setup: a weekly series of six ' . ($allDayFirst ? 'all-day' : 'at 00:00 UTC') . ' from 2027-03-01, occurrence 2 renamed with its own notes, occurrence 3 deleted; then '
+            . implode('; ', array_map(static fn(array $p): string => $p[0] === 'master' ? $p[1] : "{$p[3]} ({$p[2]} id, no If-Match)", $plan))
+            . '; every id of occurrences 2 and 3 in three forms, the showDeleted list and events.instances read after each request; what a person sees at the end';
+        $c->finding = implode('; ', $story) . '; ' . $this->syncStory($c);
+    }
+
+    /**
+     * 3.66: what Google does with a PATCH of a day's id that carries no If-Match, in each state a change to all events
+     * can meet. A weekly 10:00 Los Angeles series of six: occurrence 2 given its own title, notes and place (a live
+     * record); occurrence 3 deleted (a cancelled record); occurrence 4 given its own title, then dropped and revived by
+     * COUNT=3 and COUNT=6 (10.2: a live record at the series' values); occurrence 5 ordinary (no record). Then, each
+     * with no If-Match and each followed by a read of the four days' ids, the showDeleted list and events.instances:
+     * occurrence 2 written whole with other own values; 4 written whole with own values; 3 written whole, confirmed,
+     * with own values; 2 put back to the series' values; 4 cancelled; 5 cancelled.
+     */
+    private function unconditionalDays(CaseRun $c): void
+    {
+        $rule = static fn(int $n): array => ['recurrence' => ["RRULE:FREQ=WEEKLY;COUNT=$n"]];
+        $x = $this->insert($c, 'setup', 'insert the series', self::timed('Probe unconditional', self::LA, '2027-03-01 10:00', 60, $rule(6)['recurrence']));
+        $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+        $uid = (string) ($x['response']['iCalUID'] ?? '');
+        $series = ['summary' => (string) ($x['response']['summary'] ?? ''), 'description' => (string) ($x['response']['description'] ?? ''), 'location' => (string) ($x['response']['location'] ?? '')];
+        $items = $this->instanceItems($c, $m);
+        $kinds = [2 => 'a live record', 3 => 'a cancelled record', 4 => 'a revived record', 5 => 'ordinary'];
+        $inst = [];
+        $days = [];
+        foreach ($kinds as $n => $kind) {
+            $inst[$n] = $items[$n - 1] ?? throw new \RuntimeException("the series has no occurrence $n");
+            $c->labels[self::key($inst[$n])] = "occurrence $n ($kind)";
+            $days[$n] = ['kind' => $kind, 'label' => "occurrence $n ($kind)", 'ids' => ['timed' => (string) $inst[$n]['id']]];
+        }
+        $path = static fn(int $n): string => '/events/' . rawurlencode((string) $inst[$n]['id']);
+        $when = static fn(int $n): array => ['start' => $inst[$n]['start'], 'end' => $inst[$n]['end']];
+        $own = static fn(int $n, string $title): array => ['summary' => $title, 'description' => 'Probe own notes of the day', 'location' => 'Probe own room', 'status' => 'confirmed'] + $when($n);
+        $setup = [
+            $this->send($c, 'setup', 'occurrence 2 given its own title, notes and place', 'PATCH', $path(2), [], $own(2, 'Probe unconditional (one changed)')),
+            $this->send($c, 'setup', 'delete occurrence 3', 'DELETE', $path(3)),
+            $this->send($c, 'setup', 'occurrence 4 given its own title', 'PATCH', $path(4), [], ['summary' => 'Probe unconditional (to be dropped)']),
+        ];
+        foreach ([['the rule cut to COUNT=3, dropping occurrence 4', $rule(3)], ['the rule back to COUNT=6, reviving occurrence 4', $rule(6)]] as [$what, $body]) {
+            $g = $c->step('setup', 'get the master for its etag', $this->api->call('GET', '/events/' . rawurlencode($m)));
+            $im = is_array($g['response']) && is_string($g['response']['etag'] ?? null) ? $g['response']['etag'] : null;
+            $setup[] = $this->send($c, 'setup', $what, 'PATCH', '/events/' . rawurlencode($m), [], $body, $im !== null ? ['If-Match: ' . $im] : []);
+        }
+        foreach ($setup as $s) {
+            if ($s['status'] >= 300) {
+                throw new \RuntimeException('setting up the days failed: HTTP ' . $s['status']);
+            }
+        }
+        $writes = [
+            [2, 'occurrence 2 (a live record) written whole with other own values', $own(2, 'Probe unconditional (written again)')],
+            [4, 'occurrence 4 (a revived record) written whole with own values', $own(4, 'Probe unconditional (revived, written)')],
+            [3, 'occurrence 3 (a cancelled record) written whole, confirmed, with own values', $own(3, 'Probe unconditional (was deleted)')],
+            [2, 'occurrence 2 (a live record) put back to the series\' values', $series + ['status' => 'confirmed'] + $when(2)],
+            [4, 'occurrence 4 (a live record) cancelled', ['status' => 'cancelled']],
+            [5, 'occurrence 5 (ordinary, no record) cancelled', ['status' => 'cancelled']],
+        ];
+        $etag = self::etagNamer();
+        $story = [];
+        $this->standard($c, function (CaseRun $c) use ($m, $uid, $days, $writes, $path, $etag, &$story): void {
+            [$w] = $this->idSnapshot($c, $m, $uid, $days, $etag, 'before', true);
+            $story[] = $w;
+            foreach ($writes as [$n, $what, $body]) {
+                $x = $this->send($c, 'write', $what, 'PATCH', $path($n), [], $body);
+                $r = is_array($x['response']) ? $x['response'] : [];
+                $story[] = "$what, PATCH, no If-Match: " . self::answer($x, $etag) . ($x['status'] < 300 ? ', summary ' . json_encode($r['summary'] ?? null, JSON_UNESCAPED_UNICODE) . ', description ' . json_encode($r['description'] ?? null, JSON_UNESCAPED_UNICODE) : '');
+                [$w] = $this->idSnapshot($c, $m, $uid, $days, $etag, 'after that', true);
+                $story[] = $w;
+            }
+        });
+        $c->sent = 'setup: a weekly 10:00 Los Angeles series of six, occurrence 2 with its own title, notes and place, 3 deleted, 4 renamed then dropped (COUNT=3) and revived (COUNT=6), 5 ordinary; then, each PATCH with no If-Match: '
+            . implode('; ', array_map(static fn(array $w): string => $w[1], $writes)) . '; the four days\' ids, the showDeleted list and events.instances read after each request';
         $c->finding = implode('; ', $story) . '; ' . $this->syncStory($c);
     }
 

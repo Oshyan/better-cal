@@ -29,7 +29,7 @@ final class Probe
     public const GROUPS = [
         '1' => ['Rule forms', 'Each rule inserted alone, then read back: accepted or refused (with the error), and the exact text that comes back.'],
         '2' => ['Each exception kind alone', 'On a timed weekly series and on an all-day one: a moved instance, one with its own time, a title-only edit, a cancellation by DELETE and by PATCH, and one beyond a shortened end; then the exception-key checks in Pacific/Auckland and Asia/Tokyo. After each: the instance id form, the master\'s recurrence, its etag and `updated`, and the delta.'],
-        '3' => ['Master changes over exceptions', 'One master change per case, each from the same starting state: a weekly 10:00 America/Los_Angeles series of ten with occurrence 3 moved a day later, occurrence 4 at its own time (15:00), occurrence 5 with its own title and occurrence 6 cancelled (DELETE). The form cases (3.18 on) start from a different state: a weekly series of ten with occurrence 2 renamed and occurrence 3 cancelled, timed or all-day as the case says, or a single event; 3.30 and 3.31 change only its ordinary occurrence 4, a timed day made all-day. Cases 3.32 to 3.35 are from the first starting state again: the master changes the app has no proof for (a link, a new frequency, a new interval) and two proven changes in one body (a rename with a new length).'],
+        '3' => ['Master changes over exceptions', 'One master change per case, each from the same starting state: a weekly 10:00 America/Los_Angeles series of ten with occurrence 3 moved a day later, occurrence 4 at its own time (15:00), occurrence 5 with its own title and occurrence 6 cancelled (DELETE). The form cases (3.18 on) start from a different state: a weekly series of ten with occurrence 2 renamed and occurrence 3 cancelled, timed or all-day as the case says, or a single event; 3.30 and 3.31 change only its ordinary occurrence 4, a timed day made all-day. Cases 3.32 to 3.35 are from the first starting state again: the master changes the app has no proof for (a link, a new frequency, a new interval) and two proven changes in one body (a rename with a new length). Cases 3.36 and 3.37 (issue 256) start from a weekly series of four, timed or all-day, with occurrence 2 renamed and occurrence 3 deleted, and switch every event to the other form and back, each request as the app sends it, reading every id a day has had a record under after each; 3.38 (issue 243) gives one ordinary day of an all-day series a clock time with its date nulled.'],
         '4' => ['The split', 'Trim with UNTIL and with COUNT, then insert the new series, over the same starting state as group 3, cut at occurrence 5.'],
         '5' => ['Etags and conditional writes', 'Stability across reads, what a master or an instance write does to the other\'s etags, and If-Match on PATCH and DELETE of masters and instances.'],
         '6' => ['Deletes and their reverse', 'A deleted event read back, PATCH to confirmed on it and on a cancelled instance, and an insert with an id the client chose.'],
@@ -1102,6 +1102,311 @@ final class Probe
                 $c->finding = ($id === '3.32' ? $this->sourceStory($c, $m) . '; ' : '') . $this->seriesFinding($c, $m);
             });
         }
+
+        // Issue 256: a repeating event switched between timed and all-day for
+        // all events, then back, over a renamed day and a deleted day, each
+        // request as GoogleSeries::run sends it (switchForm). On 1.5.5 against
+        // real Google the first switch went through and the switch back
+        // stopped at its third request with a 412; Finish then completed it.
+        // The finding reads, after every request, every id a day of the event
+        // has had a record under, in both forms, and the showDeleted list.
+        $this->probeCase('3', '3.36', 'switch back: timed to all-day to timed, a renamed and a deleted day, each request as the app sends it (issue 256)', function (CaseRun $c): void {
+            $this->switchBack($c, false);
+        });
+        $this->probeCase('3', '3.37', 'switch back, the mirror: all-day to timed to all-day, a renamed and a deleted day, each request as the app sends it (issue 256)', function (CaseRun $c): void {
+            $this->switchBack($c, true);
+        });
+
+        // Issue 243, second comment: case 2.2a (one day of an all-day series
+        // given a clock time, 400 "Invalid start time.") was sent without
+        // clearing the day's date, the merge 3.18 to 3.30 showed refused for
+        // that reason alone. The same change as the app would send it now
+        // (Events::patchBody over the day, GoogleWriter::overForm): the clock
+        // with the date named null.
+        $this->probeCase('3', '3.38', 'one ordinary day of an all-day series given a clock time (15:00), the date field nulled (issue 243; 2.2a sent it without)', function (CaseRun $c) use ($rule, $nulled): void {
+            $m = $this->formBase($c, null, '2027-03-01', $rule);
+            $inst = $this->instanceItems($c, $m)[3] ?? throw new \RuntimeException('the series has no occurrence 4');
+            $c->labels[self::key($inst)] = 'occurrence 4 (given 15:00)';
+            $timed = $this->retimed($inst, '15:00');
+            $body = $nulled($timed) + $timed;
+            $this->standard($c, fn(CaseRun $c) => $this->send($c, 'write', 'patch occurrence 4', 'PATCH', '/events/' . rawurlencode((string) $inst['id']), [], $body));
+            $c->finding = $this->formFinding($c, $m);
+        });
+    }
+
+    // ---- 3.36 and 3.37: switching back between timed and all-day (issue 256) ----
+
+    private const SWITCH_RULE = ['RRULE:FREQ=WEEKLY;COUNT=4'];
+    private const SWITCH_OWN_TITLE = 'Probe switch (one changed)';
+
+    /**
+     * Issue 256, from its own steps: a weekly series of four (10:00 Los
+     * Angeles from 2027-03-01, or all-day when $allDayFirst), occurrence 2
+     * renamed and occurrence 3 deleted (DELETE on its instance id, as a
+     * day's delete is sent), then every event switched to the other form
+     * and back, each switch as the app sends it (switchForm). Before the
+     * first switch and after every request: what Google answers for the
+     * master and for both days' ids in both forms (idSnapshot). Etags are
+     * named E1, E2... in the order they are first seen, so the If-Match a
+     * request carried can be told apart from the etag its target held.
+     */
+    private function switchBack(CaseRun $c, bool $allDayFirst): void
+    {
+        $body = $allDayFirst ? self::allDay('Probe switch', '2027-03-01', self::SWITCH_RULE) : self::timed('Probe switch', self::LA, '2027-03-01 10:00', 60, self::SWITCH_RULE);
+        $x = $this->insert($c, 'setup', 'insert the series', $body);
+        $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+        $uid = (string) ($x['response']['iCalUID'] ?? '');
+        $items = $this->instanceItems($c, $m);
+        $days = [];
+        foreach ([2 => 'renamed', 3 => 'deleted'] as $n => $kind) {
+            $inst = $items[$n - 1] ?? throw new \RuntimeException("the series has no occurrence $n");
+            $date = (new \DateTimeImmutable('2027-03-01'))->modify('+' . (7 * ($n - 1)) . ' days')->format('Y-m-d');
+            $timedKey = Time::toDb(new \DateTimeImmutable("$date 10:00", new \DateTimeZone(self::LA)));
+            $label = "occurrence $n ($kind)";
+            $c->labels[str_replace('-', '', $date)] = $label;
+            $c->labels[(new \DateTimeImmutable($timedKey, new \DateTimeZone('UTC')))->format('Ymd\THis\Z')] = $label;
+            $days[$n] = ['kind' => $kind, 'label' => $label, 'date' => $date,
+                'ids' => ['timed' => GoogleWriter::instanceId($m, $timedKey, false), 'all-day' => GoogleWriter::instanceId($m, "$date 00:00:00", true)]];
+            $path = '/events/' . rawurlencode((string) $inst['id']);
+            $r = $kind === 'deleted'
+                ? $this->send($c, 'setup', "delete occurrence $n", 'DELETE', $path)
+                : $this->send($c, 'setup', "rename occurrence $n", 'PATCH', $path, [], ['summary' => self::SWITCH_OWN_TITLE]);
+            if ($r['status'] >= 300) {
+                throw new \RuntimeException("setting up the $kind day failed: HTTP {$r['status']}");
+            }
+        }
+        $names = [];
+        $etag = static function (?string $e) use (&$names): string {
+            if ($e === null || $e === '') {
+                return 'none';
+            }
+            return $names[$e] ??= 'E' . (count($names) + 1);
+        };
+        $story = [];
+        $this->standard($c, function (CaseRun $c) use ($m, $uid, $days, $allDayFirst, $etag, &$story): void {
+            [$words, $list] = $this->idSnapshot($c, $m, $uid, $days, $etag, 'before the first switch', true);
+            $story[] = $words;
+            [$words, $list] = $this->switchForm($c, $m, $uid, $days, !$allDayFirst, $list, $etag, 'switch 1 (to ' . ($allDayFirst ? 'timed' : 'all-day') . ')');
+            $story = array_merge($story, $words);
+            [$words] = $this->switchForm($c, $m, $uid, $days, $allDayFirst, $list, $etag, 'switch 2 (back to ' . ($allDayFirst ? 'all-day' : 'timed') . ')');
+            $story = array_merge($story, $words);
+        });
+        $c->sent = 'setup: a weekly series of four (' . ($allDayFirst ? 'all-day' : 'timed, 10:00 America/Los_Angeles') . ') from 2027-03-01, occurrence 2 renamed (PATCH summary), occurrence 3 deleted (DELETE); '
+            . 'then two changes of every event, to ' . ($allDayFirst ? 'timed' : 'all-day') . ' and back, each as GoogleSeries::run sends it: PATCH the master [If-Match] (the new form\'s start and end, the old form\'s fields null, the rule), '
+            . 'then PATCH occurrence 2 restored (its own title, the series\' other fields, in the new form) and PATCH occurrence 3 {"status":"cancelled"}, each [If-Match] the etag the app holds then; a refused step stops the switch, and the steps left go as Finish sends them';
+        $c->finding = implode('; ', $story) . '; ' . $this->syncStory($c);
+    }
+
+    /**
+     * One change of every event between timed and all-day, as
+     * GoogleSeries::run sends it: the master PATCH over the master as $list
+     * read it (GoogleSeries::masterBody: the new form's start and end and the
+     * rule, said over the held form as GoogleWriter::overForm says it, the
+     * old form's fields null), conditional on that read's master etag (the
+     * change's condition); the series read back until it shows that write
+     * (readBack's expected etag), its master etag the next If-Match; then the
+     * day steps in stepsFor's order (edited days, then skips), each
+     * conditional on the etag the app holds then (the read-back's master
+     * etag, then each answer's). The first refused step stops the switch, as
+     * it stops the app's change half done; the steps still needed then go as
+     * Finish sends them (the series read again, its master etag the first
+     * If-Match, each answer's the next). Each request's answer, and a
+     * snapshot of every id after it, in the words.
+     *
+     * @return array{0:list<string>, 1:list<array>} the words, and the last showDeleted list read
+     */
+    private function switchForm(CaseRun $c, string $m, string $uid, array $days, bool $toAllDay, array $list, \Closure $etag, string $name): array
+    {
+        $words = [];
+        $ifMatch = self::etagIn($list, $m);
+        $when = $toAllDay
+            ? ['start' => ['date' => '2027-03-01'], 'end' => ['date' => '2027-03-02']]
+            : self::clockAt(self::LA, '2027-03-01 10:00', 60);
+        $body = self::overHeld($when, !$toAllDay) + ['recurrence' => self::SWITCH_RULE];
+        $x = $this->send($c, 'write', "$name: patch the master", 'PATCH', '/events/' . rawurlencode($m), [], $body, $ifMatch !== null ? ['If-Match: ' . $ifMatch] : []);
+        $words[] = "$name, PATCH master (If-Match " . $etag($ifMatch) . '): ' . self::answer($x, $etag);
+        if ($x['status'] < 200 || $x['status'] >= 300) {
+            return [$words, $list];
+        }
+        [$snap, $list] = $this->idSnapshot($c, $m, $uid, $days, $etag, "after $name's master PATCH", true, is_string($x['response']['etag'] ?? null) ? $x['response']['etag'] : null);
+        $words[] = $snap;
+        $chain = self::etagIn($list, $m) ?? (is_string($x['response']['etag'] ?? null) ? $x['response']['etag'] : null);
+        foreach (['as the change sends them' => false, 'as Finish sends them' => true] as $how => $finish) {
+            if ($finish) {
+                $words[] = "$name stopped there, as the app's change does; the steps still needed go $how, after a fresh read";
+                [$snap, $list] = $this->idSnapshot($c, $m, $uid, $days, $etag, "$name, Finish's read");
+                $words[] = $snap;
+                $chain = self::etagIn($list, $m);
+            }
+            $steps = $this->daySteps($m, $days, $toAllDay, $list);
+            if ($steps === []) {
+                $words[] = "$name, $how: no day step needed (the read already holds both days as the change wants them)";
+                break;
+            }
+            $stopped = false;
+            foreach ($steps as [$label, $id, $stepBody]) {
+                $x = $this->send($c, 'write', "$name, $how: $label", 'PATCH', '/events/' . rawurlencode($id), [], $stepBody, $chain !== null ? ['If-Match: ' . $chain] : []);
+                $words[] = "$name, $how, $label at " . str_replace($m, '{master}', $id) . ' (If-Match ' . $etag($chain) . '): ' . self::answer($x, $etag);
+                [$snap, $list] = $this->idSnapshot($c, $m, $uid, $days, $etag, 'after that step');
+                $words[] = $snap;
+                if ($x['status'] < 200 || $x['status'] >= 300) {
+                    $stopped = true;
+                    break;
+                }
+                $chain = is_string($x['response']['etag'] ?? null) ? $x['response']['etag'] : $chain;
+            }
+            if (!$stopped || $finish) {
+                break;
+            }
+        }
+        return [$words, $list];
+    }
+
+    /**
+     * The day steps GoogleSeries::stepsFor makes over a read, for the two
+     * days of switchBack: occurrence 2 restored unless a live record in the
+     * master's form already holds its own title there, occurrence 3
+     * cancelled unless a cancelled record in that form holds it. The id is
+     * the record's as listed, else GoogleWriter::instanceId's in the master's
+     * form; a dropped record (cancelled, no originalStartTime) is no day of
+     * the series (GoogleSeries::held) and says nothing. The restored day's
+     * body is GoogleSeries::exceptionBody's (its fields, its start and end in
+     * the master's form, the link cleared), said over the form its id's
+     * resource holds when one is listed (stepsFor's $over). Compared by title
+     * alone where stepsFor compares every field: here nothing else differs.
+     *
+     * @return list<array{0:string, 1:string, 2:array}> label, id, body
+     */
+    private function daySteps(string $m, array $days, bool $allDay, array $list): array
+    {
+        $master = null;
+        foreach ($list as $e) {
+            if (($e['id'] ?? '') === $m) {
+                $master = $e;
+            }
+        }
+        $records = [];
+        $forms = [];
+        foreach ($list as $e) {
+            $dropped = ($e['status'] ?? '') === 'cancelled' && !isset($e['originalStartTime']);
+            if (isset($e['id']) && is_array($e['start'] ?? null) && !$dropped) {
+                $forms[(string) $e['id']] = isset($e['start']['date']);
+            }
+            if (($e['recurringEventId'] ?? '') === $m && isset($e['originalStartTime']) && isset($e['originalStartTime']['date']) === $allDay) {
+                $records[self::key($e)] = $e;
+            }
+        }
+        $out = [];
+        foreach ($days as $n => $d) {
+            $key = $allDay ? str_replace('-', '', $d['date']) : (new \DateTimeImmutable($d['date'] . ' 10:00', new \DateTimeZone(self::LA)))->setTimezone(new \DateTimeZone('UTC'))->format('Ymd\THis\Z');
+            $record = $records[$key] ?? null;
+            $id = $record !== null ? (string) $record['id'] : $d['ids'][$allDay ? 'all-day' : 'timed'];
+            if ($d['kind'] === 'deleted') {
+                if (($record['status'] ?? '') !== 'cancelled') {
+                    $out[] = ["occurrence $n cancelled (the skip step)", $id, ['status' => 'cancelled']];
+                }
+                continue;
+            }
+            if ($record !== null && ($record['status'] ?? '') !== 'cancelled' && ($record['summary'] ?? '') === self::SWITCH_OWN_TITLE) {
+                continue;
+            }
+            $when = $allDay
+                ? ['start' => ['date' => $d['date']], 'end' => ['date' => (new \DateTimeImmutable($d['date']))->modify('+1 day')->format('Y-m-d')]]
+                : self::clockAt(self::LA, $d['date'] . ' 10:00', 60);
+            $body = ['summary' => self::SWITCH_OWN_TITLE, 'description' => (string) ($master['description'] ?? ''), 'location' => (string) ($master['location'] ?? ''), 'status' => 'confirmed'] + $when + ['source' => null];
+            $out[] = ["occurrence $n restored (the edited-day step)", $id, self::overHeld($body, $forms[$id] ?? $allDay)];
+        }
+        return $out;
+    }
+
+    /**
+     * What Google answers now for the series and for every id a day of it
+     * has had a record under, in both forms: a GET of the master and of each
+     * id (HTTP status, the `status` field, originalStartTime,
+     * recurringEventId, etag; one GET, a 404 being an answer here), the
+     * singleEvents=false list by iCalUID with showDeleted=true (every item
+     * but the master, the same fields), and with $instances events.instances.
+     * $expect: the master etag a write just answered; the list is read
+     * again, a bounded number of times with backoff, until it shows it, as
+     * the app's readBack does.
+     *
+     * @return array{0:string, 1:list<array>} the words, and the list's items
+     */
+    private function idSnapshot(CaseRun $c, string $m, string $uid, array $days, \Closure $etag, string $at, bool $instances = false, ?string $expect = null): array
+    {
+        $raw = static fn(mixed $v): string => $v === null ? 'none' : (string) json_encode($v, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $res = static fn(array $e): string => (string) ($e['status'] ?? 'no status') . ', originalStartTime ' . $raw($e['originalStartTime'] ?? null)
+            . ', recurringEventId ' . (isset($e['recurringEventId']) ? 'set' : 'none') . ', etag ' . $etag(isset($e['etag']) ? (string) $e['etag'] : null);
+        $parts = [];
+        $g = $c->step('read', 'get the master', $this->api->call('GET', '/events/' . rawurlencode($m)));
+        $parts[] = 'master: GET ' . $g['status'] . (is_array($g['response']) && $g['status'] === 200 ? ' ' . (string) ($g['response']['status'] ?? '') . ', start ' . $raw($g['response']['start'] ?? null) . ', etag ' . $etag(isset($g['response']['etag']) ? (string) $g['response']['etag'] : null) : '');
+        foreach ($days as $d) {
+            foreach ($d['ids'] as $form => $id) {
+                $g = $c->step('read', "get {$d['label']}, $form id", $this->api->call('GET', '/events/' . rawurlencode($id)));
+                $parts[] = "{$d['label']} $form id " . str_replace($m, '{master}', $id) . ': GET ' . $g['status'] . (is_array($g['response']) && $g['status'] === 200 ? ' ' . $res($g['response']) : '');
+            }
+        }
+        $list = [];
+        for ($try = 1; ; $try++) {
+            $l = $this->pages($c, 'read', 'singleEvents=false list, showDeleted', '/events', ['iCalUID' => $uid, 'showDeleted' => 'true', 'singleEvents' => 'false']);
+            $list = $l['items'];
+            if ($expect === null || self::etagIn($list, $m) === $expect || $try >= self::READ_TRIES) {
+                break;
+            }
+            ($this->sleep)(min(8.0, 0.5 * (2 ** ($try - 1))));
+        }
+        $others = array_values(array_filter($list, static fn(array $e): bool => ($e['id'] ?? '') !== $m));
+        $parts[] = 'the showDeleted list' . ($try > 1 ? " (read $try times until it showed the write)" : '') . ': master etag ' . $etag(self::etagIn($list, $m)) . '; '
+            . ($others === [] ? 'no other item' : implode(' | ', array_map(static fn(array $e): string => str_replace($m, '{master}', (string) ($e['id'] ?? '?')) . ' ' . $res($e), $others)));
+        if ($instances) {
+            $inst = $this->pages($c, 'read', 'instances, showDeleted', '/events/' . rawurlencode($m) . '/instances', ['showDeleted' => 'true']);
+            $parts[] = 'events.instances (HTTP ' . $inst['status'] . '): ' . ($inst['items'] === [] ? 'none' : implode(' | ', array_map(static fn(array $e): string => str_replace($m, '{master}', (string) ($e['id'] ?? '?')) . ' ' . (string) ($e['status'] ?? '?') . ', start ' . $raw($e['start'] ?? null) . ', etag ' . $etag(isset($e['etag']) ? (string) $e['etag'] : null), $inst['items'])));
+        }
+        return ["[$at] " . implode('; ', $parts), $list];
+    }
+
+    /** What a write was answered with: the status, and on success the resource's `status` and etag. */
+    private static function answer(array $x, \Closure $etag): string
+    {
+        if ($x['status'] < 200 || $x['status'] >= 300) {
+            return 'HTTP ' . self::status($x);
+        }
+        $r = is_array($x['response']) ? $x['response'] : [];
+        return 'HTTP ' . $x['status'] . ', status ' . (string) ($r['status'] ?? 'none') . ', etag ' . $etag(isset($r['etag']) ? (string) $r['etag'] : null);
+    }
+
+    /** The etag of the item with $id in a list, or null. */
+    private static function etagIn(array $list, string $id): ?string
+    {
+        foreach ($list as $e) {
+            if (($e['id'] ?? '') === $id && isset($e['etag']) && is_string($e['etag'])) {
+                return $e['etag'];
+            }
+        }
+        return null;
+    }
+
+    /** A start and end at a local clock time in a zone, as GoogleWriter::body sends a timed row. */
+    private static function clockAt(string $tz, string $local, int $minutes): array
+    {
+        $s = new \DateTimeImmutable($local, new \DateTimeZone($tz));
+        return ['start' => ['dateTime' => $s->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz], 'end' => ['dateTime' => $s->modify("+$minutes minutes")->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz]];
+    }
+
+    /**
+     * GoogleWriter::overForm's rule, built here as the other form cases build
+     * their bodies (the probe runs against the installed release's source):
+     * a start or end in the form other than the held one names the held
+     * form's fields as null.
+     */
+    private static function overHeld(array $body, bool $heldAllDay): array
+    {
+        foreach (['start', 'end'] as $k) {
+            if (is_array($body[$k] ?? null) && isset($body[$k]['date']) !== $heldAllDay) {
+                $body[$k] += isset($body[$k]['date']) ? ['dateTime' => null, 'timeZone' => null] : ['date' => null];
+            }
+        }
+        return $body;
     }
 
     /** The link (`source`) of the master and of each exception record between the two reads: whether a link set on a series is written into its exceptions. */

@@ -699,7 +699,8 @@ final class GoogleSeries
             if ($held['master'] === null || !isset($held['records'][$key])) {
                 continue;
             }
-            $owned = OwnFields::googleHeld(OwnFields::decode($row['override_fields'] ?? null) ?? OwnFields::infer($row, $master));
+            // Its own list, by the one reader (every day row has one since migration 078; issue 240).
+            $owned = OwnFields::googleHeld(OwnFields::stored($row));
             foreach (self::UNWRITTEN as $field => $col) {
                 if (!in_array($field, $owned, true) && self::fieldsOf([$col => $held['records'][$key][$col] ?? null] + $row)[$col] === self::fieldsOf($row)[$col]) {
                     $held['records'][$key][$col] = $master[$col] ?? null;

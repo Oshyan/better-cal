@@ -184,7 +184,12 @@ check('tampered: a refusal with another message diverges there', $errAt !== null
 $fake = new FakeGoogle(CAL);
 $rec = new TraceRecorder($fake, "$tmp/traces/hand-made.json", 'hand-made', 'replay-test', 'built-in');
 $api = new Api($rec->transport(), static fn(): string => 'fake-token', CAL, $nap, 0.0);
-$etag = static fn(string $id): string => 'If-Match: ' . $fake->events[$id]['etag'];
+// Each write's If-Match is the etag of the resource it writes, read just before (a GET, recorded), as the app sends it
+// since issue 256: Google gives each resource an etag of its own once a day has a record (probe of 2026-11-13).
+$etag = static function (string $id) use ($api): string {
+    $r = $api->call('GET', '/events/' . rawurlencode($id));
+    return 'If-Match: ' . (string) ($r['response']['etag'] ?? '');
+};
 $poll = static function (?string $token) use ($api): ?string {
     $r = $api->call('GET', '/events', ['maxResults' => '2500', 'showDeleted' => 'true', 'singleEvents' => 'false'] + ($token !== null ? ['syncToken' => $token] : []));
     return $r['response']['nextSyncToken'] ?? null;
@@ -199,8 +204,8 @@ $fake->seed($fake->events['sample0001']); // the harness's adopt: the same resou
 $api->call('PATCH', '/events/sample0001', [], ['summary' => 'Sample weekly renamed'], [$etag('sample0001')]);
 $api->call('GET', '/events/sample0001');
 $tok = $poll($tok);
-$api->call('PATCH', '/events/sample0001_20270315T170000Z', [], ['summary' => 'Sample one day'], [$etag('sample0001')]);
-$api->call('DELETE', '/events/sample0001_20270322T170000Z', [], null, [$etag('sample0001')]);
+$api->call('PATCH', '/events/sample0001_20270315T170000Z', [], ['summary' => 'Sample one day'], [$etag('sample0001_20270315T170000Z')]);
+$api->call('DELETE', '/events/sample0001_20270322T170000Z', [], null, [$etag('sample0001_20270322T170000Z')]);
 $tok = $poll($tok);
 // The zone alone (Denver keeps the same moments, 11:00 there), with an edited and a deleted day held.
 $api->call('PATCH', '/events/sample0001', [], ['start' => ['timeZone' => 'America/Denver'], 'end' => ['timeZone' => 'America/Denver']], [$etag('sample0001')]);
@@ -208,19 +213,19 @@ $tok = $poll($tok);
 // The time: 12:00 in Denver, 19:00Z before 03-14 and 18:00Z after.
 $api->call('PATCH', '/events/sample0001', [], ['start' => ['dateTime' => '2027-03-01T12:00:00-07:00'], 'end' => ['dateTime' => '2027-03-01T13:00:00-07:00']], [$etag('sample0001')]);
 $tok = $poll($tok);
-$api->call('PATCH', '/events/sample0001_20270308T190000Z', [], ['location' => 'Sample room 2'], [$etag('sample0001')]);
-$api->call('DELETE', '/events/sample0001_20270329T180000Z', [], null, [$etag('sample0001')]);
+$api->call('PATCH', '/events/sample0001_20270308T190000Z', [], ['location' => 'Sample room 2'], [$etag('sample0001_20270308T190000Z')]);
+$api->call('DELETE', '/events/sample0001_20270329T180000Z', [], null, [$etag('sample0001_20270329T180000Z')]);
 $tok = $poll($tok);
 $api->call('PATCH', '/events/sample0001', [], ['start' => ['date' => '2027-03-01', 'dateTime' => null, 'timeZone' => null], 'end' => ['date' => '2027-03-02', 'dateTime' => null, 'timeZone' => null]], [$etag('sample0001')]);
 $tok = $poll($tok);
-$api->call('PATCH', '/events/sample0001_20270308', [], ['summary' => 'Sample all-day day'], [$etag('sample0001')]);
+$api->call('PATCH', '/events/sample0001_20270308', [], ['summary' => 'Sample all-day day'], [$etag('sample0001_20270308')]);
 $api->call('PATCH', '/events/sample0001', [], ['recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=3']], [$etag('sample0001')]);
 $api->call('POST', '/events', [], ['summary' => 'Sample weekly, from the fourth', 'start' => ['date' => '2027-03-22'], 'end' => ['date' => '2027-03-23'], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=3']]);
 $tok = $poll($tok);
 $api->call('PATCH', '/events/sample0001', [], ['recurrence' => ['RRULE:FREQ=DAILY;COUNT=3']], [$etag('sample0001')]);
 $api->call('PATCH', '/events/sample0001', [], ['summary' => 'Stale'], ['If-Match: "2999999999999999"']); // 412
 $api->call('POST', '/events', [], $series); // 409: the id again
-$api->call('PATCH', '/events/sample0001_20270301', [], ['start' => ['dateTime' => '2027-03-01T09:00:00-08:00'], 'end' => ['dateTime' => '2027-03-01T10:00:00-08:00']], [$etag('sample0001')]); // 400
+$api->call('PATCH', '/events/sample0001_20270301', [], ['start' => ['dateTime' => '2027-03-01T09:00:00-08:00'], 'end' => ['dateTime' => '2027-03-01T10:00:00-08:00']], [$etag('sample0001_20270301')]); // 400
 $tok = $poll($tok);
 $single = $api->call('POST', '/events', [], ['summary' => 'Sample single', 'start' => ['dateTime' => '2027-04-02T09:00:00-07:00', 'timeZone' => LA], 'end' => ['dateTime' => '2027-04-02T10:00:00-07:00', 'timeZone' => LA]]);
 $sid = (string) $single['response']['id'];

@@ -201,7 +201,7 @@ return static function (Db $db): void {
                             // No row of 5 or 8 January stood before (no record there at Google): their records make rows of their own.
                             checkEq('each record is its own day\'s row, at its own day\'s key in the new form: the notes on 5 and 8 January (rows of their own), the tag on 6 January and the reminder on 7 January on the rows they were',
                                 [[$s->idOn[6], $s->idOn[7]], array_values($want)],
-                                [array_values(array_intersect(array_keys($rowsOf($s->masterId)), [$s->idOn[6], $s->idOn[7]])), array_values((static function (array $rows): array { usort($rows, static fn(array $a, array $b): int => strcmp($a['key'], $b['key'])); return $rows; })($rowsOf($s->masterId)))]);
+                                [array_values(array_intersect(array_keys($rowsOf($s->masterId)), [$s->idOn[6], $s->idOn[7]])), array_values((static function (array $rows): array { usort($rows, static fn(array $a, array $b): int => strcmp((string) $a['key'], (string) $b['key'])); return $rows; })($rowsOf($s->masterId)))]);
                         } else {
                             checkEq('each of the four days is the row it was, at its own day\'s key in the new form: the notes on 5 and 8 January, the tag on 6 January, the reminder on 7 January',
                                 [$s->idOn[5] => $want[5], $s->idOn[6] => $want[6], $s->idOn[7] => $want[7], $s->idOn[8] => $want[8]], $rowsOf($s->masterId));

@@ -603,83 +603,9 @@ return [
         ), ['GoogleSeries::finish (direct)', 'GoogleSeries::finish (direct), entry gone, its copy without format'])),
             ['077 run (snapshots dropped)', 'snapshots kept'])),
     ],
-    // Provider identity (rule 1 of 1.5.5): what a master write leaves at Google is predicted by each record's id under
-    // the old master's form (GoogleSeries::afterMaster, S1). Here the id is read in the new master's form instead, so
-    // the form term is always true and a record or skip on a key the new form also has is predicted kept, as before
-    // the fix (review R1). Every after-write assertion of the coinciding-key scenarios fails, with the harness's own
-    // forward-edit checks on seed 911 cases 193 and 879 that the test runs through the driver; the plan and asked-state
-    // assertions and the two controls at 10:00 Los Angeles hold.
-    [
-        'id' => 'google-after-master-form-term', 'file' => 'server/src/Domain/GoogleSeries.php', 'dbtest' => 'google-series-identity',
-        'what' => 'a record\'s identity through a master write read in the new master\'s form, so a change between timed and all-day keeps what shares a key',
-        'patch' => [["        \$id = GoogleWriter::instanceId('', \$key, \$was);", "        \$id = GoogleWriter::instanceId('', \$key, \$allDay);"]],
-        'checks' => [
-            'timed 00:00 UTC to all-day (edit, then skip): Google lists nothing on the skipped day',
-            'timed 00:00 UTC to all-day (edit, then skip): a write sent to Google carries the edited day\'s notes and place',
-            'timed 00:00 UTC to all-day (edit, then skip): the window shows the edited day with its place and notes',
-            'timed 00:00 UTC to all-day (edit, then skip): the window shows nothing on the skipped day',
-            'timed 00:00 UTC to all-day (skip, then edit): Google lists nothing on the skipped day',
-            'timed 00:00 UTC to all-day (skip, then edit): a write sent to Google carries the edited day\'s notes and place',
-            'timed 00:00 UTC to all-day (skip, then edit): the window shows the edited day with its place and notes',
-            'timed 00:00 UTC to all-day (skip, then edit): the window shows nothing on the skipped day',
-            'timed 00:00 UTC to all-day (from the last day): Google lists nothing on the skipped day',
-            'timed 00:00 UTC to all-day (from the last day): a write sent to Google carries the edited day\'s notes and place',
-            'timed 00:00 UTC to all-day (from the last day): the window shows the edited day with its place and notes',
-            'timed 00:00 UTC to all-day (from the last day): the window shows nothing on the skipped day',
-            'all-day to timed 00:00 UTC (edit, then skip): Google lists nothing on the skipped day',
-            'all-day to timed 00:00 UTC (edit, then skip): a write sent to Google carries the edited day\'s notes and place',
-            'all-day to timed 00:00 UTC (edit, then skip): the window shows the edited day with its place and notes',
-            'all-day to timed 00:00 UTC (edit, then skip): the window shows nothing on the skipped day',
-            'all-day to timed 00:00 UTC (skip, then edit): Google lists nothing on the skipped day',
-            'all-day to timed 00:00 UTC (skip, then edit): a write sent to Google carries the edited day\'s notes and place',
-            'all-day to timed 00:00 UTC (skip, then edit): the window shows the edited day with its place and notes',
-            'all-day to timed 00:00 UTC (skip, then edit): the window shows nothing on the skipped day',
-            'harness seed 911 case 193: no forward-edit check fails',
-            'harness seed 911 case 879: no forward-edit check fails',
-            'timed 00:00 UTC to all-day (edit, then skip): Google holds the edited day\'s record under its id in the series\' form, with its notes and place',
-            'timed 00:00 UTC to all-day (edit, then skip): Google lists the edited day on its date with its notes and place',
-            'timed 00:00 UTC to all-day (edit, then skip): the edited day\'s row is on its date with its own notes and place, in the series\' kind',
-            'timed 00:00 UTC to all-day (edit, then skip): Google holds the skipped day as skipped under its id in the series\' form',
-            'timed 00:00 UTC to all-day (edit, then skip): the skipped day is skipped here, and nothing else is',
-            'timed 00:00 UTC to all-day (skip, then edit): Google holds the edited day\'s record under its id in the series\' form, with its notes and place',
-            'timed 00:00 UTC to all-day (skip, then edit): Google lists the edited day on its date with its notes and place',
-            'timed 00:00 UTC to all-day (skip, then edit): the edited day\'s row is on its date with its own notes and place, in the series\' kind',
-            'timed 00:00 UTC to all-day (skip, then edit): Google holds the skipped day as skipped under its id in the series\' form',
-            'timed 00:00 UTC to all-day (skip, then edit): the skipped day is skipped here, and nothing else is',
-            'timed 00:00 UTC to all-day (from the last day): Google holds the edited day\'s record under its id in the series\' form, with its notes and place',
-            'timed 00:00 UTC to all-day (from the last day): Google lists the edited day on its date with its notes and place',
-            'timed 00:00 UTC to all-day (from the last day): the edited day\'s row is on its date with its own notes and place, in the series\' kind',
-            'timed 00:00 UTC to all-day (from the last day): Google holds the skipped day as skipped under its id in the series\' form',
-            'timed 00:00 UTC to all-day (from the last day): the skipped day is skipped here, and nothing else is',
-            'all-day to timed 00:00 UTC (edit, then skip): Google holds the edited day\'s record under its id in the series\' form, with its notes and place',
-            'all-day to timed 00:00 UTC (edit, then skip): Google lists the edited day on its date with its notes and place',
-            'all-day to timed 00:00 UTC (edit, then skip): the edited day\'s row is on its date with its own notes and place, in the series\' kind',
-            'all-day to timed 00:00 UTC (edit, then skip): Google holds the skipped day as skipped under its id in the series\' form',
-            'all-day to timed 00:00 UTC (edit, then skip): the skipped day is skipped here, and nothing else is',
-            'all-day to timed 00:00 UTC (skip, then edit): Google holds the edited day\'s record under its id in the series\' form, with its notes and place',
-            'all-day to timed 00:00 UTC (skip, then edit): Google lists the edited day on its date with its notes and place',
-            'all-day to timed 00:00 UTC (skip, then edit): the edited day\'s row is on its date with its own notes and place, in the series\' kind',
-            'all-day to timed 00:00 UTC (skip, then edit): Google holds the skipped day as skipped under its id in the series\' form',
-            'all-day to timed 00:00 UTC (skip, then edit): the skipped day is skipped here, and nothing else is',
-            'timed 10:00 Los Angeles to all-day, stopped after the master step, then Put back: Put back goes through',
-            'daily 19:00 New York to all-day: Google holds the skipped day as skipped under its id in the series\' form',
-            'daily 19:00 New York to all-day: Google lists nothing on the skipped day',
-            'daily 19:00 New York to all-day: the skipped day is skipped here, and nothing else is',
-            'daily 19:00 New York to all-day: the window shows nothing on the skipped day',
-            'daily all-day to 19:00 New York: Google holds the edited day\'s record under its id in the series\' form, with its notes and place',
-            'daily all-day to 19:00 New York: Google lists the edited day on its date with its notes and place',
-            'daily all-day to 19:00 New York: the edited day\'s row is on its date with its own notes and place, in the series\' kind',
-            'daily all-day to 19:00 New York: the window shows the edited day with its place and notes',
-            'all-day to 00:00 UTC to all-day, after the first flip: Google holds the skipped day as skipped under its id in the series\' form',
-            'all-day to 00:00 UTC to all-day, after the first flip: Google lists nothing on the skipped day',
-            'all-day to 00:00 UTC to all-day, after the first flip: the skipped day is skipped here, and nothing else is',
-            'all-day to 00:00 UTC to all-day, after the first flip: the window shows nothing on the skipped day',
-            'all-day to 00:00 UTC to all-day, second flip: the plan keeps the skipped day skipped on its date',
-            'all-day to 00:00 UTC to all-day, after the second flip: Google holds the skipped day as skipped under its id in the series\' form',
-            'all-day to 00:00 UTC to all-day, after the second flip: the skipped day is skipped here, and nothing else is',
-            'all-day to 00:00 UTC to all-day, after the second flip: the window shows nothing on the skipped day',
-        ],
-    ],
+    // (google-after-master-form-term, the form term of afterMaster's S1 read in the new master's form, went in 2026-11: it
+    // differs only where a record's key is a day of the other form too, the meeting keys, and there the switch is now
+    // refused on Google before anything is sent (google-hidden-switch), so no write reaches that term; an equivalent mutant.)
     // Provider identity across a change of form that has not reached Google (GoogleSeries::rebase): the guard that
     // names a change made at Google as not kept is gone, so what Google holds in the old form is carried by its key
     // again. West of UTC a rename or a deletion lands on the next day; made timed, it goes to an id that is no day and
@@ -698,9 +624,10 @@ return [
             'daily 20:00 New York made all-day, a day deleted at Google: Finish writes the master and the plan\'s edited day under its new id, nothing to an old id or to a day the series does not have',
             'daily 20:00 New York made all-day, a day deleted at Google: Google holds the series in its new kind with the plan\'s edited day alone, on its own date with its notes',
             'daily 20:00 New York made all-day, a day deleted at Google: the rows here hold the same: the edited day\'s row on its own date with its notes, no other day, no skip',
-            'daily 20:00 New York made all-day, a day given another time at Google: Finish completes and the change is settled',
             'daily 20:00 New York made all-day, a day given another time at Google: Finish names the change made at Google once, by the day\'s own date, as not kept',
             'daily 20:00 New York made all-day, a day given another time at Google: Finish writes the master and the plan\'s edited day under its new id, nothing to an old id or to a day the series does not have',
+            'daily 20:00 New York made all-day, a day given another time at Google: Google holds the series in its new kind with the plan\'s edited day alone, on its own date with its notes',
+            'daily 20:00 New York made all-day, a day given another time at Google: the rows here hold the same: the edited day\'s row on its own date with its notes, no other day, no skip',
             'daily 20:00 New York made all-day, the plan\'s edited day given other notes at Google: Finish names the change made at Google once, by the day\'s own date, as not kept',
             'daily 20:00 New York made all-day, the plan\'s edited day given other notes at Google: Finish writes the master and the plan\'s edited day under its new id, nothing to an old id or to a day the series does not have',
             'daily 20:00 New York made all-day, the plan\'s edited day given other notes at Google: Google holds the series in its new kind with the plan\'s edited day alone, on its own date with its notes',
@@ -713,9 +640,10 @@ return [
             'weekly 10:00 Los Angeles made all-day, a day deleted at Google: Finish writes the master and the plan\'s edited day under its new id, nothing to an old id or to a day the series does not have',
             'weekly 10:00 Los Angeles made all-day, a day deleted at Google: Google holds the series in its new kind with the plan\'s edited day alone, on its own date with its notes',
             'weekly 10:00 Los Angeles made all-day, a day deleted at Google: the rows here hold the same: the edited day\'s row on its own date with its notes, no other day, no skip',
-            'weekly 10:00 Los Angeles made all-day, a day given another time at Google: Finish completes and the change is settled',
             'weekly 10:00 Los Angeles made all-day, a day given another time at Google: Finish names the change made at Google once, by the day\'s own date, as not kept',
             'weekly 10:00 Los Angeles made all-day, a day given another time at Google: Finish writes the master and the plan\'s edited day under its new id, nothing to an old id or to a day the series does not have',
+            'weekly 10:00 Los Angeles made all-day, a day given another time at Google: Google holds the series in its new kind with the plan\'s edited day alone, on its own date with its notes',
+            'weekly 10:00 Los Angeles made all-day, a day given another time at Google: the rows here hold the same: the edited day\'s row on its own date with its notes, no other day, no skip',
             'weekly 10:00 Los Angeles made all-day, the plan\'s edited day given other notes at Google: Finish names the change made at Google once, by the day\'s own date, as not kept',
             'weekly 10:00 Los Angeles made all-day, the plan\'s edited day given other notes at Google: Finish writes the master and the plan\'s edited day under its new id, nothing to an old id or to a day the series does not have',
             'weekly 10:00 Los Angeles made all-day, the plan\'s edited day given other notes at Google: Google holds the series in its new kind with the plan\'s edited day alone, on its own date with its notes',
@@ -815,7 +743,8 @@ return [
             $same = 'Finish\'s entry records what the change did with the days exactly as the change\'s own entry does';
             $undo = 'the undo of the delete goes through: the day is back on its own date, here and at Google, by writes to its own id alone';
             $out = [];
-            foreach (["$la an hour later" => true, "$la made all-day" => true, 'a daily series at 00:00 UTC made all-day' => false,
+            // Made all-day at 18:00 since 2026-11 (at 17:00, 00:00 UTC in July, the switch is refused on Google); the 00:00 UTC case went with it.
+            foreach (["$la an hour later" => true, 'a daily series at 18:00 America/Los_Angeles made all-day' => true,
                 "$la moved to Denver at the same clock time" => true, "$la moved to Denver at the same moment" => false, "$la ten events" => false] as $what => $moved) {
                 foreach (['stopped before its master write lands', 'stopped after its master write, the answer lost'] as $stop) {
                     foreach ($moved ? [$moves, $same, $undo] : [$same] as $label) {
@@ -907,10 +836,9 @@ return [
         'what' => 'GoogleUndo::dayAt returns the id the entry journaled when the day\'s key is the same now, whatever form the series has since',
         'patch' => [["                return ['googleId' => GoogleWriter::instanceId(\$of['series'], \$at, (int) \$master['all_day'] === 1), 'key' => \$at];",
             "                return ['googleId' => \$at === (string) \$key ? \$googleId : GoogleWriter::instanceId(\$of['series'], \$at, (int) \$master['all_day'] === 1), 'key' => \$at];"]],
-        'checks' => ['tag undo across a flip: the undo goes through', 'tag undo across a flip: the day no longer holds the tag',
-            // The undo of a rename across the same flip, pinned to one PATCH to the date-form id since the prediction fix.
-            'undo across a flip: the undo goes through', 'undo across a flip: it goes to the date-form id alone',
-            "undo across a flip: the day is back to the series' title, here and at the stand-in"],
+        // (The undo of a rename across the same flip is no longer made: since 2026-11 that flip is refused on Google over the
+        // renamed day's record, so its rename's undo goes to the timed id; the tag-only day still flips.)
+        'checks' => ['tag undo across a flip: the undo goes through', 'tag undo across a flip: the day no longer holds the tag'],
     ],
     // Provider identity (server/tests/db/lib.php, identityViolations: I1), hung after every block of the database suite:
     // the one function that names an instance at Google builds the all-day form's suffix as the timed form's, so the row

@@ -33,7 +33,7 @@ use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
 
 $usage = "usage: php tools/google-probe/access.php --calendar <googleCalendarId> --account <google_accounts id or email> --stage <label> [--report <dir>] [--allow-other-events]\n"
-    . "  stages the README uses, in order: writer, reader, freebusy, unshared, restored, deleted (and cleanup, which only deletes what the probe made)\n";
+    . "  stages the README uses, in order: writer, reader, freebusy, unshared, restored, deleted (and cleanup, which only deletes what the probe made); listread, on any calendar the account may write, compares a GET by id with a list by iCalUID and deletes what it made\n";
 $opts = getopt('', ['calendar:', 'account:', 'stage:', 'report:', 'allow-other-events', 'help']);
 if (isset($opts['help']) || !isset($opts['calendar'], $opts['account'], $opts['stage'])) {
     fwrite(STDERR, $usage);

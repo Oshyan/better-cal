@@ -63,6 +63,10 @@ function gated(FakeGoogle $fake, string $mode, array &$seen): \Closure
         parse_str((string) ($parts['query'] ?? ''), $query);
         $path = substr((string) $parts['path'], strlen('/calendar/v3'));
         $seen[] = ['method' => $method, 'path' => $path, 'query' => $query, 'mode' => $mode];
+        if (($GLOBALS['throwOnce'] ?? null) !== null && preg_match($GLOBALS['throwOnce'], $path) === 1) {
+            $GLOBALS['throwOnce'] = null; // one lost connection, for the after-an-error check
+            throw new \RuntimeException('HTTP error for the test: connection lost');
+        }
         $err = static fn(int $code, string $reason, string $message): array => ['status' => $code, 'body' => (string) json_encode(['error' => ['code' => $code, 'message' => $message, 'errors' => [['domain' => 'global', 'reason' => $reason, 'message' => $message]]]])];
         if (in_array($mode, ['unshared', 'deleted'], true)) {
             return $err(404, 'notFound', 'Not Found');
@@ -96,7 +100,7 @@ function stageRun(FakeGoogle $fake, string $dir, string $mode, string $stage, ar
     $scrub = new Report($dir);
     $scrub->secret(ACCOUNT, '{account}');
     $scrub->secret(CAL, '{calendar}');
-    $probe = new AccessProbe($api, $scrub, $dir, false, new \DateTimeImmutable('2027-03-01T08:00:00-08:00'));
+    $probe = new AccessProbe($api, $scrub, $dir, false, new \DateTimeImmutable('2027-03-01T08:00:00-08:00'), true);
     $before = count($seen);
     $record = $probe->run($stage);
     return [$probe, $record, array_slice($seen, $before)];
@@ -170,7 +174,7 @@ check('every write the probe sent carries sendUpdates=none', $writes !== [] && a
 check('no request goes to another calendar', array_filter($seen, static fn(array $r) => !str_starts_with($r['path'], '/calendars/' . rawurlencode(CAL)) && $r['path'] !== '/users/me/calendarList/' . rawurlencode(CAL)) === []);
 
 // ---- The state file round-trips --------------------------------------------
-$state = ['single' => ['id' => 'abc0001', 'etag' => '"1"'], 'series' => ['id' => 'abc0002', 'etag' => '"2"', 'day' => 'abc0002_20270315T180000Z', 'dayEtag' => '"3"'], 'inserted' => ['abc0003'], 'ownerEvent' => null, 'sync' => ['token' => 'tok', 'stage' => 'reader', 'at' => '2027-03-01T08:00:00.000-08:00'], 'stages' => ['writer', 'reader']];
+$state = ['single' => ['id' => 'abc0001', 'etag' => '"1"'], 'series' => ['id' => 'abc0002', 'etag' => '"2"', 'day' => 'abc0002_20270315T180000Z', 'dayEtag' => '"3"'], 'inserted' => ['abc0003'], 'ownerEvent' => null, 'sync' => ['token' => 'tok', 'stage' => 'reader', 'at' => '2027-03-01T08:00:00.000-08:00'], 'stages' => ['writer', 'reader'], 'listreadMade' => []];
 $probe->state = $state;
 $probe->saveState();
 check('state: what is saved loads back the same', AccessProbe::loadState($probe->statePath) === $state);
@@ -189,6 +193,54 @@ check('report: the across-stages table and the template are there', str_contains
 foreach (['the account address' => ACCOUNT, 'the owner\'s address' => OWNER, 'the calendar id' => CAL, 'a sync token' => 'fake-sync-', 'the bearer token' => 'fake-token', 'an event link' => 'eid='] as $what => $needle) {
     check("report: never holds $what", !str_contains($md, $needle) && !str_contains($json, $needle));
 }
+
+// ---- Stage listread ------------------------------------------------------------
+// On a calendar the account owns (the probe calendar) and one it may write. The stand-in has no events.import route,
+// so cases 3 and 4 are skipped against it; its answers prove nothing about Google, only that the stage runs and cleans up.
+$liveMarked = static fn(FakeGoogle $f): array => array_keys(array_filter($f->events, static fn(array $e) => Probe::isMarked($e) && empty($e['recurringEventId']) && ($e['status'] ?? '') !== 'cancelled'));
+foreach (['owned', 'writer'] as $mode) {
+    $fake = new FakeGoogle(CAL);
+    $fake->owner = ACCOUNT;
+    $fake->seed(['id' => 'ownerevent01', 'summary' => 'Owner event', 'start' => ['date' => '2027-03-05'], 'end' => ['date' => '2027-03-06']]);
+    $fake->seed(['id' => 'other02', 'summary' => 'Sample Hall booking', 'start' => ['date' => '2027-03-06'], 'end' => ['date' => '2027-03-07']]);
+    [$probe, $record, $sent] = stageRun($fake, "$tmp/listread-$mode", $mode, 'listread', $seen);
+    $ns = array_column($record['rows'], 'n');
+    check("listread ($mode): runs without stopping", !isset($record['stopped']), (string) ($record['stopped'] ?? ''));
+    check("listread ($mode): no case stopped", !str_contains(implode(' ', $record['notes']), 'stopped'), implode(' ', $record['notes']));
+    check("listread ($mode): says the import cases were skipped", str_contains(implode(' ', $record['notes']), 'L3 and L4 (events.import) skipped'));
+    check("listread ($mode): every case's rows are there", array_diff(['L', 'L1.get', 'L1.list-true', 'L1.list-false', 'L2.get', 'L5.delete', 'L5.list-true', 'L6.patch', 'L6.list', 'L6.patch-if-match', 'L7.list-true', 'L7.get-master', 'L7.get-day', 'L8.get', 'L8.list'], $ns) === [], implode(',', $ns));
+    $l1 = array_values(array_filter($record['rows'], static fn(array $r) => $r['n'] === 'L1.list-true'))[0]['fields'] ?? [];
+    check("listread ($mode): a list row names the differing fields, both etags, accessRole and the item count", isset($l1['differs'], $l1['etag (GET)'], $l1['etag (list)'], $l1['accessRole'], $l1['item count']), json_encode($l1));
+    check("listread ($mode): 31 requests (no import against the stand-in)", count($sent) === 31, (string) count($sent));
+    check("listread ($mode): everything it made is deleted", $liveMarked($fake) === [] && AccessProbe::loadState($probe->statePath)['listreadMade'] === [], implode(', ', $liveMarked($fake)));
+    check("listread ($mode): events it did not make are untouched", ($fake->events['ownerevent01']['summary'] ?? '') === 'Owner event' && ($fake->events['other02']['status'] ?? '') === 'confirmed');
+    check("listread ($mode): every write carries sendUpdates=none", array_filter($sent, static fn(array $r) => $r['method'] !== 'GET' && ($r['query']['sendUpdates'] ?? null) !== 'none') === []);
+    check("listread ($mode): the other stages' state is left alone", ($s = AccessProbe::loadState($probe->statePath))['single'] === null && $s['sync'] === null && $s['ownerEvent'] === null);
+}
+
+// After an error: one lost connection in case 7 stops that case alone, and the stage still deletes everything.
+$fake = new FakeGoogle(CAL);
+$GLOBALS['throwOnce'] = '#/instances$#';
+[$probe, $record] = stageRun($fake, "$tmp/listread-error", 'owned', 'listread', $seen);
+check('listread after an error: the case says it stopped', str_contains(implode(' ', $record['notes']), 'L7 stopped'), implode(' ', $record['notes']));
+check('listread after an error: everything it made is deleted', $liveMarked($fake) === [], implode(', ', $liveMarked($fake)));
+
+// What a run that died left is deleted first by the next one.
+$fake = new FakeGoogle(CAL);
+$fake->seed(['id' => 'leftover01', 'summary' => 'Access probe left', 'extendedProperties' => ['private' => [Probe::MARKER_KEY => 'access']], 'start' => ['date' => '2027-03-05'], 'end' => ['date' => '2027-03-06']]);
+$state = AccessProbe::emptyState();
+$state['listreadMade'] = ['leftover01'];
+@mkdir("$tmp/listread-left", 0700, true);
+[$probe] = stageRun($fake, "$tmp/listread-left", 'owned', 'cleanup', $seen); // makes the state file's path
+$probe->state = $state;
+$probe->saveState();
+[, $record] = stageRun($fake, "$tmp/listread-left", 'owned', 'listread', $seen);
+check('listread: an earlier run\'s leftover is deleted first', ($record['rows'][0]['n'] ?? '') === 'L0.1' && ($fake->events['leftover01']['status'] ?? '') === 'cancelled');
+
+// A calendar the account may only read is refused, with nothing written.
+$fake = new FakeGoogle(CAL);
+[, $record, $sent] = stageRun($fake, "$tmp/listread-reader", 'reader', 'listread', $seen);
+check('listread: a calendar the account may only read is refused', str_contains((string) ($record['stopped'] ?? ''), 'may write') && array_filter($sent, static fn(array $r) => $r['method'] !== 'GET') === []);
 
 // ---- Refusals at writer ------------------------------------------------------
 foreach (['owned' => 'owns this calendar', 'reader' => 'Make changes to events', 'unshared' => "isn't in the connected account's list"] as $mode => $says) {

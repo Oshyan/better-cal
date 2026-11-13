@@ -56,6 +56,7 @@ final class AccessProbe
         string $dir,
         private readonly bool $allowOtherEvents = false,
         private readonly ?\DateTimeImmutable $today = null,
+        private readonly bool $skipImport = false,
     ) {
         if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
             throw new \RuntimeException("cannot make the report folder $dir");
@@ -73,7 +74,7 @@ final class AccessProbe
     /** @return array{single:?array, series:?array, inserted:list<string>, ownerEvent:?array, sync:?array, stages:list<string>} */
     public static function emptyState(): array
     {
-        return ['single' => null, 'series' => null, 'inserted' => [], 'ownerEvent' => null, 'sync' => null, 'stages' => []];
+        return ['single' => null, 'series' => null, 'inserted' => [], 'ownerEvent' => null, 'sync' => null, 'stages' => [], 'listreadMade' => []];
     }
 
     public static function loadState(string $path): array
@@ -106,6 +107,8 @@ final class AccessProbe
         try {
             if ($stage === 'cleanup') {
                 $this->cleanup();
+            } elseif ($stage === 'listread') {
+                $this->listRead();
             } else {
                 $this->fixedSet($stage);
             }
@@ -300,7 +303,286 @@ final class AccessProbe
         }
     }
 
+    // ---- Stage listread ---------------------------------------------------------
+
+    /** An iCalUID no event has ever had. */
+    public const MISSING_UID = 'accessprobe-never-existed@access-probe.invalid';
+
+    /** @var list<string> events this listread run made and has not yet deleted */
+    private array $made = [];
+
+    /**
+     * Stage listread: does a list by iCalUID return the same resource a GET by
+     * id does, in each case the app meets? Runs on any calendar the account
+     * may write (owner or writer), touches only its own marked events, and
+     * deletes them at the end, also after an error. Leaves the other stages'
+     * state (events, sync token, owner's event) alone.
+     */
+    private function listRead(): void
+    {
+        // What an earlier listread run left when its process died.
+        foreach (array_values($this->state['listreadMade']) as $i => $id) {
+            $this->send('L0.' . ($i + 1), 'delete what an earlier listread left', 'DELETE', '/events/' . rawurlencode((string) $id));
+        }
+        $this->state['listreadMade'] = [];
+        $this->saveState();
+
+        $cal = $this->send('L', 'calendarList entry', 'GET', '/users/me/calendarList/{calendar}', [], null, [], static fn(array $r) => ['accessRole' => self::field($r, 'accessRole')]);
+        $role = (string) ($cal['response']['accessRole'] ?? '');
+        if ($cal['status'] !== 200 || !in_array($role, ['owner', 'writer'], true)) {
+            throw new \RuntimeException("listread needs a calendar the account may write; the list entry answered HTTP {$cal['status']}" . ($role !== '' ? ", accessRole \"$role\"" : '') . '. Nothing was written');
+        }
+        try {
+            $cases = [
+                'L1' => fn() => $this->lrSingle('L1', 'timed single, inserted', $this->when(20, 9)),
+                'L2' => fn() => $this->lrSingle('L2', 'all-day single, inserted', $this->allDay(21)),
+                'L3' => fn() => $this->lrImport(),
+                'L5' => fn() => $this->lrDeleted(),
+                'L6' => fn() => $this->lrPatched(),
+                'L7' => fn() => $this->lrSeries(),
+                'L8' => fn() => $this->lrMissing(),
+            ];
+            foreach ($cases as $n => $case) {
+                try {
+                    $case();
+                } catch (\Throwable $e) {
+                    $this->record['notes'][] = "$n stopped: " . $e->getMessage();
+                }
+            }
+        } finally {
+            $left = [];
+            foreach ($this->made as $i => $id) {
+                try {
+                    $x = $this->send('LC.' . ($i + 1), 'delete what the stage made', 'DELETE', '/events/' . rawurlencode($id));
+                    if (self::ok($x) || $x['status'] === 410) {
+                        $this->forget($id);
+                        continue;
+                    }
+                    $left[] = "$id (HTTP {$x['status']})";
+                } catch (\Throwable $e) {
+                    $left[] = "$id ({$e->getMessage()})";
+                }
+            }
+            $this->record['notes'][] = $left === [] ? 'Everything the stage made is deleted.' : 'Not deleted (listed in the state file for the next listread run): ' . implode('; ', $left) . '.';
+        }
+    }
+
+    private function remember(array $x): ?string
+    {
+        if (!self::ok($x) || !isset($x['response']['id'])) {
+            return null;
+        }
+        $id = (string) $x['response']['id'];
+        $this->made[] = $id;
+        $this->state['listreadMade'][] = $id;
+        $this->saveState();
+        return $id;
+    }
+
+    private function forget(string $id): void
+    {
+        $this->made = array_values(array_diff($this->made, [$id]));
+        $this->state['listreadMade'] = array_values(array_diff($this->state['listreadMade'], [$id]));
+        $this->saveState();
+    }
+
+    /** 1 and 2: insert the ordinary way, then GET against both lists. */
+    private function lrSingle(string $n, string $what, array $when): void
+    {
+        $x = $this->send("$n.insert", "$what: insert", 'POST', '/events', [], $this->marked(['summary' => "Access probe $what"] + $when), [], static fn(array $r) => ['iCalUID' => self::field($r, 'iCalUID')]);
+        $id = $this->remember($x);
+        if ($id === null) {
+            return;
+        }
+        $this->getAgainstLists($n, $what, $id, (string) ($x['response']['iCalUID'] ?? ''));
+    }
+
+    /** 3 and 4: import with an iCalUID of our own, as Move to Google does (GoogleWriter::importBody: the event body plus iCalUID), then a second import with the same iCalUID and another start. */
+    private function lrImport(): void
+    {
+        if ($this->skipImport) {
+            $this->record['notes'][] = 'L3 and L4 (events.import) skipped: the stand-in has no import route.';
+            return;
+        }
+        $uid = bin2hex(random_bytes(8)) . '@access-probe.invalid';
+        $x = $this->send('L3.import', 'import with our iCalUID', 'POST', '/events/import', [], $this->marked(['summary' => 'Access probe imported', 'iCalUID' => $uid] + $this->when(22, 9)), [], static fn(array $r) => ['iCalUID' => self::field($r, 'iCalUID'), 'id' => self::field($r, 'id')]);
+        $first = $this->remember($x);
+        if ($first === null) {
+            return;
+        }
+        $this->getAgainstLists('L3', 'imported single', $first, $uid);
+
+        $y = $this->send('L4.import', 'second import, same iCalUID, another start', 'POST', '/events/import', [], $this->marked(['summary' => 'Access probe imported twice', 'iCalUID' => $uid] + $this->when(23, 9)), [], static fn(array $r) => ['iCalUID' => self::field($r, 'iCalUID'), 'id' => self::field($r, 'id')]);
+        $second = $this->remember($y);
+        $names = [$first => 'first import'] + ($second !== null && $second !== $first ? [$second => 'second import'] : []);
+        if ($second !== null) {
+            $this->record['notes'][] = 'L4: the second import ' . ($second === $first ? 'answered with the first import\'s id (it updated that event).' : 'made a second event.');
+            $this->send('L4.get', 'get the second import by id', 'GET', '/events/' . rawurlencode($second), [], null, [], static fn(array $r) => ['summary' => self::field($r, 'summary'), 'start' => json_encode($r['start'] ?? null)]);
+        }
+        foreach (['true', 'false'] as $deleted) {
+            $this->send("L4.list-$deleted", "list by the shared iCalUID, showDeleted=$deleted", 'GET', '/events', ['iCalUID' => $uid, 'showDeleted' => $deleted, 'singleEvents' => 'false'], null, [], fn(array $r) => $this->lrListFields($r) + [
+                'order' => implode(', ', array_map(static fn(array $e) => $names[(string) ($e['id'] ?? '')] ?? (string) ($e['id'] ?? '?'), (array) ($r['items'] ?? []))),
+            ]);
+        }
+    }
+
+    /** 5: insert, delete, then the GET (status and its status field) against both lists. */
+    private function lrDeleted(): void
+    {
+        $x = $this->send('L5.insert', 'single to delete: insert', 'POST', '/events', [], $this->marked(['summary' => 'Access probe deleted'] + $this->when(24, 9)));
+        $id = $this->remember($x);
+        if ($id === null) {
+            return;
+        }
+        $d = $this->send('L5.delete', 'delete it', 'DELETE', '/events/' . rawurlencode($id));
+        if (self::ok($d)) {
+            $this->forget($id);
+        }
+        $this->getAgainstLists('L5', 'deleted single', $id, (string) ($x['response']['iCalUID'] ?? ''));
+    }
+
+    /** 6: insert, PATCH the title; does the list's etag equal the PATCH answer's, and does If-Match on the list's etag pass? */
+    private function lrPatched(): void
+    {
+        $x = $this->send('L6.insert', 'single to patch: insert', 'POST', '/events', [], $this->marked(['summary' => 'Access probe patched'] + $this->when(25, 9)));
+        $id = $this->remember($x);
+        if ($id === null) {
+            return;
+        }
+        $uid = (string) ($x['response']['iCalUID'] ?? '');
+        $p = $this->send('L6.patch', 'patch the title', 'PATCH', '/events/' . rawurlencode($id), [], ['summary' => 'Access probe patched (1)'], [], static fn(array $r) => ['etag' => self::field($r, 'etag')]);
+        $patchEtag = (string) ($p['response']['etag'] ?? '');
+        $listEtag = '';
+        $this->send('L6.list', 'list by iCalUID, showDeleted=false', 'GET', '/events', ['iCalUID' => $uid, 'showDeleted' => 'false', 'singleEvents' => 'false'], null, [], function (array $r) use ($id, $patchEtag, &$listEtag): array {
+            $item = self::itemById($r, $id);
+            $listEtag = (string) ($item['etag'] ?? '');
+            return $this->lrListFields($r) + ['etag (PATCH answer)' => $patchEtag, 'etag (list)' => $listEtag !== '' ? $listEtag : '(absent)', 'equal' => $listEtag !== '' && $listEtag === $patchEtag ? 'yes' : 'no'];
+        });
+        if ($listEtag !== '') {
+            $this->send('L6.patch-if-match', "patch the title with If-Match on the list's etag", 'PATCH', '/events/' . rawurlencode($id), [], ['summary' => 'Access probe patched (2)'], ['If-Match: ' . $listEtag], static fn(array $r) => ['etag' => self::field($r, 'etag')]);
+        }
+    }
+
+    /** 7: a weekly series of three with one day renamed: the list by the series' iCalUID against a GET of the master and of the day. */
+    private function lrSeries(): void
+    {
+        $x = $this->send('L7.insert', 'weekly series of three: insert', 'POST', '/events', [], $this->marked(['summary' => 'Access probe listread weekly', 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=3']] + $this->when(26, 9)));
+        $id = $this->remember($x);
+        if ($id === null) {
+            return;
+        }
+        $uid = (string) ($x['response']['iCalUID'] ?? '');
+        $inst = $this->send('L7.instances', 'list its instances', 'GET', '/events/' . rawurlencode($id) . '/instances');
+        $day = $inst['response']['items'][1]['id'] ?? null;
+        if ($day === null) {
+            throw new \RuntimeException('the series has no second instance to rename');
+        }
+        $day = (string) $day;
+        $this->send('L7.rename', 'rename its second day', 'PATCH', '/events/' . rawurlencode($day), [], ['summary' => 'Access probe listread weekly (one changed)']);
+        $lists = [];
+        foreach (['true', 'false'] as $deleted) {
+            $l = $this->send("L7.list-$deleted", "list by the series' iCalUID, showDeleted=$deleted", 'GET', '/events', ['iCalUID' => $uid, 'showDeleted' => $deleted, 'singleEvents' => 'false'], null, [], fn(array $r) => $this->lrListFields($r) + [
+                'items' => implode(', ', array_map(static fn(array $e) => ((string) ($e['id'] ?? '?') === $id ? 'master' : ((string) ($e['id'] ?? '') === $day ? 'renamed day' : (string) ($e['id'] ?? '?'))), (array) ($r['items'] ?? []))),
+            ]);
+            $lists[$deleted] = $l;
+        }
+        foreach (['master' => $id, 'renamed day' => $day] as $what => $eid) {
+            $g = $this->api->call('GET', '/events/' . rawurlencode($eid));
+            $this->addRow("L7.get-" . ($what === 'master' ? 'master' : 'day'), "get the $what by id", $g, $this->compareFields($g, $lists['true'], $eid) + ['against showDeleted=false' => $this->compareFields($g, $lists['false'], $eid)['differs'] ?? '-']);
+        }
+    }
+
+    /** 8: an id and an iCalUID that never existed. */
+    private function lrMissing(): void
+    {
+        $this->send('L8.get', 'get an id that never existed', 'GET', '/events/' . self::MISSING_ID);
+        $this->send('L8.list', 'list by an iCalUID that never existed', 'GET', '/events', ['iCalUID' => self::MISSING_UID, 'showDeleted' => 'true', 'singleEvents' => 'false'], null, [], fn(array $r) => $this->lrListFields($r));
+    }
+
+    /** A GET by id, then both lists by iCalUID, each list compared field by field with the GET's answer. */
+    private function getAgainstLists(string $n, string $what, string $id, string $uid): void
+    {
+        $g = $this->api->call('GET', '/events/' . rawurlencode($id));
+        $lists = [];
+        foreach (['true', 'false'] as $deleted) {
+            $lists[$deleted] = $this->api->call('GET', '/events', ['iCalUID' => $uid, 'showDeleted' => $deleted, 'singleEvents' => 'false']);
+        }
+        $this->addRow("$n.get", "$what: get by id", $g, self::ok($g) ? ['status field' => self::field($g['response'], 'status'), 'etag' => self::field($g['response'], 'etag')] : []);
+        foreach ($lists as $deleted => $l) {
+            $this->addRow("$n.list-$deleted", "$what: list by iCalUID, showDeleted=$deleted", $l, self::ok($l) ? $this->lrListFields($l['response']) + $this->compareFields($g, $l, $id) : []);
+        }
+    }
+
+    private function lrListFields(array $r): array
+    {
+        return ['accessRole' => self::field($r, 'accessRole'), 'item count' => (string) count((array) ($r['items'] ?? []))];
+    }
+
+    private static function itemById(array $list, string $id): ?array
+    {
+        foreach ((array) ($list['items'] ?? []) as $e) {
+            if ((string) ($e['id'] ?? '') === $id) {
+                return $e;
+            }
+        }
+        return null;
+    }
+
+    /** Every field that differs or is missing on one side, between a GET's answer and the list item with the same id; both etags. */
+    private function compareFields(array $get, array $list, string $id): array
+    {
+        $item = is_array($list['response']) ? self::itemById($list['response'], $id) : null;
+        $res = is_array($get['response']) && self::ok($get) ? $get['response'] : null;
+        $out = ['etag (GET)' => $res !== null ? self::field($res, 'etag') : "(GET {$get['status']})", 'etag (list)' => $item !== null ? self::field($item, 'etag') : '(not listed)'];
+        if ($item === null || $res === null) {
+            $out['differs'] = $item === null ? 'the list holds no item with this id' : 'the GET returned no event';
+            return $out;
+        }
+        $diffs = [];
+        foreach (array_unique(array_merge(array_keys($res), array_keys($item))) as $k) {
+            if ($k === 'etag') {
+                continue;
+            }
+            if (!array_key_exists($k, $item)) {
+                $diffs[] = "$k: missing in the list";
+            } elseif (!array_key_exists($k, $res)) {
+                $diffs[] = "$k: missing in the GET";
+            } elseif (self::canon($res[$k]) !== self::canon($item[$k])) {
+                $diffs[] = "$k: GET " . mb_strimwidth(self::canon($res[$k]), 0, 80, '...') . ' / list ' . mb_strimwidth(self::canon($item[$k]), 0, 80, '...');
+            }
+        }
+        $out['differs'] = $diffs === [] ? 'none' : implode('; ', $diffs);
+        return $out;
+    }
+
+    private static function canon(mixed $v): string
+    {
+        $sort = static function (mixed $v) use (&$sort): mixed {
+            if (!is_array($v)) {
+                return $v;
+            }
+            if (!array_is_list($v)) {
+                ksort($v);
+            }
+            return array_map($sort, $v);
+        };
+        return (string) json_encode($sort($v), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    private function allDay(int $days): array
+    {
+        $d = ($this->today ?? new \DateTimeImmutable('now', new \DateTimeZone(self::ZONE)))->setTimezone(new \DateTimeZone(self::ZONE))->modify("+$days days");
+        return ['start' => ['date' => $d->format('Y-m-d')], 'end' => ['date' => $d->modify('+1 day')->format('Y-m-d')]];
+    }
+
     // ---- Requests -------------------------------------------------------------
+
+    /** A row for an exchange already sent, with fields computed by the caller. */
+    private function addRow(string $n, string $label, array $x, array $fields): void
+    {
+        $this->record['rows'][] = ['n' => $n, 'request' => $label, 'method' => $x['method'], 'path' => $x['path'], 'status' => $x['status'], 'reason' => self::reason($x), 'message' => self::message($x), 'fields' => $fields];
+        $this->record['exchanges'][] = ['n' => $n] + $x;
+    }
 
     /** One request, recorded as a row: status, reason, message, and the named fields of a 2xx answer. */
     private function send(string $n, string $label, string $method, string $path, array $query = [], ?array $body = null, array $headers = [], ?\Closure $fields = null): array
@@ -398,7 +680,7 @@ final class AccessProbe
         $v = $this->scrubber->scrub($v);
         array_walk_recursive($v, static function (&$s): void {
             if (is_string($s)) {
-                $s = (string) preg_replace('/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/', '{another address}', $s);
+                $s = (string) preg_replace('/[A-Za-z0-9._%+-]+@(?!google\.com\b|access-probe\.invalid\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}/', '{another address}', $s);
             }
         });
         return $v;

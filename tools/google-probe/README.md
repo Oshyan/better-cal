@@ -132,7 +132,17 @@ php tools/google-probe/access.php --calendar <id> --account <google_accounts id 
 
 Each run adds a table to `access-<hash>.md` (and `.json`, every exchange raw), where the hash stands for the calendar id; the state (event ids, their last etags, the last sync token and the stage it came from) is `access-state-<hash>.json` beside them and holds the raw token. The report opens with a table of every request's status by stage and ends with the questions to answer from it, left blank. It is scrubbed as the probe's is, and any other address in it is replaced too. Every write sends `sendUpdates=none`, and every event made carries the probe's marker.
 
-`php tools/google-probe/access-test.php` checks the plumbing against the stand-in behind a gate that plays each stage. What the gate answers in each state is invented, so the test says nothing about Google.
+### Stage listread
+
+Whether a list by iCalUID (`GET /events?iCalUID=<uid>&singleEvents=false`, with `showDeleted=true` and `false`) returns the same resource a GET by id does, which decides whether a write's first read can be that list and bring the calendar's `accessRole` with it. It runs on any calendar the account may write (owner or writer, the probe's own throwaway calendar included; not the main one), needs no owner's event, and leaves the other stages' state alone:
+
+```bash
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --stage listread
+```
+
+It makes its own marked events and compares, field by field, for: a timed single event and an all-day one, inserted; one made with `events.import` and an iCalUID of its own (the request `GoogleWriter::import` sends); a second import with the same iCalUID and another start (what Google answers, and if it makes a second event, what the list returns and in what order); a single event deleted; a single event renamed (whether the list's etag is the PATCH answer's, and whether If-Match on the list's etag is accepted); a weekly series of three with one day renamed, read by its iCalUID against a GET of the master and of the day; and an id and an iCalUID that never existed. Each list row gives the list's `accessRole`, its item count, both etags and every field that differs or is missing on either side. Everything it made is deleted at the end, also after an error; what a run that died left is listed in the state file and deleted first by the next run. 41 requests on Google when the second import makes an event.
+
+`php tools/google-probe/access-test.php` checks the plumbing against the stand-in behind a gate that plays each stage. What the gate answers in each state is invented, so the test says nothing about Google. The stand-in has no `events.import`, so listread's import cases are skipped there (31 requests).
 
 ## Files
 

@@ -79,7 +79,8 @@ final class GoogleStand
         $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
         $fake = new FakeGoogle(self::CALENDAR);
         $fake->token = 'sample-access';
-        $fake->zone = 'UTC';
+        // The calendar's own zone; GOOGLE_STAND_ZONE sets another for recording traces (tools/google-probe/record.php --zone).
+        $fake->zone = getenv('GOOGLE_STAND_ZONE') ?: 'UTC';
         $fake->expand = static fn(array $master): array => self::expand($master);
         $auth = new GoogleAuth($db, $cfg, static fn(string $url, array $fields, ?float $deadline): array
             => ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])]);

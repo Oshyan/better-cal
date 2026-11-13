@@ -232,6 +232,24 @@ final class TraceRecorder
     }
 
     /**
+     * The writes to an event (POST, PATCH, PUT, DELETE on /events...) that don't carry sendUpdates=none, which would
+     * let Google mail the event's guests: each as "request n: METHOD path". Empty when every write keeps quiet.
+     *
+     * @return list<string>
+     */
+    public static function mailing(array $trace): array
+    {
+        $out = [];
+        foreach ($trace['steps'] ?? [] as $s) {
+            if (($s['kind'] ?? '') === 'request' && in_array($s['method'], ['POST', 'PATCH', 'PUT', 'DELETE'], true)
+                && str_starts_with((string) $s['path'], '/events') && ($s['query']['sendUpdates'] ?? null) !== 'none') {
+                $out[] = "request {$s['n']}: {$s['method']} {$s['path']}";
+            }
+        }
+        return $out;
+    }
+
+    /**
      * What kinds of write a trace holds, for the coverage table (record.php, replay.php): each kind with the number
      * of times it comes. Read from the trace alone: the state each write met is the last answer that showed the event.
      *

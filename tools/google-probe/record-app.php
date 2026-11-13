@@ -6,7 +6,7 @@
 // one scenario per process, with GOOGLE_TRACE naming the trace file. Only
 // the stand-in is contacted. See README.md, "Replaying the App's Requests".
 //
-//   BC_TEST_DB=127.0.0.1:33308 GOOGLE_TRACE=<file.json> php tools/google-probe/record-app.php --scenario <name>
+//   BC_TEST_DB=127.0.0.1:33308 GOOGLE_TRACE=<file.json> php tools/google-probe/record-app.php --scenario <name> [--zone America/Los_Angeles]
 //
 // Scenarios: single-timed, single-all-day, series-deleted-whole.
 declare(strict_types=1);
@@ -32,11 +32,15 @@ use BetterCal\Infra\Db;
 use BetterCal\Infra\Migrator;
 
 const SCENARIOS = ['single-timed', 'single-all-day', 'series-deleted-whole'];
-$opts = getopt('', ['scenario:']);
+$opts = getopt('', ['scenario:', 'zone:']);
 $scenario = (string) ($opts['scenario'] ?? '');
 if (!in_array($scenario, SCENARIOS, true)) {
-    fwrite(STDERR, 'usage: php tools/google-probe/record-app.php --scenario ' . implode('|', SCENARIOS) . "\n");
+    fwrite(STDERR, 'usage: php tools/google-probe/record-app.php --scenario ' . implode('|', SCENARIOS) . " [--zone <calendar zone>]\n");
     exit(2);
+}
+// The stand-in calendar's zone, as record.php --zone sets it through the environment; --zone here wins.
+if (isset($opts['zone'])) {
+    putenv('GOOGLE_STAND_ZONE=' . (string) $opts['zone']);
 }
 
 [$host, $port] = array_pad(explode(':', getenv('BC_TEST_DB') ?: '127.0.0.1:3306', 2), 2, '3306');

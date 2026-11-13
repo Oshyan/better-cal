@@ -41,10 +41,16 @@ const WANTED = [
     'insert a repeating event', 'insert a single event', 'change a single event', 'delete a single event', 'poll with a sync token',
 ];
 
-$opts = getopt('', ['out:', 'fixed:', 'seed:', 'generated:', 'max-requests:', 'help']);
+$opts = getopt('', ['out:', 'fixed:', 'seed:', 'generated:', 'max-requests:', 'zone:', 'help']);
 if (isset($opts['help']) || !isset($opts['out'])) {
-    fwrite(STDERR, "usage: BC_TEST_DB=host:port php tools/google-probe/record.php --out <dir> [--fixed google|all|none] [--seed 7] [--generated 15] [--max-requests 1500]\n");
+    fwrite(STDERR, "usage: BC_TEST_DB=host:port php tools/google-probe/record.php --out <dir> [--fixed google|all|none] [--seed 7] [--generated 15] [--max-requests 1500] [--zone UTC]\n");
     exit(isset($opts['help']) ? 0 : 2);
+}
+// The stand-in calendar's own zone (GoogleStand reads GOOGLE_STAND_ZONE): the zone of the calendar the set will replay on.
+$zone = (string) ($opts['zone'] ?? 'UTC');
+if (!in_array($zone, \DateTimeZone::listIdentifiers(), true) && $zone !== 'UTC') {
+    fwrite(STDERR, "--zone takes a zone name such as America/Los_Angeles, not '$zone'.\n");
+    exit(2);
 }
 $out = rtrim((string) $opts['out'], '/');
 $fixedKind = (string) ($opts['fixed'] ?? 'google');
@@ -96,10 +102,12 @@ $total = 0;
 $kept = [];
 $left = [];
 $coverage = [];
+$writes = 0;
+$mailing = [];
 foreach ($scenarios as $name => $cmd) {
     $file = "$out/$name.json";
     @unlink($file);
-    $env = ['GOOGLE_TRACE' => $file] + getenv();
+    $env = ['GOOGLE_TRACE' => $file, 'GOOGLE_STAND_ZONE' => $zone] + getenv();
     $started = microtime(true);
     $proc = proc_open($cmd, [1 => ['file', "$out/.harness/$name.log", 'w'], 2 => ['file', "$out/.harness/$name.log", 'a']], $pipes, $root, $env);
     $code = is_resource($proc) ? proc_close($proc) : -1;
@@ -111,6 +119,11 @@ foreach ($scenarios as $name => $cmd) {
         $left[] = "$name: no request reached the stand-in (harness exit $code; a case not applicable in the Google mode, or the harness failed: $out/.harness/$name.log)";
         fwrite(STDERR, "$name: no requests ({$seconds}s)\n");
         continue;
+    }
+    // Every write the app sent to an event keeps quiet (sendUpdates=none), whether or not the trace is kept for replay.
+    $writes += count(array_filter($t['steps'], static fn(array $s): bool => $s['kind'] === 'request' && $s['method'] !== 'GET'));
+    foreach (TraceRecorder::mailing($t) as $m) {
+        $mailing[] = "$name, $m";
     }
     foreach (glob("$out/$name-[0-9]*.json") ?: [] as $extra) {
         // A second stand-in in one process (another account): set aside, as the set is one stand-in per scenario.
@@ -155,5 +168,11 @@ if ($left !== []) {
         echo "  $l\n";
     }
 }
-file_put_contents("$out/.harness/summary.json", json_encode(['scenarios' => $kept, 'requests' => $total, 'coverage' => $coverage, 'missing' => $missing, 'left' => $left], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
-exit(0);
+echo "\nWrites the app sent: $writes, in every scenario recorded (kept or not); without sendUpdates=none: " . count($mailing) . "\n";
+foreach ($mailing as $m) {
+    echo "  $m\n";
+}
+file_put_contents("$out/.harness/summary.json", json_encode(['zone' => $zone, 'scenarios' => $kept, 'requests' => $total, 'coverage' => $coverage, 'missing' => $missing, 'left' => $left,
+    'writes' => $writes, 'mailing' => $mailing], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+// A write that could mail guests fails the recording: the app promises never to (sendUpdates=none on every write).
+exit($mailing === [] ? 0 : 1);

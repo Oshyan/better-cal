@@ -307,6 +307,13 @@ check('env: the writer and sync shapes record path, query, If-Match and body, ne
     array_column($t['steps'], 'path') === ['/events', '/events/fake000001', '/events'] && ($t['steps'][2]['query']['showDeleted'] ?? null) === 'true'
     && count($t['steps'][1]['headers']) === 1 && str_starts_with($t['steps'][1]['headers'][0], 'If-Match: ') && $t['steps'][1]['body'] === ['summary' => 'Sample renamed']
     && !str_contains((string) file_get_contents("$tmp/env/app.json"), 'fake-token') && $t['expand'] === 'edit-harness', json_encode($t['steps']));
+check('mail: every write in a trace that keeps quiet passes', TraceRecorder::mailing($t) === [] && TraceRecorder::mailing($hand) === []);
+$loud = $t;
+$loud['steps'][1]['query'] = []; // the PATCH, as if sent without sendUpdates
+$loud['steps'][] = ['kind' => 'request', 'n' => 4, 'method' => 'DELETE', 'path' => '/events/fake000001', 'query' => ['sendUpdates' => 'all'], 'headers' => [], 'body' => null, 'status' => 204, 'response' => ''];
+$loud['steps'][] = ['kind' => 'request', 'n' => 5, 'method' => 'PUT', 'path' => '/events/fake000001', 'query' => [], 'headers' => [], 'body' => [], 'status' => 200, 'response' => []];
+check('mail: a write to an event without sendUpdates=none is named, each one, a GET never',
+    TraceRecorder::mailing($loud) === ['request 2: PATCH /events/fake000001', 'request 4: DELETE /events/fake000001', 'request 5: PUT /events/fake000001'], json_encode(TraceRecorder::mailing($loud)));
 [$r] = replayOn($t, null, null, $root);
 check('env: and it replays', $r['status'] === 'same', json_encode([$r['at'], $r['divergence']['difference'] ?? null]));
 

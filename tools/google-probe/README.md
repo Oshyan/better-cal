@@ -56,10 +56,10 @@ What it proves: for each recorded request, that Google answers as the stand-in d
 A trace is one scenario's requests and answers, in order, as JSON (`lib/Trace.php` has the format). `GOOGLE_TRACE=<file.json>` makes the edit harness's stand-in (`tools/edit-harness/GoogleStand.php`) record through a wrapper around its transports; nothing in the stand-in changes. The trace set comes from one process per scenario, so each trace holds its scenario alone: the three scenarios in `record-app.php` (a timed single event and an all-day one created, changed and deleted, a series deleted whole), the harness's fixed cases whose names start with `google-`, every sequence, and drawn cases 1 to 15 of seed 7, a poll after each write. On the test database:
 
 ```bash
-BC_TEST_DB=127.0.0.1:33308 php tools/google-probe/record.php --out workfolder/google-traces
+BC_TEST_DB=127.0.0.1:33308 php tools/google-probe/record.php --out workfolder/google-traces --zone America/Los_Angeles
 ```
 
-It prints how many scenarios and requests it kept (49 and 1,147 when it was written), what kinds of write they cover, and any kind it should cover and doesn't. A change the harness makes to the stand-in outside a request (its adopt of a series it just made, a rule written straight into the row) is recorded with the PATCH that repeats it, which the replay sends first; a change no request can repeat moves the trace to `unreplayable/`.
+`--zone` is the stand-in calendar's own zone (UTC by default), which should be the zone of the calendar the set will replay on; it changes nothing the app sends, only the top-level `timeZone` of list answers, since every timed event the app sends names its own zone. It prints how many scenarios and requests it kept (49 and 1,147 when it was written), what kinds of write they cover, and any kind it should cover and doesn't. It also checks that every write the app sent to an event (POST, PATCH, PUT, DELETE) carries `sendUpdates=none`, so Google mails no guest, over every scenario it ran, kept or not, and exits 1 naming each one that doesn't. A change the harness makes to the stand-in outside a request (its adopt of a series it just made, a rule written straight into the row) is recorded with the PATCH that repeats it, which the replay sends first; a change no request can repeat moves the trace to `unreplayable/`.
 
 ### Replaying on the Stand-In
 
@@ -71,7 +71,7 @@ Each trace goes to a fresh stand-in set as it was recorded (its zone, list setti
 
 ### Replaying on Google
 
-The maintainer runs this, on the same kind of throwaway calendar the probe uses, set to the zone the traces were recorded in (UTC for the harness's; a trace from another zone is skipped and listed):
+The maintainer runs this, on the same kind of throwaway calendar the probe uses, in the zone the traces were recorded in (record with `--zone` set to the calendar's; a trace from another zone is skipped and listed):
 
 ```bash
 php tools/google-probe/replay.php --trace workfolder/google-traces --calendar <googleCalendarId> --account <google_accounts id or email>

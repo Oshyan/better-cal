@@ -111,7 +111,8 @@ final class Probe
         $cal = $this->api->call('GET', '');
         $this->calendarZone = (string) (is_array($cal['response']) ? ($cal['response']['timeZone'] ?? 'UTC') : 'UTC');
         $this->report->run['calendarZone'] = $this->calendarZone;
-        $others = array_filter($this->listAll(['showDeleted' => 'false', 'singleEvents' => 'false'])['items'], fn(array $e) => !self::isMarked($e));
+        // A cancelled day is listed even without showDeleted, in a short form with no marker (replay of 2026-11-13, A): nothing live, never another's event.
+        $others = array_filter($this->listAll(['showDeleted' => 'false', 'singleEvents' => 'false'])['items'], fn(array $e) => !self::isMarked($e) && ($e['status'] ?? '') !== 'cancelled');
         if ($others !== [] && empty($this->opts['allowOtherEvents'])) {
             throw new \RuntimeException('that calendar has ' . count($others) . ' events the probe did not make; use an empty calendar, or pass --allow-other-events (they are never touched)');
         }

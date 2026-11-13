@@ -82,6 +82,8 @@ final class FakeGoogle
     private array $lagLeft = [];
     /** @var array<string,true> records dropped by a zone change under zoneAlone 'dropped': their id names an occurrence again, which lists as the series' own */
     private array $zoneDropped = [];
+    /** @var array<string,array{start:array,end:array}> instance ids that were once days of a series, by what they were (the cancelled stub, find) */
+    private array $wereDays = [];
 
     public function __construct(public readonly string $calendarId)
     {
@@ -295,6 +297,7 @@ final class FakeGoogle
             'organizer' => ['email' => $this->calendarId, 'displayName' => 'Probe calendar', 'self' => true],
             'creator' => ['email' => $this->owner],
         ];
+        self::allDayOnce($this->events[$id]);
         $this->lagLeft[$id] = $this->lagGets;
         $this->bump($id);
         return self::ok($this->events[$id]);
@@ -345,6 +348,7 @@ final class FakeGoogle
         }
         $e = array_replace($e, $body);
         $e['updated'] = gmdate('Y-m-d\TH:i:s.000\Z');
+        self::allDayOnce($e);
         $this->events[$id] = $e;
         unset($this->zoneDropped[$id]);
         $master !== null ? $this->bumpDay($seriesId, $id, $hadRecord) : $this->bump($seriesId);
@@ -383,6 +387,10 @@ final class FakeGoogle
             }
         }
         $id = (string) $old['id'];
+        foreach ($this->generate($old) as $inst) {
+            $this->wereDays[(string) $inst['id']] = ['start' => $inst['start'], 'end' => $inst['end']];
+        }
+        self::allDayOnce($new);
         $oldLen = self::lengthOf($old);
         $newLen = self::lengthOf($new);
         $startChanged = json_encode($old['start']) !== json_encode($new['start']);
@@ -566,6 +574,12 @@ final class FakeGoogle
                 }
             }
             if (!$deleted && ($e['status'] ?? '') === 'cancelled') {
+                // A cancelled day of a series is listed all the same, in a short form with the series' etag (replay of
+                // 2026-11-13, section A; 26 scenarios); a cancelled master or a dropped record is not.
+                if (!empty($e['recurringEventId']) && isset($e['originalStartTime'], $this->events[$e['recurringEventId']])) {
+                    $items[] = ['kind' => 'calendar#event', 'etag' => $this->events[$e['recurringEventId']]['etag'], 'id' => $e['id'], 'status' => 'cancelled',
+                        'recurringEventId' => $e['recurringEventId'], 'originalStartTime' => $e['originalStartTime']];
+                }
                 continue;
             }
             $items[] = $e;
@@ -619,7 +633,33 @@ final class FakeGoogle
         }
         // A dropped record under an id that names no day of the series now: a GET reads it as it is, cancelled with
         // no originalStartTime (3.36, 3.37, 3.39, 2026-11-13). A write to it was never measured: no such day.
-        return !$forWrite && isset($this->events[$id]) ? $this->events[$id] : null;
+        if ($forWrite) {
+            return null;
+        }
+        if (isset($this->events[$id])) {
+            return $this->events[$id];
+        }
+        // An id that was once a day of the series and names none now (the other form's, after a switch back): a GET
+        // answers a cancelled stub, as Google does (3.39, 2026-11-13, steps 21, 27 and 33), its dates the day's then.
+        if (isset($this->wereDays[$id])) {
+            $m = $this->events[$masterId];
+            return ['kind' => 'calendar#event', 'etag' => $m['etag'], 'id' => $id, 'status' => 'cancelled', 'created' => '0000-12-31T00:00:00.000Z', 'updated' => $m['updated'] ?? gmdate('Y-m-d\TH:i:s.000\Z'),
+                'summary' => 'CANCELLED', 'creator' => ['email' => $this->calendarId, 'self' => true], 'organizer' => ['email' => $this->calendarId, 'self' => true],
+                'start' => $this->wereDays[$id]['start'], 'end' => $this->wereDays[$id]['end'], 'iCalUID' => $m['iCalUID'] ?? '', 'sequence' => 1, 'reminders' => ['useDefault' => false]];
+        }
+        return null;
+    }
+
+    /**
+     * Google's own reminders on a resource once it has been all-day: `useDefault` false, kept when it is timed again
+     * (replay of 2026-11-13, section F: 170 resources in probe cases 3.23 to 3.26, 3.29, 3.30, 3.36 to 3.40). A resource
+     * never all-day holds none, and its answers say `useDefault` true (shaped).
+     */
+    private static function allDayOnce(array &$e): void
+    {
+        if (isset($e['start']['date']) && !isset($e['reminders'])) {
+            $e['reminders'] = ['useDefault' => false];
+        }
     }
 
     /** @return list<array> the occurrences with exception records laid over them */

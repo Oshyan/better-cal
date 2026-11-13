@@ -252,6 +252,90 @@ check('stand-in, 3.17: a zone change moving no instant keeps the moved record, i
     json_encode($moved));
 check('stand-in, 3.17: the cancelled record is kept too', ($fake->events['standin01_20270405T170000Z']['status'] ?? null) === 'cancelled' && isset($fake->events['standin01_20270405T170000Z']['originalStartTime']));
 
+// ---- The stand-in against the probe of 2026-11-13 and the replay of the same day ----
+// A weekly 10:00 Los Angeles series of four from 2027-03-01 (8 March is 18:00 UTC, 15 March 17:00 UTC), occurrence 2
+// renamed and occurrence 3 deleted, as each switch case of the probe starts.
+$call = static function (FakeGoogle $fake, string $method, string $id, ?array $body = null, array $query = []): array {
+    $url = Api::BASE . '/calendars/' . rawurlencode(CAL) . '/events' . ($id !== '' ? '/' . rawurlencode($id) : '') . ($query !== [] ? '?' . http_build_query($query) : '');
+    $r = ($fake->transport())($method, $url, ['Authorization: Bearer x'] + (isset($body['_ifMatch']) ? [1 => 'If-Match: ' . $body['_ifMatch']] : []), $body === null ? null : array_diff_key($body, ['_ifMatch' => 1]));
+    return [(int) $r['status'], json_decode((string) $r['body'], true)];
+};
+$four = static function () use ($call): FakeGoogle {
+    $fake = new FakeGoogle(CAL);
+    $fake->token = null;
+    $la = static fn(string $l): array => ['dateTime' => (new DateTimeImmutable($l, new DateTimeZone('America/Los_Angeles')))->format('Y-m-d\TH:i:sP'), 'timeZone' => 'America/Los_Angeles'];
+    $fake->seed(['id' => 'four0001', 'summary' => 'Sample four', 'start' => $la('2027-03-01 10:00'), 'end' => $la('2027-03-01 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4']]);
+    $call($fake, 'PATCH', 'four0001_20270308T180000Z', ['summary' => 'Sample four (own)']);
+    $call($fake, 'DELETE', 'four0001_20270315T170000Z');
+    return $fake;
+};
+$toAllDay = ['start' => ['date' => '2027-03-01', 'dateTime' => null, 'timeZone' => null], 'end' => ['date' => '2027-03-02', 'dateTime' => null, 'timeZone' => null], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4']];
+$toTimed = ['start' => ['dateTime' => '2027-03-01T10:00:00-08:00', 'timeZone' => 'America/Los_Angeles', 'date' => null], 'end' => ['dateTime' => '2027-03-01T11:00:00-08:00', 'timeZone' => 'America/Los_Angeles', 'date' => null], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4']];
+
+// 3.36, 3.39: a record a master change dropped reads as it is (200, cancelled, no originalStartTime) while its id names no day.
+$fake = $four();
+$call($fake, 'PATCH', 'four0001', $toAllDay);
+[$st, $g] = $call($fake, 'GET', 'four0001_20270308T180000Z');
+check('stand-in, 3.36: a dropped record is readable, cancelled, with no originalStartTime', $st === 200 && ($g['status'] ?? null) === 'cancelled' && !isset($g['originalStartTime']), "$st " . json_encode($g));
+// 3.37: a first write to an ordinary day answers an etag the master does not take.
+[, $w] = $call($fake, 'PATCH', 'four0001_20270308', ['summary' => 'Sample four (own)']);
+check('stand-in, 3.37: a first write to an ordinary day answers an etag the master does not take', isset($w['etag']) && $w['etag'] !== $fake->events['four0001']['etag']);
+// 3.36, 3.40, 10.2: a write to a day that holds a record moves its etag alone.
+$masterEtag = $fake->events['four0001']['etag'];
+$call($fake, 'PATCH', 'four0001_20270308', ['summary' => 'Sample four (own, again)']);
+check('stand-in, 3.36: a write to a day holding a record leaves the master\'s etag as it was', $fake->events['four0001']['etag'] === $masterEtag);
+// 3.36, 3.40, 10.2: back to timed, the dropped records come back live at the series' values, the deleted day included.
+$call($fake, 'PATCH', 'four0001', $toTimed);
+[$st, $own] = $call($fake, 'GET', 'four0001_20270308T180000Z');
+[, $gone] = $call($fake, 'GET', 'four0001_20270315T170000Z');
+[, $l] = $call($fake, 'GET', '', null, ['iCalUID' => 'four0001@google.com', 'singleEvents' => 'false', 'showDeleted' => 'true']);
+$listed = [];
+foreach ($l['items'] ?? [] as $e) {
+    $listed[(string) $e['id']] = [(string) ($e['status'] ?? ''), isset($e['originalStartTime']), (string) ($e['summary'] ?? '')];
+}
+check('stand-in, 3.36: back to timed, the renamed day\'s record is live again at the series\' title, the deleted day live too, in a GET and in the list',
+    $st === 200 && ($own['status'] ?? null) === 'confirmed' && isset($own['originalStartTime']) && ($own['summary'] ?? null) === 'Sample four' && ($gone['status'] ?? null) === 'confirmed'
+    && ($listed['four0001_20270308T180000Z'] ?? null) === ['confirmed', true, 'Sample four'] && ($listed['four0001_20270315T170000Z'][0] ?? null) === 'confirmed',
+    json_encode($listed));
+// 3.39: the day's old all-day id answers a cancelled stub.
+[$st, $stub] = $call($fake, 'GET', 'four0001_20270322');
+check('stand-in, 3.39: an all-day id that was a day once answers a cancelled stub', $st === 200 && ($stub['status'] ?? null) === 'cancelled' && ($stub['summary'] ?? null) === 'CANCELLED', "$st " . json_encode($stub));
+// Replay F: reminders stay false once the series has been all-day, after the switch back too.
+[, $m] = $call($fake, 'GET', 'four0001');
+check('stand-in, replay F: reminders useDefault false once the series has been all-day, kept after the switch back', ($m['reminders']['useDefault'] ?? null) === false, json_encode($m['reminders'] ?? null));
+
+// 3.43 (D1): a weekday added keeps the cancelled record while it is still a day of the rule.
+$fake = $four();
+$call($fake, 'PATCH', 'four0001', ['recurrence' => ['RRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=20']]);
+check('stand-in, 3.43: a weekday added keeps the cancelled record, still a day of the rule', ($fake->records('four0001')['20270315T170000Z']['status'] ?? null) === 'cancelled');
+// Replay A: a cancelled day is listed without showDeleted, short.
+[, $l] = $call($fake, 'GET', '', null, ['iCalUID' => 'four0001@google.com', 'singleEvents' => 'false', 'showDeleted' => 'false']);
+$short = array_values(array_filter($l['items'] ?? [], static fn(array $e): bool => ($e['status'] ?? '') === 'cancelled'));
+check('stand-in, replay A: the cancelled day is listed without showDeleted, with no summary', count($short) === 1 && !isset($short[0]['summary']) && isset($short[0]['originalStartTime']), json_encode($short));
+
+// 10.4, 10.5: a master deleted takes its records with it, and made live again brings them all back.
+$fake = $four();
+$call($fake, 'DELETE', 'four0001');
+[, $own] = $call($fake, 'GET', 'four0001_20270308T180000Z');
+[, $plain] = $call($fake, 'GET', 'four0001_20270322T170000Z');
+check('stand-in, 10.5: under a deleted master an edited and an ordinary day read cancelled', ($own['status'] ?? null) === 'cancelled' && ($plain['status'] ?? null) === 'cancelled', json_encode([$own['status'] ?? null, $plain['status'] ?? null]));
+$call($fake, 'PATCH', 'four0001', ['status' => 'confirmed', 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4']]);
+check('stand-in, 10.4: the master live again brings every record back, the deleted day included, the renamed day keeping its title',
+    ($fake->records('four0001')['20270308T180000Z']['summary'] ?? null) === 'Sample four (own)' && ($fake->records('four0001')['20270315T170000Z']['status'] ?? null) === 'confirmed');
+
+// 3.38: one day of an all-day series takes a clock time once its date is sent as null.
+$fake = new FakeGoogle(CAL);
+$fake->token = null;
+$fake->seed(['id' => 'ad0001', 'summary' => 'Sample all-day', 'start' => ['date' => '2027-03-01'], 'end' => ['date' => '2027-03-02'], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4']]);
+[$st] = $call($fake, 'PATCH', 'ad0001_20270322', ['start' => ['dateTime' => '2027-03-22T15:00:00-07:00', 'timeZone' => 'America/Los_Angeles', 'date' => null], 'end' => ['dateTime' => '2027-03-22T16:00:00-07:00', 'timeZone' => 'America/Los_Angeles', 'date' => null]]);
+check('stand-in, 3.38: a clock time on one day of an all-day series, its date nulled, is taken', $st === 200, (string) $st);
+// 10.6: a colour on one day: a record with the colour and a label of Google's own, both kept through a master rename.
+[, $c] = $call($fake, 'PATCH', 'ad0001_20270308', ['colorId' => '5']);
+$call($fake, 'PATCH', 'ad0001', ['summary' => 'Sample all-day, renamed', 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4']]);
+$rec = $fake->records('ad0001')['20270308'] ?? [];
+check('stand-in, 10.6: a colour on one day makes a record with a label Google adds, both kept through a master rename',
+    isset($c['eventLabelId']) && ($rec['colorId'] ?? null) === '5' && isset($rec['eventLabelId']) && ($rec['summary'] ?? null) === 'Sample all-day, renamed', json_encode($rec));
+
 // ---- Report scrubbing on its own ---------------------------------------------
 $r = new Report($tmp . '/scrub');
 $r->secret('someone@example.net', '{account}');

@@ -428,6 +428,24 @@ $fake = $four();
 check('stand-in, 3.66: a day\'s PATCH with no If-Match is taken on a live record, a cancelled record made live, a record cancelled and an ordinary day cancelled',
     [$a, $b, $c2, $d] === [200, 200, 200, 200] && ($fake->records('four0001')['20270315T170000Z']['status'] ?? null) === 'confirmed', json_encode([$a, $b, $c2, $d]));
 
+// ---- The stand-in against the replay of round 5 (2026-11-14) ------------------
+// Cause 5 (app-series-deleted-whole, request 13): an ordinary day deleted on a series holding a renamed day; the next
+// delta lists the master, the deleted day and the renamed day, unchanged.
+$fake = new FakeGoogle(CAL);
+$fake->token = null;
+$fake->seed(['id' => 'delta001', 'summary' => 'Sample weekly', 'start' => $utc('2027-05-03 18:00'), 'end' => $utc('2027-05-03 19:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']]);
+$call($fake, 'PATCH', 'delta001_20270510T180000Z', ['summary' => 'Sample weekly, one day']);
+[, $l] = $call($fake, 'GET', '', null, ['showDeleted' => 'true', 'singleEvents' => 'false']);
+$call($fake, 'DELETE', 'delta001_20270517T180000Z');
+[, $d] = $call($fake, 'GET', '', null, ['showDeleted' => 'true', 'singleEvents' => 'false', 'syncToken' => (string) $l['nextSyncToken']]);
+$listed = [];
+foreach ($d['items'] ?? [] as $e) {
+    $listed[(string) $e['id']] = (string) ($e['summary'] ?? '') . '/' . (string) ($e['status'] ?? '');
+}
+ksort($listed);
+check('stand-in, round 5 cause 5: after an ordinary day is deleted the delta lists the master, the deleted day and the renamed day unchanged',
+    $listed === ['delta001' => 'Sample weekly/confirmed', 'delta001_20270510T180000Z' => 'Sample weekly, one day/confirmed', 'delta001_20270517T180000Z' => 'Sample weekly/cancelled'], json_encode($listed));
+
 // ---- Report scrubbing on its own ---------------------------------------------
 $r = new Report($tmp . '/scrub');
 $r->secret('someone@example.net', '{account}');

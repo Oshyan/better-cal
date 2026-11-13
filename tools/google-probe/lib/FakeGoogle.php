@@ -954,7 +954,11 @@ final class FakeGoogle
      * the others' staying as they were (3.36, 3.37 and 3.40 second changes, 10.2); a first write to an ordinary day
      * answered once with an etag of its own while the master and the other records moved to another (3.37 first
      * change), which is the reading kept here, the strictest seen. Dropped records keep theirs. The next delta lists
-     * the day, and the master when it moved (5.3).
+     * the day, and the master when it moved (5.3), and every other record whose etag moved with it, unchanged (replay
+     * round 5, `app-series-deleted-whole` request 13: an ordinary day deleted on a series holding one renamed day, and
+     * Google's next delta listed the master, the deleted day and the renamed day as it was, all three on one etag).
+     * That is the only shape the live runs show: a first write to an ordinary day while another record is held. A
+     * write to a day that already holds a record lists that day alone; no live delta has said otherwise.
      */
     private function bumpDay(string $seriesId, string $id, bool $hadRecord): void
     {
@@ -968,9 +972,9 @@ final class FakeGoogle
         foreach ($this->events as $rid => $e) {
             if ($rid !== $id && ($rid === $seriesId || (($e['recurringEventId'] ?? '') === $seriesId && isset($e['originalStartTime'])))) {
                 $this->events[$rid]['etag'] = $other;
+                $this->changed[$rid] = $seq;
             }
         }
-        $this->changed[$seriesId] = $seq;
     }
 
     /**

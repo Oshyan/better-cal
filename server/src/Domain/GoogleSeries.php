@@ -844,8 +844,12 @@ final class GoogleSeries
                 // $check: what the series holds at Google once the write
                 // lands (`expect`: the digest of its state, rule B, every
                 // field of Google's resources): how Put back tells a write
-                // whose answer was lost from a change made since.
-                $step = function (string $kind, string $id, ?string $key, \Closure $write, array $check = []) use (&$steps, $save, $i, $back): mixed {
+                // whose answer was lost from a change made since. Once the
+                // write is answered, $answered gives the expectation again
+                // with the resource it wrote as Google answered it (expect,
+                // below): the prediction stays only for a write whose answer
+                // never came.
+                $step = function (string $kind, string $id, ?string $key, \Closure $write, array $check = [], ?\Closure $answered = null) use (&$steps, $save, $i, $back): mixed {
                     $steps[] = ['series' => $i, 'kind' => $kind, 'id' => $id, 'key' => $key, 'etag' => null, 'state' => self::SENT, 'back' => $back, 'at' => Time::nowDb()] + $check;
                     $n = array_key_last($steps);
                     $save();
@@ -861,6 +865,9 @@ final class GoogleSeries
                     }
                     $steps[$n]['state'] = self::DONE;
                     $steps[$n]['etag'] = is_array($resource) && isset($resource['etag']) && is_string($resource['etag']) ? $resource['etag'] : null;
+                    if ($answered !== null && is_array($resource) && isset($steps[$n]['expect'])) {
+                        $steps[$n] = $answered($resource) + $steps[$n];
+                    }
                     $save();
                     return $resource;
                 };
@@ -906,14 +913,20 @@ final class GoogleSeries
                     $readbacks[(string) ($uid ?? $t['googleId'])] = $items;
                     continue;
                 }
-                // The If-Match of each write: the series' first from the read
-                // above, each later one from the app's own answer or read-back.
+                // The If-Match of the master's write: the series' read above (each day's is its own, dayCondition).
                 $chain = $first[$i] ?? null;
+                $pred = null; // what this series' steps are expected to leave, once a write of it is answered
                 $read = $reads[$i] ?? null;
                 if (!empty($t['insert'])) {
                     // Once it lands: the series as sent, no edited or skipped day, and no field of the resource but what it sent.
+                    $inserted0 = self::heldOf(['master' => $t['master'], 'exceptions' => [], 'skips' => []]);
+                    $inserted0['master']['extras'] = self::googleOwn([], $t['master']);
                     $resource = $step('insert', (string) $t['googleId'], null, fn() => $this->insertChosen($calendar, $send, (string) $t['googleId'], self::insertBody($t['master']), $beforeSend),
-                        ['expect' => self::digest(self::state(self::heldOf(['master' => $t['master'], 'exceptions' => [], 'skips' => []]), true)), 'extras' => true]);
+                        ['expect' => self::digest(self::state($inserted0, true)), 'extras' => true],
+                        function (array $answer) use ($inserted0, $t, &$pred): array {
+                            $pred = self::withAnswer($inserted0, (string) $t['googleId'], $answer);
+                            return ['expect' => self::digest(self::state($pred, true))];
+                        });
                     $targets[$i]['uid'] = $t['uid'] = (string) ($resource['iCalUID'] ?? $t['googleId']);
                     $targets[$i]['insert'] = false;
                     $inserted[(string) $t['googleId']] = $resource;
@@ -930,13 +943,19 @@ final class GoogleSeries
                         // change (its condition), every field, with the
                         // write's own effect on the days (afterMaster).
                         $check = [];
+                        $predicted = null;
                         if ($old !== null && !empty($t['uid']) && $read !== null) {
                             $pre = self::held($read, (string) $t['googleId']);
                             if ($pre['master'] !== null) {
-                                $check = ['expect' => self::digest(self::state(self::afterMaster($pre, $old, $t['master'], false, $carried[$i] ?? []), true)), 'extras' => true];
+                                $predicted = self::afterMaster($pre, $old, $t['master'], false, $carried[$i] ?? []);
+                                $check = ['expect' => self::digest(self::state($predicted, true)), 'extras' => true];
                             }
                         }
-                        $resource = $step('master', (string) $t['googleId'], null, fn() => $send('PATCH', '/' . rawurlencode((string) $t['googleId']), $body, $chain), $check);
+                        $resource = $step('master', (string) $t['googleId'], null, fn() => $send('PATCH', '/' . rawurlencode((string) $t['googleId']), $body, $chain), $check,
+                            $predicted === null ? null : function (array $answer) use ($predicted, $t, &$pred): array {
+                                $pred = self::withAnswer($predicted, (string) $t['googleId'], $answer);
+                                return ['expect' => self::digest(self::state($pred, true))];
+                            });
                         $chain = $resource['etag'] ?? $chain;
                         $read = null;
                     }
@@ -968,10 +987,16 @@ final class GoogleSeries
                 }
                 $chain = self::masterEtag($items, (string) $t['googleId']) ?? $chain;
                 $now = self::held($items, (string) $t['googleId']);
+                // What the steps are expected to leave (their `expect`) runs from what this run wrote and was answered
+                // ($pred, from the master's or the insert's answer over the prediction of the rest), never from the
+                // read-back: a change someone else made after our master write would read there as ours. With no
+                // write of the master in this run (Finish), from the read this run's steps start from.
+                $pred ??= $now;
                 $len = max(0, Time::fromDb($t['master']['end_utc'])->getTimestamp() - Time::fromDb($t['master']['start_utc'])->getTimestamp());
                 $daySteps = 0;
                 foreach (self::stepsFor($t, $items) as [$kind, $id, $body, $key]) {
-                    $after = self::heldAfter($now, $kind, $key, $kind === 'exception' ? $t['exceptions'][$key] : ($kind === 'plain' ? self::plainAt($t['master'], $key, $len) : null));
+                    $row = $kind === 'exception' ? $t['exceptions'][$key] : ($kind === 'plain' ? self::plainAt($t['master'], $key, $len) : null);
+                    $after = self::heldAfter($now, $kind, $key, $row);
                     // Each day's write is conditional on that day's own etag, read just before it (dayCondition): the etag one write answers with is not the one the next day holds (probe 2026-11-13, 3.36, 3.37, 3.40; issue 256).
                     $ifMatch = $this->dayCondition($calendar, $send, $t, $now, $id, $key, $beforeSend);
                     if ($ifMatch === null) {
@@ -979,7 +1004,11 @@ final class GoogleSeries
                     }
                     $daySteps++;
                     try {
-                        $resource = $step($kind, $id, $key, fn() => $send('PATCH', '/' . rawurlencode($id), $body, $ifMatch), ['expect' => self::digest(self::state($after, true)), 'extras' => true]);
+                        $resource = $step($kind, $id, $key, fn() => $send('PATCH', '/' . rawurlencode($id), $body, $ifMatch), ['expect' => self::digest(self::state(self::heldAfter($pred, $kind, $key, $row), true)), 'extras' => true],
+                            function (array $answer) use ($t, &$pred): array {
+                                $pred = self::withAnswer($pred, (string) $t['googleId'], $answer);
+                                return ['expect' => self::digest(self::state($pred, true))];
+                            });
                     } catch (HttpError $e) {
                         // Google lists no such instance (404): a day past the
                         // 730 occurrences an unbounded series expands to
@@ -1111,11 +1140,19 @@ final class GoogleSeries
     private function dayCondition(array $calendar, \Closure $send, array $t, array $now, string $id, string $key, ?\Closure $beforeSend): ?string
     {
         $googleId = (string) $t['googleId'];
-        $fresh = self::held($this->readBack($calendar, $send, !empty($t['uid']) ? (string) $t['uid'] : null, $googleId, null, $beforeSend), $googleId);
+        $items = $this->readBack($calendar, $send, !empty($t['uid']) ? (string) $t['uid'] : null, $googleId, null, $beforeSend);
+        $fresh = self::held($items, $googleId);
         if ($fresh['master'] === null || $now['master'] === null || self::dayIn($fresh, $key) !== self::dayIn($now, $key)) {
             throw new HttpError('google_conflict', GoogleWriter::CONFLICT_MESSAGE, 409);
         }
-        $etag = $fresh['etags'][$id] ?? null;
+        // The listed etag under that id, unless what is listed there is a dropped record (cancelled, no originalStartTime):
+        // no day of the series, so not what a write to the id addresses, and its etag is a GET's.
+        $etag = null;
+        foreach ($items as $item) {
+            if ((string) ($item['id'] ?? '') === $id && !((string) ($item['status'] ?? '') === 'cancelled' && !isset($item['originalStartTime']))) {
+                $etag = isset($item['etag']) && is_string($item['etag']) ? $item['etag'] : null;
+            }
+        }
         if ($etag === null) {
             try {
                 $etag = $send('GET', '/' . rawurlencode($id), null, null)['etag'] ?? null;
@@ -1571,6 +1608,59 @@ final class GoogleSeries
     }
 
     /**
+     * A resource's fields Google sets by itself on a write, by the rules the
+     * live runs proved, over $extras (extrasOf's form): `reminders` with
+     * `useDefault` false once the resource is all-day, kept when it is timed
+     * again (the replay of 2026-11-13, section F: 170 resources). Only the
+     * prediction of a write whose answer never came reads this; an answered
+     * write is expected as Google answered it (withAnswer). Pure.
+     */
+    private static function googleOwn(array $extras, array $m): array
+    {
+        if ((int) ($m['all_day'] ?? 0) === 1 && !isset($extras['reminders'])) {
+            $extras['reminders'] = self::canonical(['useDefault' => false]);
+        }
+        return $extras;
+    }
+
+    /**
+     * What Google holds once a write is answered: $h (the prediction of the
+     * series) with the resource the write wrote as Google answered it. A
+     * write's answer is that resource as Google holds it at the instant of
+     * the write, its own effects on it included (a field Google sets by
+     * itself, as `reminders` once a day or a series has been all-day), with
+     * no window in which another client's change could enter it. The master
+     * answered takes the master's place (its EXDATE lines the skips held
+     * so, a cancelled record's skip kept); a day answered takes its key's
+     * place (a record, or a skip when it answers cancelled). Pure.
+     */
+    private static function withAnswer(array $h, string $googleId, array $answer): array
+    {
+        $a = self::held([$answer], $googleId);
+        if ((string) ($answer['id'] ?? '') === $googleId) {
+            if ($a['master'] === null) {
+                return $h;
+            }
+            $h['master'] = $a['master'];
+            $h['skips'] = $h['cancelled'] + $a['skips'];
+            return $h;
+        }
+        $parsed = GoogleSync::toParsed($answer);
+        $key = is_array($parsed) && ($parsed['recurrence_instance_utc'] ?? null) !== null ? (string) $parsed['recurrence_instance_utc'] : null;
+        if ($key === null) {
+            return $h;
+        }
+        unset($h['records'][$key], $h['cancelled'][$key], $h['skips'][$key]);
+        if (isset($a['records'][$key])) {
+            $h['records'][$key] = $a['records'][$key];
+        } elseif (isset($a['cancelled'][$key])) {
+            $h['cancelled'][$key] = true;
+            $h['skips'][$key] = true;
+        }
+        return $h;
+    }
+
+    /**
      * What Google holds once an instance write lands: the record at $key as
      * $row, or the day skipped. A record keeps the extras it had, and one
      * made of an occurrence takes its series' (Google's instances inherit them).
@@ -1672,7 +1762,7 @@ final class GoogleSeries
             return array_merge($r, $set);
         };
         $out = $h;
-        $out['master'] = ['extras' => $h['master']['extras'] ?? []] + $new;
+        $out['master'] = ['extras' => self::googleOwn($h['master']['extras'] ?? [], $new)] + $new;
         foreach ($h['records'] as $key => $r) {
             $key = (string) $key;
             unset($out['records'][$key]);

@@ -852,6 +852,14 @@ final class FakeGoogle
                 $e[$k]['dateTime'] = (new \DateTimeImmutable($e[$k]['dateTime']))->setTimezone(new \DateTimeZone($this->zone))->format('Y-m-d\TH:i:sP');
             }
         }
+        // originalStartTime names the zone the resource's own start names, none when that start is a date (3,472 of
+        // 3,472 resources in the probes of 2026-11-10 and 2026-11-13; replay round 2).
+        if (isset($e['originalStartTime']['dateTime'], $e['start'])) {
+            unset($e['originalStartTime']['timeZone']);
+            if (isset($e['start']['timeZone'])) {
+                $e['originalStartTime']['timeZone'] = $e['start']['timeZone'];
+            }
+        }
         if (!isset($e['reminders']) && isset($e['start'])) {
             $e['reminders'] = ['useDefault' => !isset($e['start']['date'])];
         }

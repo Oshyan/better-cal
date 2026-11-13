@@ -268,7 +268,11 @@ final class Replay
         foreach ($step['headers'] ?? [] as $h) {
             [$name, $value] = array_map('trim', explode(':', (string) $h, 2) + [1 => '']);
             if (in_array(strtolower($name), ['if-match', 'if-none-match'], true) && $value !== '*') {
-                $mapped = $this->etagsById[$rid][$value] ?? $this->etagsAny[$value] ?? null;
+                // The etag the stand-in gave this id; for a day with none of its own (no record), its series'
+                // (the app writes such a day on the master's etag); only then any resource that carried the value.
+                // The stand-in gives a series one etag, so a value alone can't say which of the target's it was.
+                $series = preg_match(self::INSTANCE, $rid, $sm) === 1 ? $sm[1] : null;
+                $mapped = $this->etagsById[$rid][$value] ?? ($series !== null ? $this->etagsById[$series][$value] ?? null : null) ?? $this->etagsAny[$value] ?? null;
                 if ($mapped === null) {
                     $this->notes[] = "request {$step['n']}: an etag the stand-in never gave in this scenario, sent as recorded";
                 }

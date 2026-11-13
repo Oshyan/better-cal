@@ -291,6 +291,23 @@ check('lag: reads asked again until they answer as recorded', $r['status'] === '
 }, null, '', 1);
 check('lag: with one try the lagging read diverges', $r['status'] === 'diverged' && ($r['divergence']['request']['method'] ?? '') === 'GET', json_encode([$r['status'], $r['at']]));
 
+// A target whose resources carry etags of their own (as Google's can, 2026-11-13): here every cancelled item lists another.
+// A write to a day with no record of its own goes on its series' etag, as the app sends it, never another day's.
+[$r] = replayOn($hand, null, static fn(\Closure $inner): \Closure => static function (string $method, string $url, array $headers, ?array $payload) use ($inner): array {
+    $answer = $inner($method, $url, $headers, $payload);
+    $body = json_decode((string) $answer['body'], true);
+    if (is_array($body) && isset($body['items'])) {
+        foreach ($body['items'] as $i => $item) {
+            if (($item['status'] ?? '') === 'cancelled') {
+                $body['items'][$i]['etag'] = '"999"';
+            }
+        }
+        $answer['body'] = json_encode($body);
+    }
+    return $answer;
+});
+check('etags: a day with no record of its own is written on its series\' etag, not a listed day\'s', $r['status'] === 'same', json_encode([$r['status'], $r['at'], $r['divergence']['difference'] ?? null, $r['divergence']['sent']['headers'] ?? null]));
+
 // ---- The recorder's other two shapes (GoogleWriter's and GoogleSync's, as GoogleStand hands them over) and GOOGLE_TRACE --
 putenv("GOOGLE_TRACE=$tmp/env/app.json");
 $fake = new FakeGoogle(CAL);
@@ -404,6 +421,15 @@ $stale = $api->call('PATCH', '/events/' . $timed['id'], [], ['summary' => 'x'], 
 check('shape: a PATCH\'s 412 in Google\'s words', $stale['status'] === 412 && ($stale['response']['error']['message'] ?? '') === 'Precondition check failed.' && ($stale['response']['error']['errors'][0]['reason'] ?? '') === 'failedPrecondition');
 $gone = $api->call('GET', '/events/nosuchevent1');
 check('shape: a 404 with Google\'s reason', ($gone['response']['error']['errors'][0]['reason'] ?? '') === 'notFound' && ($gone['response']['error']['message'] ?? '') === 'Not Found');
+$series = $api->call('POST', '/events', [], ['summary' => 'Sample weekly', 'start' => ['dateTime' => '2027-05-03T09:00:00-07:00', 'timeZone' => LA],
+    'end' => ['dateTime' => '2027-05-03T10:00:00-07:00', 'timeZone' => LA], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=3']])['response'];
+$own = $api->call('PATCH', '/events/' . $series['id'] . '_20270510T160000Z', [], ['start' => ['dateTime' => '2027-05-10T13:00:00+09:00', 'timeZone' => 'Asia/Tokyo'],
+    'end' => ['dateTime' => '2027-05-10T14:00:00+09:00', 'timeZone' => 'Asia/Tokyo']])['response'];
+$allDay = $api->call('PATCH', '/events/' . $series['id'] . '_20270517T160000Z', [], ['start' => ['date' => '2027-05-17', 'dateTime' => null, 'timeZone' => null],
+    'end' => ['date' => '2027-05-18', 'dateTime' => null, 'timeZone' => null]])['response'];
+check('shape: originalStartTime names the zone of the record\'s own start, none when that start is a date',
+    ($own['originalStartTime'] ?? null) === ['dateTime' => '2027-05-10T09:00:00-07:00', 'timeZone' => 'Asia/Tokyo']
+    && ($allDay['originalStartTime'] ?? null) === ['dateTime' => '2027-05-17T09:00:00-07:00'], json_encode([$own['originalStartTime'] ?? null, $allDay['originalStartTime'] ?? null]));
 check('shape: the store is left as sent', ($fake->events[$timed['id']]['description'] ?? null) === '');
 $c = Replay::compare(['path' => '/events', 'status' => 200, 'response' => ['items' => [['id' => 'x1_20270301', 'status' => 'cancelled', 'summary' => 'S']]]],
     ['status' => 200, 'response' => ['items' => [['id' => 'y1_20270301', 'status' => 'cancelled']]]], ['y1' => 'x1'], []);

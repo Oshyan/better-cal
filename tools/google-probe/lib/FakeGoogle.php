@@ -70,6 +70,8 @@ final class FakeGoogle
     public int $orderSeed = 0;
     public bool $listDropped = true;
     public string $zoneAlone = 'kept';
+    /** The label Google adds to a colour set on one day (10.6, 2026-11-13); invented, the form of the one seen. */
+    public const LABEL = '00000000-0000-4000-8000-00000000c010';
 
     private int $seq = 0;
     private int $etags = 0;
@@ -310,7 +312,7 @@ final class FakeGoogle
 
     private function patch(string $id, array $body, ?string $ifMatch): array
     {
-        $e = $this->find($id);
+        $e = $this->find($id, true);
         if ($e === null) {
             return self::error(404, 'Not Found');
         }
@@ -326,11 +328,14 @@ final class FakeGoogle
             return self::error(400, 'Invalid start time.');
         }
         $master = $seriesId !== $id ? ($this->events[$seriesId] ?? null) : null;
+        // A day that already holds a record (live, cancelled or revived): its write moves its own etag alone.
+        $hadRecord = $master !== null && isset($this->events[$id]['originalStartTime']);
+        if (array_key_exists('colorId', $body) && $body['colorId'] !== null && !isset($e['eventLabelId'])) {
+            $body['eventLabelId'] = self::LABEL; // Google adds a label of its own to a colour set on one day (10.6, 2026-11-13)
+        }
         if ($master !== null) {
-            // An instance of an all-day series can't be given a clock time (probe 2.2a).
-            if (isset($master['start']['date']) && isset($body['start']['dateTime'])) {
-                return self::error(400, 'Invalid start time.');
-            }
+            // An instance of an all-day series takes a clock time once its date is sent as null (3.38, 2026-11-13); sent
+            // without it, the merge above already refuses it as holding a date and a clock time (2.2a, 3.30).
             unset($body['recurrence']); // an instance never carries a rule
         } elseif (isset($body['recurrence'])) {
             $why = self::recurrenceError((array) $body['recurrence'], isset(($body['start'] ?? $e['start'])['date']));
@@ -342,7 +347,7 @@ final class FakeGoogle
         $e['updated'] = gmdate('Y-m-d\TH:i:s.000\Z');
         $this->events[$id] = $e;
         unset($this->zoneDropped[$id]);
-        $this->bump($seriesId);
+        $master !== null ? $this->bumpDay($seriesId, $id, $hadRecord) : $this->bump($seriesId);
         return self::ok($this->events[$id]);
     }
 
@@ -399,7 +404,8 @@ final class FakeGoogle
             }
             $key = self::keyOf($r['originalStartTime'], $r['start']['timeZone'] ?? $this->zone);
             $cancelled = ($r['status'] ?? '') === 'cancelled';
-            if ($dropAll || !isset($occ[$key]) || isset($exdates[$key]) || ($patternChanged && $cancelled)) {
+            // Kept exactly while still a day of the master as changed, a cancelled record too, whatever the rule change (D1: 3.42 to 3.47, 2026-11-13; 3.7's cancelled day went because it fell past the new end).
+            if ($dropAll || !isset($occ[$key]) || isset($exdates[$key])) {
                 // Gone: a cancelled item under its id, no originalStartTime.
                 unset($r['recurringEventId'], $r['originalStartTime']);
                 $r['status'] = 'cancelled';
@@ -428,6 +434,18 @@ final class FakeGoogle
                 $r[$k] = $v;
             }
             $this->events[$rid] = $r;
+        }
+        // A record an earlier master change dropped, whose id is a day of the master again (a clock or form changed back,
+        // a bound or split taken back): revived as a live record at the series' values (3.36, 3.37, 3.40, 10.2, 10.3,
+        // 2026-11-13), a day deleted before the first change live again, an edited day's own values gone.
+        $generated = [];
+        foreach ($this->generate($new) as $inst) {
+            $generated[(string) $inst['id']] = $inst;
+        }
+        foreach ($this->events as $rid => $r) {
+            if (isset($generated[$rid]) && !isset($this->zoneDropped[$rid]) && $this->isDropped($r) && $this->seriesIdOf((string) $rid) === $id) {
+                $this->events[$rid] = ['sequence' => (int) ($r['sequence'] ?? 0) + 1] + $generated[$rid];
+            }
         }
         if ($startChanged || $patternChanged || isset($fields['status'])) {
             $new['sequence'] = (int) ($old['sequence'] ?? 0) + 1;
@@ -493,8 +511,24 @@ final class FakeGoogle
             return self::error(410, 'Resource has been deleted');
         }
         $e['status'] = 'cancelled';
+        $seriesId = $this->seriesIdOf($id);
+        $hadRecord = $seriesId !== $id && isset($this->events[$id]['originalStartTime']);
         $this->events[$id] = $e;
-        $this->bump($this->seriesIdOf($id));
+        if ($seriesId !== $id) {
+            $this->bumpDay($seriesId, $id, $hadRecord);
+            return ['status' => 204, 'body' => ''];
+        }
+        if (!empty($e['recurrence'])) {
+            // A master deleted takes its records with it: each reads cancelled, its originalStartTime kept (10.3, 10.4,
+            // 10.5, 2026-11-13); a PATCH to confirmed on the master brings them all back (the status written into every
+            // record, 3.15), a day cancelled before the master was included (10.4).
+            foreach ($this->events as $rid => $r) {
+                if (($r['recurringEventId'] ?? '') === $id && isset($r['originalStartTime'])) {
+                    $this->events[$rid]['status'] = 'cancelled';
+                }
+            }
+        }
+        $this->bump($seriesId);
         return ['status' => 204, 'body' => ''];
     }
 
@@ -569,7 +603,7 @@ final class FakeGoogle
      * under it (a cancelled item with no originalStartTime) is no longer
      * what the id addresses.
      */
-    private function find(string $id): ?array
+    private function find(string $id, bool $forWrite = false): ?array
     {
         $masterId = $this->seriesIdOf($id);
         if (isset($this->events[$id]) && ($masterId === $id || isset($this->events[$id]['originalStartTime']))) {
@@ -583,7 +617,9 @@ final class FakeGoogle
                 return $inst;
             }
         }
-        return null;
+        // A dropped record under an id that names no day of the series now: a GET reads it as it is, cancelled with
+        // no originalStartTime (3.36, 3.37, 3.39, 2026-11-13). A write to it was never measured: no such day.
+        return !$forWrite && isset($this->events[$id]) ? $this->events[$id] : null;
     }
 
     /** @return list<array> the occurrences with exception records laid over them */
@@ -786,6 +822,31 @@ final class FakeGoogle
             return substr($id, 0, $cut);
         }
         return $id;
+    }
+
+    /**
+     * A write to one day of a series ($id, under $seriesId). Google gives each resource its own etag once a day has a
+     * record (2026-11-13): a write to a day that already held a record moves that record's etag alone, the master's and
+     * the others' staying as they were (3.36, 3.37 and 3.40 second changes, 10.2); a first write to an ordinary day
+     * answered once with an etag of its own while the master and the other records moved to another (3.37 first
+     * change), which is the reading kept here, the strictest seen. Dropped records keep theirs. The next delta lists
+     * the day, and the master when it moved (5.3).
+     */
+    private function bumpDay(string $seriesId, string $id, bool $hadRecord): void
+    {
+        $seq = ++$this->seq;
+        $this->events[$id]['etag'] = '"' . (3000000000000000 + ++$this->etags) . '"';
+        $this->changed[$id] = $seq;
+        if ($hadRecord) {
+            return;
+        }
+        $other = '"' . (3000000000000000 + ++$this->etags) . '"';
+        foreach ($this->events as $rid => $e) {
+            if ($rid !== $id && ($rid === $seriesId || (($e['recurringEventId'] ?? '') === $seriesId && isset($e['originalStartTime'])))) {
+                $this->events[$rid]['etag'] = $other;
+            }
+        }
+        $this->changed[$seriesId] = $seq;
     }
 
     /**

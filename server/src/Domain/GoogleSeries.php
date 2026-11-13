@@ -793,6 +793,7 @@ final class GoogleSeries
             $reads = [];  // series index => that read (the series as Google holds it before the change)
             $singleEtags = []; // event of its own's Google id => etag of its read
             $found = [];  // series index => the series as stored here before the change (stateOf), which that read matched
+            $carried = []; // series index => the target's skips Google holds as EXDATE lines in that read, which its master write carries (carriedExdates)
             foreach ($targets as $i => $t) {
                 foreach ($t['singles'] ?? [] as $s) {
                     if (!empty($s['remove']) && !self::stepDone($steps, $i, 'single-remove', (string) $s['id'], $back)) {
@@ -829,6 +830,7 @@ final class GoogleSeries
                     $found[$i] = self::stateOf($before, $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $before['id']]));
                 }
                 $reads[$i] = $this->readBack($calendar, $send, !empty($t['uid']) ? (string) $t['uid'] : null, (string) $t['googleId'], null, $beforeSend);
+                $carried[$i] = self::carriedExdates(self::held($reads[$i], (string) $t['googleId']), $t);
                 if (self::masterBody($old, $t['master']) !== [] || ($t['singles'] ?? []) !== [] || self::stepsFor($t, $reads[$i]) !== []) {
                     $first[$i] = $this->condition($calendar, (string) $t['googleId'], $beforeSend, $reads[$i])['etag'];
                 }
@@ -920,7 +922,7 @@ final class GoogleSeries
                 } else {
                     $before = $this->masterRow($calendar, $t);
                     $old = $before === null ? null : self::stateOf($before, [])['master'];
-                    $body = self::masterBody($old, $t['master']);
+                    $body = self::masterBody($old, $t['master'], $carried[$i] ?? []);
                     if ($body !== []) {
                         // What the series holds once this write lands (rule
                         // B): Google's resources as read just before the
@@ -930,7 +932,7 @@ final class GoogleSeries
                         if ($old !== null && !empty($t['uid']) && $read !== null) {
                             $pre = self::held($read, (string) $t['googleId']);
                             if ($pre['master'] !== null) {
-                                $check = ['expect' => self::digest(self::state(self::afterMaster($pre, $old, $t['master']), true)), 'extras' => true];
+                                $check = ['expect' => self::digest(self::state(self::afterMaster($pre, $old, $t['master'], false, $carried[$i] ?? []), true)), 'extras' => true];
                             }
                         }
                         $resource = $step('master', (string) $t['googleId'], null, fn() => $send('PATCH', '/' . rawurlencode((string) $t['googleId']), $body, $chain), $check);
@@ -1170,11 +1172,17 @@ final class GoogleSeries
     /**
      * What a master PATCH carries: the fields that differ between the
      * series as last read and the target, and its rule whenever anything
-     * does, as the one RRULE line (so a skip Google held as an EXDATE line
-     * becomes a cancelled instance by the step that follows). Nothing when
-     * nothing differs. $before null (the row unknown here) sends the whole.
+     * does: the RRULE line and an EXDATE line for each of $exdates (the
+     * target's skips Google holds as EXDATE lines, carriedExdates). Google
+     * replaces the whole `recurrence` it holds with what a PATCH sends, so
+     * a line left out is a skipped day brought back (issue 252); a skip
+     * Google holds as a cancelled record is the record's, and stays out of
+     * the rule. Nothing when nothing differs. $before null (the row unknown
+     * here) sends the whole.
+     *
+     * @param list<string> $exdates UTC db keys
      */
-    public static function masterBody(?array $before, array $after): array
+    public static function masterBody(?array $before, array $after, array $exdates = []): array
     {
         $body = [];
         $full = GoogleWriter::body(self::rowOf($after, $after['rrule'] !== '' ? (string) $after['rrule'] : null));
@@ -1193,12 +1201,39 @@ final class GoogleSeries
             $body['source'] = $full['source'] ?? null;
         }
         if ($body !== [] || $before === null || (string) $before['rrule'] !== (string) $after['rrule']) {
-            $body['recurrence'] = $after['rrule'] !== '' ? ['RRULE:' . $after['rrule']] : [];
+            $body['recurrence'] = GoogleWriter::recurrenceLines($after['rrule'] !== '' ? (string) $after['rrule'] : null, $exdates, (int) $after['all_day'] === 1, (string) $after['tzid']);
         }
         $body = array_intersect_key($body, array_flip(GoogleWriter::allowedKeys()));
         // Over the master as last read, in its form (GoogleWriter::overForm):
         // run() sends this only once that read matched $before (condition).
         return $before === null ? $body : GoogleWriter::overForm($body, (int) $before['all_day'] === 1);
+    }
+
+    /**
+     * The skips a master write must carry as EXDATE lines (masterBody): the
+     * target's skips that Google holds as EXDATE lines in the read made
+     * before the write ($held, held(): a skip from an EXDATE line is in
+     * `skips` and not in `cancelled`), while the master stays in the form it
+     * is read in. Across a change between timed and all-day no line is
+     * carried: an id carries its form, so every skip of the old form is gone
+     * and the target's skips, in the new form's keys, go as cancelled
+     * instances by the steps that follow (afterMaster, S1). Pure.
+     *
+     * @return list<string> UTC db keys
+     */
+    public static function carriedExdates(array $held, array $t): array
+    {
+        if ($held['master'] === null || (int) $held['master']['all_day'] !== (int) $t['master']['all_day']) {
+            return [];
+        }
+        $out = [];
+        foreach (array_map('strval', $t['skips']) as $key) {
+            if (isset($held['skips'][$key]) && !isset($held['cancelled'][$key])) {
+                $out[] = $key;
+            }
+        }
+        sort($out);
+        return $out;
     }
 
     /**
@@ -1527,8 +1562,14 @@ final class GoogleSeries
      *
      * S2, Google's own resets. A cancelled record goes with any change of
      * the rule's days (3.7); a status sent makes a surviving cancelled
-     * record a live one (3.15); a skip held as an EXDATE line goes with the
-     * rule line the write sends alone (3.16).
+     * record a live one (3.15). A skip held as an EXDATE line stays
+     * exactly when the write carries its line ($carried, masterBody):
+     * Google replaces the whole `recurrence` with what the write sends
+     * (3.16), and the write sends the line of every skip the target keeps
+     * that Google held so (carriedExdates), so the write itself never
+     * brings one back (issue 252). $h from rows here (heldOf) can't tell the
+     * two forms apart and reads every skip as a cancelled record; rebase
+     * explains a skip kept on both sides by the target either way.
      *
      * S3, proof. Everything the write changes is of a class the probe saw
      * keep records: the length (3.2), the bound (3.8 to 3.10), a weekday
@@ -1549,9 +1590,9 @@ final class GoogleSeries
      * is to Finish (rebase). An undo of a series change is a forward change
      * through this same function.
      */
-    public static function afterMaster(array $h, array $old, array $new, bool $ifKept = false): array
+    public static function afterMaster(array $h, array $old, array $new, bool $ifKept = false, array $carried = []): array
     {
-        $body = self::masterBody($old, $new);
+        $body = self::masterBody($old, $new, $carried);
         if ($body === [] || $h['master'] === null) {
             return $h;
         }
@@ -1595,8 +1636,14 @@ final class GoogleSeries
         foreach (array_keys($h['skips']) as $key) {
             $key = (string) $key;
             unset($out['cancelled'][$key], $out['skips'][$key]);
-            // S2: an EXDATE line goes with the rule line sent alone, a cancelled record with any change of the rule's days.
-            if (!isset($h['cancelled'][$key]) || $patternChanged || !$proven || !$named($key)) {
+            // S2: an EXDATE line stays when the write carries it, a cancelled record goes with any change of the rule's days.
+            if (!isset($h['cancelled'][$key])) {
+                if (in_array($key, $carried, true) && $named($key)) {
+                    $out['skips'][$key] = true;
+                }
+                continue;
+            }
+            if ($patternChanged || !$proven || !$named($key)) {
                 continue;
             }
             if (array_key_exists('status', $set)) {

@@ -171,7 +171,7 @@ return [
         'id' => 'refused-default-stays-selected', 'file' => $model, 'checks' => ['i-google'],
         'what' => 'a group the mapping picks keeps its default when that option\'s plan is refused at Google, so the change is refused though another option holds',
         'patch' => [["if ((\$this->hold && !\$probe) || \$out === null || \$out['writes'] !== null) {", "if (true || \$out === null || \$out['writes'] !== null) {"]],
-        'cases' => ['google-a-bound-keeping-a-timed-day-is-disabled-and-the-end-selected'],
+        'cases' => ['google-a-bound-keeping-a-timed-day-under-an-all-day-series-is-offered-as-locally'],
     ],
     [
         'id' => 'day-from-before', 'file' => $model, 'checks' => ['c-placement'],

@@ -878,7 +878,6 @@ const REFUSALS = {
   weekno: 'This repeat counts weeks of the year, so its days can’t follow a drag.',
   overlap: 'Two of its days are the same day in some months, so its days can’t follow a drag.',
   dayset: 'This repeat came from another app and picks its days in a way a drag can’t follow. Move only this one, or open the series to choose its days.',
-  googleAllDay: 'At Google, a day of an all-day series can’t have a time of its own, so this change can’t be made while an edited day keeps one. Give that day the series’ all-day setting first, or change only this one.',
   empty: 'This would leave the series with no events. Delete it instead?',
   member_taken: 'That day is already one of its days.',
   off_weeks: 'Those days would fall in weeks this repeat skips.',

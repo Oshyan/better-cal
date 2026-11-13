@@ -1118,26 +1118,10 @@ trait Invariants
      * (i) A Google calendar's series goes through the model like any other
      * (1.5.4, GoogleSeries): worked out for the same rows read as a Google
      * calendar's, the plan is the local plan (its rule, start, days, groups
-     * and refusals), with the Google note added. One refusal is Google's
-     * own: a day that stays timed under an all-day series can't be held at
-     * Google (probe 2.2a), so the plan is refused `googleAllDay` exactly
-     * when the series is all-day after the change and a kept edited day is
-     * timed after it.
+     * and refusals), with the Google note added. Google holds a timed day of
+     * an all-day series (probe 3.38) and an all-day day of a timed one
+     * (3.31), so no refusal is Google's own.
      */
-    /** Whether a plan keeps a day timed under a series that is all-day after it (an edited or acted day inside, timed after). */
-    private static function timedUnderAllDay(array $plan): bool
-    {
-        if (empty($plan['rule']['to']['allDay'])) {
-            return false;
-        }
-        foreach ($plan['days'] ?? [] as $d) {
-            if (in_array($d['kind'] ?? '', ['edited', 'acted'], true) && in_array($d['outcome'] ?? '', ['moves', 'stays'], true) && (($d['after']['kind'] ?? null) === 'timed' || (isset($d['at']) && !empty($d['tz'])))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private function checkGoogle(array $before, array $plan, array $google, array $choices, Expect $x): void
     {
         if (isset($google['error'])) {
@@ -1145,85 +1129,10 @@ trait Invariants
             return;
         }
         $g = $google['plan'];
-        $timedUnderAllDay = $x->allDay1 && self::timedUnderAllDay($plan);
         $codes = array_values(array_unique(array_column($g['refusals'] ?? [], 'code')));
-        if ($timedUnderAllDay) {
-            // plan.refusals also carries a disabled option's reason (api-contract,
-            // series_refused), the same locally and on Google; Google's own
-            // refusal is what the Google plan adds.
-            $localCodes = array_column($plan['refusals'] ?? [], 'code');
-            $googleOnly = array_values(array_diff($codes, $localCodes));
-            // An option that keeps the timed day is a disabled option on Google, as one that leaves no events is
-            // (api-contract, series_refused), in every group alike: Google selects instead the group's first option, in
-            // its order, whose local plan keeps no such day, and the plan stands; the change is refused only when no
-            // option of any group gives one. What Google can hold is read from the local plans (the driver's `holdable`).
-            $holdable = $google['holdable'] ?? [];
-            $held = [];
-            foreach ($holdable as $gid => $opts) {
-                foreach ($opts as $oid => $ok) {
-                    if ($ok) {
-                        $held[] = "$gid=$oid";
-                    }
-                }
-            }
-            if ($google['refused']) {
-                $this->check('i-google', $googleOnly === ['googleAllDay'], 'a day that stays timed under an all-day series refuses the change on Google, with its reason', ['refusals' => $codes, 'local' => $localCodes]);
-                $this->check('i-google', $held === [], 'the change is refused on Google only when every option of every group keeps a timed day under an all-day series', ['options Google can hold' => $held]);
-                return;
-            }
-            $this->check('i-google', $held !== [], 'a change Google can\'t hold under any option is refused there', ['holdable' => $holdable]);
-            $googleGroups = array_column($g['groups'] ?? [], null, 'id');
-            $moved = [];
-            foreach ($plan['groups'] ?? [] as $grp) {
-                $there = $googleGroups[$grp['id']] ?? null;
-                if ($there === null || $there['selected'] === $grp['selected']) {
-                    continue;
-                }
-                $local = array_column($there['options'], null, 'id')[$grp['selected']] ?? null;
-                $first = null;
-                foreach ($grp['options'] as $o) {
-                    if ($first === null && ($holdable[$grp['id']][$o['id']] ?? false)) {
-                        $first = $o['id'];
-                    }
-                }
-                $moved[$grp['id']] = ['local' => $grp['selected'], 'google' => $there['selected'], 'disabled' => !empty($local['disabled']), 'code' => $local['code'] ?? null, 'firstHoldable' => $first];
-            }
-            $ok = $moved !== [] && array_filter($moved, static fn(array $m): bool => $m['disabled'] && $m['code'] === 'googleAllDay' && $m['google'] === $m['firstHoldable']) === $moved;
-            $this->check('i-google', $ok && array_diff($googleOnly, ['googleAllDay']) === [],
-                'an option that keeps a timed day under an all-day series is disabled on Google with its reason, the group\'s first option Google can hold selected and the plan standing',
-                ['moved' => $moved, 'refusals' => $codes]);
-            return;
-        }
-        // An option the local plan offers can be disabled on Google with
-        // Google's one reason: choosing it would keep a timed day under an
-        // all-day series (series-model.md, Google). Such an option exists
-        // only when the series is all-day after the change and a row is
-        // timed; its data (next, bound, differs) is left out on both sides.
-        $onlyGoogle = [];
-        foreach ($g['groups'] ?? [] as $gi => $grp) {
-            foreach ($grp['options'] ?? [] as $oi => $o) {
-                if (!empty($o['disabled']) && ($o['code'] ?? '') === 'googleAllDay' && empty($plan['groups'][$gi]['options'][$oi]['disabled'])) {
-                    $onlyGoogle[] = [$gi, $oi];
-                }
-            }
-        }
-        $timedRow = false;
-        foreach ($before['overrides'] ?? [] as $r) {
-            $timedRow = $timedRow || (int) ($r['all_day'] ?? 1) === 0;
-        }
-        $this->check('i-google', $onlyGoogle === [] || ($x->allDay1 && $timedRow), 'an option disabled on Google alone is disabled for Google\'s one reason, on an all-day series with a timed day', ['disabled' => $onlyGoogle]);
-        $strip = static function (array $p) use ($onlyGoogle): array {
+        $strip = static function (array $p): array {
             $p['notes'] = array_values(array_filter($p['notes'] ?? [], static fn(array $n): bool => ($n['kind'] ?? '') !== 'google'));
             unset($p['hash']);
-            foreach ($onlyGoogle as [$gi, $oi]) {
-                $p['groups'][$gi]['options'][$oi] = array_intersect_key($p['groups'][$gi]['options'][$oi], ['id' => true, 'label' => true]);
-                // The group's other options list their dates against the
-                // options offered (where they part), so with one fewer
-                // offered their lists are left out too.
-                foreach ($p['groups'][$gi]['options'] as $k => $o) {
-                    unset($p['groups'][$gi]['options'][$k]['next'], $p['groups'][$gi]['options'][$k]['differs']);
-                }
-            }
             return $p;
         };
         $this->check('i-google', !$google['refused'] && $strip($g) === $strip($plan), 'the Google plan is the local plan, with the Google note added', ['google' => [$g['rule']['after'] ?? null, $g['start'] ?? null, $codes], 'local' => [$plan['rule']['after'], $plan['start']]]);

@@ -484,13 +484,6 @@ final class GoogleUndo
                 $dayKey = GoogleWriter::instanceOf($googleId)['key'] ?? null;
                 $at = static fn(?array $r): ?array => $r === null || $dayKey === null || ($r['recurrence_instance_utc'] ?? null) === null ? $r : array_merge($r, ['recurrence_instance_utc' => (string) $dayKey]);
                 $send = self::inverse($this->beforeOver($g['before'], $at($wasRow), $row ?? $at($leftRow)), $changed);
-                // What the edit itself is refused, its undo and redo are refused, before anything is sent: a day of a
-                // series that is all-day now can't be given a clock time at Google (Events::refuseTimedUnderAllDay).
-                $of = GoogleWriter::instanceOf($googleId);
-                $series = $of === null ? null : $writer->rowByGoogleId((int) $calendar['id'], $of['series']);
-                if ($series !== null && isset($send['start']['dateTime'])) {
-                    Events::refuseTimedUnderAllDay($series, 0);
-                }
                 // The event as it is now: its row, or, a day with no row
                 // here (the edit made it ordinary, or an undo removed the row
                 // the edit made), as Google shows it, read just before and

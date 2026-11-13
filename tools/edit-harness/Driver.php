@@ -672,17 +672,8 @@ final class Driver
                     $in += ['start' => Clock::iso($local), 'end' => Clock::iso(Clock::plus($local, max(0, $l)))];
                 }
             }
-            try {
-                $this->events->patch($this->userId, $id, $in);
-            } catch (HttpError $e) {
-                if ($this->google !== null && $e->errorCode === 'google_all_day') {
-                    // A day of an all-day series given a clock time: Google can't hold one (probe 2.2a), and the
-                    // product refuses it before sending; the case goes on without that day.
-                    $this->na('a timed day in an all-day series: Google can\'t hold one (refused google_all_day)');
-                    continue;
-                }
-                throw $e;
-            }
+            // A day of an all-day series given a clock time is held at Google once its date is sent null (probe 3.38).
+            $this->events->patch($this->userId, $id, $in);
             $row = $this->db->one('SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$id, $occ['key']]);
             if (!Product::$plan) {
                 // A product before 1.5 keeps no own list (override_fields): the harness keeps what each "this event" edit
@@ -1219,24 +1210,6 @@ final class Driver
             $this->same('e-preview', $s0, $this->snapshot(), 'a preview writes nothing');
         }
         $google = $slot === 'edit' && !$replay && $v['scope'] === 'all' && $this->google === null && ($this->spec['n'] ?? 0) % 2 === 0 ? $this->googlePlan($target, $in, $choices) : null;
-        if ($google !== null && !isset($google['error']) && self::timedUnderAllDay($plan)) {
-            // What Google can hold, read from the local plans (invariant i), never from the Google plan's own reasoning:
-            // for each enabled option of each group, the rest as chosen, whether its local plan (the oracle checks it)
-            // keeps a timed day under an all-day series, which Google can't hold.
-            foreach ($plan['groups'] ?? [] as $grp) {
-                foreach ($grp['options'] as $o) {
-                    if (!empty($o['disabled'])) {
-                        continue;
-                    }
-                    try {
-                        $alt = $o['id'] === $grp['selected'] ? $plan : $preview([$grp['id'] => $o['id']] + $choices);
-                        $google['holdable'][$grp['id']][$o['id']] = !self::timedUnderAllDay($alt);
-                    } catch (HttpError) {
-                        $google['holdable'][$grp['id']][$o['id']] = false;
-                    }
-                }
-            }
-        }
         try {
             $this->events->patch($this->userId, $target, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices]]);
         } catch (HttpError $e) {

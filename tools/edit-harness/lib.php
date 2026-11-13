@@ -109,14 +109,11 @@ final class Report
      * mode can run it. Google mode (README, Google) counts as not applicable what no Google calendar holds, so the
      * categories only that runs are listed there as not applicable, not required: a rule the expander can't read
      * (GoogleStand::unheld; validateRrule refuses every such rule, so the sync never reads one as a series and no edit
-     * writes one), and an edited timed day of an all-day series, the only entry of coming up that names its own zone
-     * (PlanChecks::entryOf names a zone only where the plan has none), which the product refuses there before
-     * anything is sent (google_all_day).
+     * writes one).
      */
     public const NOT_APPLICABLE = [
         'google' => [
             'c-next | unreadable next' => 'a rule the expander can\'t read is never a series on a Google calendar, GoogleStand::unheld',
-            'c-next | entry edited, own zone' => 'only a timed day of an all-day series names its own zone, and Google can\'t hold one, google_all_day',
         ],
     ];
 

@@ -66,7 +66,6 @@ final class Model
         'weekno' => 'This repeat counts weeks of the year, so its days can\'t follow a drag.',
         'overlap' => 'Two of its days are the same day in some months, so its days can\'t follow a drag.',
         'dayset' => 'This repeat came from another app and picks its days in a way a drag can\'t follow. Move only this one, or open the series to choose its days.',
-        'googleAllDay' => 'At Google, a day of an all-day series can\'t have a time of its own, so this change can\'t be made while an edited day keeps one. Give that day the series\' all-day setting first, or change only this one.',
         'empty' => 'This would leave the series with no events. Delete it instead?',
     ];
 
@@ -768,8 +767,7 @@ final class Model
 
     /**
      * One rule for every group (api-contract, series_refused): a selected
-     * option whose own plan is refused (a timed day kept under an all-day
-     * series at Google) is disabled, and the selection moves to the group's
+     * option whose own plan is refused is disabled, and the selection moves to the group's
      * first enabled option in the group's order, as a reading's does (pick()
      * passes over a disabled one). The change is refused only when every
      * option is. A named option that is refused moves too, so its plan shows
@@ -1968,7 +1966,7 @@ final class Model
 
     /**
      * Readings whose whole plans are equal merge into the first (Finding the Readings); one whose plan leaves no events
-     * is refused, and so is one whose own plan map() refuses (a timed day kept under an all-day series at Google): it
+     * is refused, and so is one whose own plan map() refuses: it
      * has no writes to compare, so it is disabled with that refusal's reason, as a refused option of any other group is.
      */
     private function merged(array $readings, array $land): array
@@ -2629,13 +2627,6 @@ final class Model
         $people = isset($this->changed['people']) ? ['master' => $this->changed['people']['ids']] : [];
         $title = (string) ($this->master['title'] ?? '');
         $seriesTime = $this->seriesTimeChanged();
-        // At Google an instance of an all-day series can't be given a clock
-        // time (probe 2.2a): a day that stays timed under an all-day master
-        // can't be carried there, so the change is refused with its reason.
-        $timedUnderAllDay = [];
-        if ($this->google && $this->allDay1 && $createEdited !== null && (int) $createEdited['all_day'] === 0) {
-            $timedUnderAllDay[] = 0;
-        }
         $edited = array_merge(array_keys($this->changed), array_keys(array_filter([
             'date' => $landedDn !== $this->actedDn0,
             'time' => $clock1 !== $this->clock0 || Time::normalizeTzid($this->tz1) !== Time::normalizeTzid($this->tz0),
@@ -2665,9 +2656,6 @@ final class Model
             $put('end_utc', Time::toDb($end));
             $put('all_day', $allDay ? 1 : 0);
             $put('tzid', $tz);
-            if ($this->google && $this->allDay1 && !$allDay) {
-                $timedUnderAllDay[] = $id;
-            }
             $ownAfter = $own;
             foreach ($this->changed as $field => $fcols) {
                 // The occurrence acted on takes the request's values (Own
@@ -2771,9 +2759,6 @@ final class Model
                 // the series' own time there; in an all-day plan, in its own zone, named.
                 + array_intersect_key($sides['after'], ['at' => true, 'tz' => true]) + $said + [
                 'kept' => OwnFields::normalize($ownAfter), 'takes' => OwnFields::normalize(array_diff($edited, $ownAfter))];
-        }
-        if ($timedUnderAllDay !== []) {
-            return $this->refused('googleAllDay');
         }
         // The day acted on as an event of its own, where the plan's days
         // say it shows ('separate', whichever way it got that outcome): what

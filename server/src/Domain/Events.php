@@ -567,7 +567,6 @@ final class Events
             // The day starts where the own list this edit leaves puts it.
             [$cols, $changed] = $this->placedThis($existing, $this->columnPatch($existing, $in, $instanceUtc, forOverride: true), $master, $in);
             [$googleFields, $localFields] = self::splitGoogleFields($cols);
-            self::refuseTimedUnderAllDay($master, (int) ($googleFields['all_day'] ?? $existing['all_day']));
             $body = $googleFields === [] ? [] : self::patchBody($existing, $googleFields);
             if ($body !== []) {
                 // A local-only override (attendance, reminders) has no Google
@@ -597,7 +596,6 @@ final class Events
             $shown = GoogleWriter::instanceBody($override);
             $occurrence = $override;
             $override = array_merge($override, $patch);
-            self::refuseTimedUnderAllDay($master, (int) $override['all_day']);
             $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
             $body = self::patchBody($occurrence, $patchGoogle);
             if ($body !== []) {
@@ -705,20 +703,6 @@ final class Events
             GoogleUndo::details(GoogleUndo::EDIT, $calendar, $undo[0], $undo[1], $undo[2], self::answerEtag($resp),
                 ['changed' => GoogleUndo::editChanged($undo[1], $stored, $resp)]),
             [$before, $after]);
-    }
-
-    /**
-     * An instance of an all-day series can't be given a clock time at
-     * Google (the probe, 2.2a: 400 "Invalid start time"), so a "this event"
-     * edit that would make a day of an all-day Google series timed is
-     * refused here before anything is sent, with the reason. The undo and
-     * the redo of such an edit ask the same (GoogleUndo::undo).
-     */
-    public static function refuseTimedUnderAllDay(array $master, int $rowAllDay): void
-    {
-        if ((int) $master['all_day'] === 1 && $rowAllDay === 0) {
-            throw new HttpError('google_all_day', 'At Google, a day of an all-day series can\'t be given a clock time. Make the series timed, or keep this day all-day.', 422);
-        }
     }
 
     /** "Nov 7" for an activity line: an all-day date as stored, a timed day on the series' clock. */

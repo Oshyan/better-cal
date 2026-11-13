@@ -135,4 +135,31 @@ return static function (Db $db): void {
             H::done($t);
         }
     });
+
+    // One day of a repeating event in the other form: a clock time on a day of an all-day series (probe 3.38) and an
+    // all-day day of a timed series (3.31), each one PATCH on the day's instance id with the held form's fields sent null,
+    // as Google took both; the day stored here in its own form, the series as it was.
+    foreach ([
+        'a day of an all-day series given 15:00' => [$allDay + ['rrule' => 'FREQ=WEEKLY;COUNT=4'], '2027-03-22', ['start' => '2027-03-22T15:00:00-07:00', 'end' => '2027-03-22T16:00:00-07:00', 'allDay' => false, 'tzid' => $la],
+            '_20270322', ['date' => null], 0, 1],
+        'a day of a timed series made all-day' => [$timed('10:00') + ['rrule' => 'FREQ=WEEKLY;COUNT=4'], '2027-03-22T10:00:00-07:00', ['start' => '2027-03-22', 'end' => '2027-03-23', 'allDay' => true],
+            '_20270322T170000Z', ['dateTime' => null, 'timeZone' => null], 1, 0],
+    ] as $what => [$create, $inst, $edit, $suffix, $nulls, $dayAllDay, $seriesAllDay]) {
+        scenario("google back again: $what, one PATCH with the held form's fields null", function () use ($db, $what, $create, $inst, $edit, $suffix, $nulls, $dayAllDay, $seriesAllDay): void {
+            $t = H::make($db, $create);
+            try {
+                $t->s->fake->requests = [];
+                [, $error] = H::tryChange($t, ['scope' => 'this', 'instanceStart' => $inst] + $edit);
+                $writes = array_values(array_filter($t->s->fake->requests, static fn(array $r): bool => $r['method'] !== 'GET'));
+                $day = $db->one('SELECT all_day FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$t->id]);
+                $series = $db->one('SELECT all_day FROM events WHERE id = ?', [$t->id]);
+                checkEq("$what: taken, one PATCH on the day's id naming the held form's fields null; the day in its own form here, the series as it was",
+                    [null, [['PATCH', basename($t->gid . $suffix)]], $nulls, $dayAllDay, $seriesAllDay],
+                    [$error, array_map(static fn(array $r): array => [$r['method'], rawurldecode(basename($r['path']))], $writes),
+                        array_intersect_key((array) ($writes[0]['body']['start'] ?? []), $nulls), (int) ($day['all_day'] ?? -1), (int) ($series['all_day'] ?? -1)]);
+            } finally {
+                H::done($t);
+            }
+        });
+    }
 };

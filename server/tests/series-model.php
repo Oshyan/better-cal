@@ -403,7 +403,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Acceptance 4: shifting the whole pattern keeps each weekday\'s offset: the first Wednesday and third Thursday', 'FREQ=MONTHLY;BYDAY=1WE,3TH', $p3['writes']['master']['rrule'] ?? null);
 
     // Acceptance 5: Google on the model (1.5.4): the same plan as locally,
-    // with the Google note; only a timed day under an all-day series is refused.
+    // with the Google note.
     $practice = smSeries('Practice', 'FREQ=WEEKLY;BYDAY=TH', '2027-01-07 18:00');
     $practiceRows = [smEdited($practice, 2, '2027-03-04 18:00', [], '2027-03-05 18:00', ['date'])];
     $g = smPlan($practice, $practiceRows, smDrag($practice, '2027-03-11 18:00', '2027-03-11 18:30'), [], ['google' => true]);
@@ -416,18 +416,18 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Acceptance 5: a drag to Friday on Google is offered as locally, every Thursday becoming Friday', [false, 'FREQ=WEEKLY;BYDAY=FR', ['movedDays']],
         [$g['refused'], $g['writes']['master']['rrule'] ?? null, array_column($g['plan']['groups'], 'id')]);
     // A day deliberately timed in an all-day series (its all-day setting and
-    // time its own) can't be held at Google (probe 2.2a): any change to such
-    // a series is refused there with its reason, and offered locally.
+    // time its own) is held at Google once its date is sent null (probe 3.38,
+    // 2026-11-13; 2.2a's refusal was the start fields' merge): a change to such
+    // a series is the local plan on Google too.
     $allDay = smSeries('Sample fair', 'FREQ=WEEKLY;BYDAY=SA', '2027-01-09 00:00', 60, true);
     $timedDay = smEdited($allDay, 3, '2027-01-23 00:00', ['all_day' => 0, 'tzid' => 'America/Los_Angeles', 'start_utc' => smAt('2027-01-23 09:00'), 'end_utc' => smAt('2027-01-23 10:00')], null, ['allDay', 'time']);
     $g = smPlan($allDay, [$timedDay], ['columns' => ['title' => 'Sample market']], [], ['google' => true]);
     $local = smPlan($allDay, [$timedDay], ['columns' => ['title' => 'Sample market']]);
-    checkEq('Acceptance 5: a timed day under an all-day series refuses the change on Google, with its reason; locally the rename goes through', [true, 'googleAllDay', Model::REASONS['googleAllDay'], false],
-        [$g['refused'], $g['plan']['refusals'][0]['code'] ?? null, $g['plan']['refusals'][0]['words'] ?? null, $local['refused']]);
-    // Every reading of a drag keeps the timed day: each reading's own plan is
-    // refused, so each is a disabled option with Google's reason (never two
-    // refused plans compared as equal and merged), and the change is refused
-    // with it. Worked out without a PHP warning.
+    checkEq('Acceptance 5: a timed day under an all-day series: the rename goes through on Google as locally, the same writes, the Google note added (probe 3.38)', [false, [], ['google'], $local['writes'], false],
+        [$g['refused'], $g['plan']['refusals'], array_column($g['plan']['notes'], 'kind'), $g['writes'], $local['refused']]);
+    // Every reading of a drag keeps the timed day, and Google holds it (3.38):
+    // on Google the readings are offered as locally. Worked out without a PHP
+    // warning.
     $fair = smSeries('Sample fair', 'FREQ=WEEKLY;BYDAY=TU,SA', '2027-01-05 00:00', 60, true);
     $fairTimed = smEdited($fair, 3, '2027-01-12 00:00', ['all_day' => 0, 'tzid' => 'America/Los_Angeles', 'start_utc' => smAt('2027-01-12 09:00'), 'end_utc' => smAt('2027-01-12 10:00')], null, ['allDay', 'time']);
     $warned = [];
@@ -441,8 +441,8 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         restore_error_handler();
     }
     $local = smPlan($fair, [$fairTimed], smDrag($fair, '2027-01-16 00:00', '2027-01-17 00:00'));
-    checkEq('Acceptance 5: every reading keeping a timed day under an all-day series is disabled on Google with its reason and the change refused; locally both are offered', [true, [['reading', 'member', 'googleAllDay'], ['reading', 'pattern', 'googleAllDay'], [null, null, 'googleAllDay']], [], ['member', 'pattern'], false],
-        [$g['refused'], array_map(static fn(array $r): array => [$r['group'] ?? null, $r['option'] ?? null, $r['code']], $g['plan']['refusals']), $warned, smOptions($local, 'reading'), $local['refused']]);
+    checkEq('Acceptance 5: every reading keeping a timed day under an all-day series is offered on Google as locally (probe 3.38)', [false, [], [], ['member', 'pattern'], smOptions($local, 'reading')],
+        [$g['refused'], $g['plan']['refusals'], $warned, smOptions($g, 'reading'), smOptions($local, 'reading')]);
 
     // Acceptance 6: a rule the expander can't read.
     $holiday = smSeries('Holiday dinner', 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L', '2027-02-10 18:00');

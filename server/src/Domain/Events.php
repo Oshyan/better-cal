@@ -279,12 +279,33 @@ final class Events
     // transaction that saves Google's answer here, so a session or API key
     // revoked mid-request can't finish the change.
 
-    /** The calendar row when this event lives on a writable Google calendar, else null. */
-    private function googleCalendarFor(int $calendarId): ?array
+    /**
+     * The calendar row when this event lives on a Google calendar a change
+     * may be sent to, else null. $change: a change Google holds is being
+     * attempted, so a Google calendar stored below writer asks Google first
+     * (GoogleWriter::recheck: one small list) and goes on when Google now
+     * says writer, or is refused with the access rule's sentence; without
+     * it, the stored level answers, or the level a recheck in this request
+     * found, which is stored only once its transaction is over.
+     */
+    private function googleCalendarFor(int $calendarId, bool $change = false, ?RequestAuthority $authority = null): ?array
     {
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [$calendarId]);
-        return $calendar !== null && GoogleWriter::writable($calendar) ? $calendar : null;
+        if ($calendar === null || !GoogleWriter::bound($calendar)) {
+            return null;
+        }
+        if (!GoogleWriter::writable($calendar) && isset($this->rechecked[$calendarId])) {
+            $calendar['google_access_role'] = $this->rechecked[$calendarId];
+        }
+        if (!GoogleWriter::writable($calendar) && $change) {
+            $calendar = $this->google()->recheck($calendar, $this->googleBeforeSend($authority));
+            $this->rechecked[$calendarId] = (string) $calendar['google_access_role'];
+        }
+        return GoogleWriter::writable($calendar) ? $calendar : null;
     }
+
+    /** Levels a recheck found writer in this request, by calendar, until the store after its transaction catches up. @var array<int,string> */
+    private array $rechecked = [];
 
     private ?Duplicates $duplicates = null;
 
@@ -299,7 +320,9 @@ final class Events
      */
     private function refuseWhilePending(int $userId, array $event): void
     {
-        if ($this->googleCalendarFor((int) $event['calendar_id']) !== null) {
+        // Any Google calendar, whatever its level: a half-done change stays frozen while it is read-only too.
+        $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $event['calendar_id']]);
+        if ($calendar !== null && GoogleWriter::bound($calendar)) {
             GoogleSeries::refusePending($this->db, $userId, (int) $event['calendar_id'], GoogleSeries::namesOf($event));
         }
     }
@@ -1312,7 +1335,7 @@ final class Events
             throw HttpError::badRequest('Unknown calendarId');
         }
         $in = $this->typedTimes($userId, $in, null);
-        $google = $calendar['kind'] === 'subscribed' && GoogleWriter::writable($calendar) ? $calendar : null;
+        $google = $calendar['kind'] === 'subscribed' ? $this->googleCalendarFor($calendarId, true, $authority) : null;
         if ($calendar['kind'] === 'subscribed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Cannot create events on a subscribed calendar');
         }
@@ -1694,7 +1717,7 @@ final class Events
             }
             $master = $this->get($userId, (int) $event['recurrence_parent_id']);
             // A writable Google calendar's day takes it as any edit does (Google first).
-            $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+            $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id'], true, $authority) : null;
             if ($event['source'] === 'feed' && $google === null) {
                 throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags, reminders and a place\'s coordinates');
             }
@@ -1708,7 +1731,7 @@ final class Events
         // them even though their feed-derived content is read-only.
         // What a feed's day may be given is what is held here alone (OwnFields::feedEditKeys, read from the one list).
         $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', ...\BetterCal\Domain\Series\OwnFields::feedEditKeys()]);
-        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id'], $editKeys !== [], $authority) : null;
         if ($event['source'] === 'feed' && $editKeys !== [] && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags, reminders and a place\'s coordinates');
         }
@@ -2205,7 +2228,7 @@ final class Events
         $row = $this->get($userId, $id);
         $this->refuseWhilePending($userId, $row);
         [$event, $instanceStart] = $this->seriesFrom($userId, $row, $scope, $instanceStart);
-        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id'], true, $authority) : null;
         if ($event['source'] === 'feed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events cannot be deleted; hide them instead');
         }

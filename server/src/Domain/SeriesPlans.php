@@ -143,7 +143,8 @@ trait SeriesPlans
         if (empty($event['rrule']) || !empty($event['recurrence_parent_id']) || !in_array($scope, ['all', 'following'], true)) {
             throw HttpError::badRequest('preview is for changes to all events, or this and following, of a repeating series', 'preview_unavailable');
         }
-        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+        // The preview starts a change: a calendar stored read-only asks Google first (googleCalendarFor).
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id'], true) : null;
         if ($event['source'] === 'feed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
         }

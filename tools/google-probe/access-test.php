@@ -144,8 +144,9 @@ foreach ([['writer', 'writer'], ['reader', 'reader'], ['freebusy', 'freebusy'], 
         $delta = array_values(array_filter($sent, static fn(array $r) => isset($r['query']['syncToken'])));
         check('reader: the delta sends the token writer saved', count($delta) === 1 && $delta[0]['query']['syncToken'] === $tokenAtWriter);
         $row4d = array_values(array_filter($record['rows'], static fn(array $r) => $r['n'] === '4d'))[0] ?? [];
-        check('reader: a list row says whether a sync token came (not the token itself)', ($row4d['fields']['sync token'] ?? null) === 'given');
-        check('reader: the delta row names the stage its token came from', ($row4d['fields']['tokenFrom'] ?? null) === 'writer');
+        // The stand-in answers as Google did at stage reader (the access probe, row 4d): a change of access
+        // makes the token from before it answer 410 fullSyncRequired.
+        check('reader: the delta from the token writer saved answers 410 fullSyncRequired, as Google did', ($row4d['status'] ?? null) === 410 && ($row4d['reason'] ?? null) === 'fullSyncRequired', json_encode($row4d));
         $writes = array_filter($record['rows'], static fn(array $r) => $r['method'] !== 'GET');
         check('reader: every write is recorded with its status and reason', $writes !== [] && array_filter($writes, static fn(array $r) => $r['status'] !== 403 || $r['reason'] !== 'requiredAccessLevel') === []);
         check('reader: nothing new is made', count(AccessProbe::loadState($probe->statePath)['inserted']) === 1);
@@ -154,6 +155,10 @@ foreach ([['writer', 'writer'], ['reader', 'reader'], ['freebusy', 'freebusy'], 
         check('unshared: the token saved before is still the one from freebusy', (AccessProbe::loadState($probe->statePath)['sync']['stage'] ?? null) === 'freebusy');
     }
     if ($key === 'writer-2') {
+        // No change of access since stage restored saved its token: the delta answers (row 4d, the second run of restored).
+        $row4d = array_values(array_filter($record['rows'], static fn(array $r) => $r['n'] === '4d'))[0] ?? [];
+        check('writer-2: a list row says whether a sync token came (not the token itself)', ($row4d['fields']['sync token'] ?? null) === 'given', json_encode($row4d));
+        check('writer-2: the delta row names the stage its token came from', ($row4d['fields']['tokenFrom'] ?? null) === 'restored', json_encode($row4d));
         check('a second writer run makes nothing again', array_filter($record['rows'], static fn(array $r) => str_starts_with($r['n'], 'S')) === [] && str_contains(implode(' ', $record['notes']), 'not made again'));
     }
     if ($key === 'cleanup') {

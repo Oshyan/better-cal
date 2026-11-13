@@ -221,16 +221,20 @@ return static function (Db $db): void {
         } catch (HttpError $e) {
             $error = $e;
         }
-        checkEq('a permission 403: today\'s words, 403, no pause', ['google_write_failed', 403, true, []],
-            [$error?->errorCode, $error?->status, str_starts_with((string) $error?->getMessage(), 'Google says this account may not edit that calendar'), $s->t->slept]);
+        // The write's own list said writer just before (the access rule), so a 403 on the write is Google refusing that
+        // change, as the probe saw for a few seconds after edit access was given back (row 6e): the model's words for it.
+        checkEq('a permission 403 after a list that said writer: Google refused this change, 403, no pause', ['google_write_failed', 403, true, []],
+            [$error?->errorCode, $error?->status, str_starts_with((string) $error?->getMessage(), 'Google refused this change; nothing was changed.'), $s->t->slept]);
     });
 
-    scenario('google refusals: the read before a write is read the same way: a 404 or 410 is "deleted at Google" and nothing is sent; a busy read is retried and the write lands', function () use ($setup, $busy, $db): void {
+    scenario('google refusals: the read before a write is a list: a 404 or 410 on it is the calendar no longer shown, never "deleted at Google", and nothing is sent; a busy read is retried and the write lands', function () use ($setup, $busy, $db): void {
+        // The write's first read is a list by the event's iCalUID; a list answered 404 (or 410, sent with no sync
+        // token) is the calendar no longer shown to this account (the access probe, stage unshared, rows 3 to 4d).
         foreach ([404, 410] as $status) {
             $s = $setup();
             $s->t->script = [['GET', $status, json_encode(['error' => ['code' => $status, 'message' => 'Gone', 'errors' => [['domain' => 'global', 'reason' => 'deleted']]]])]];
             $code = refusal(fn() => $s->events->patch($s->u, $s->pizzaId, ['title' => 'Pizza night, later']));
-            checkEq("a $status on the read: google_deleted, no PATCH sent, no pause, the title as it was", ['google_deleted', [], [], 'Pizza night'],
+            checkEq("a $status on the read: google_not_shown, no PATCH sent, no pause, the title as it was", ['google_not_shown', [], [], 'Pizza night'],
                 [$code, array_values(array_filter($s->t->sent, static fn(string $m): bool => $m !== 'GET')), $s->t->slept, $db->scalar('SELECT title FROM events WHERE id = ?', [$s->pizzaId])]);
         }
         $s = $setup();

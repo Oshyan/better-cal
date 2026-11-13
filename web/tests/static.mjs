@@ -321,6 +321,32 @@ for (const file of files) {
     'the OS dark block and the pinned dark block must define the same tokens with the same values');
 }
 
+// --- Google access, detect and inform (docs/design/google-access-detect-and-inform.md) ---
+// The two Review kinds have a label, an icon and a toast that says a dismiss changes nothing, and the
+// settings line says, per level Google last stated, what the calendar is here and what changes it.
+{
+  const check = (ok, msg) => { if (ok) passed++; else fail(msg); };
+  const review = readFileSync(join(root, 'app', 'ReviewPage.js'), 'utf8');
+  for (const kind of ['google_read_only', 'google_not_shown']) {
+    check(new RegExp(`KIND_LABEL = \\{[^}]*${kind}: '`).test(review) && new RegExp(`KIND_ICON = \\{[^}]*${kind}: '`).test(review),
+      `Review must label and draw the ${kind} notice`);
+    check(review.includes(`item.kind === '${kind}'`), `dismissing a ${kind} notice must say what the dismiss does`);
+  }
+  check(review.includes('The calendar stays read-only here until Google allows changes again.'),
+    'dismissing an access notice must say the calendar stays read-only (a dismiss acknowledges, it changes nothing)');
+  const settingsSrc = readFileSync(join(root, 'app', 'CalendarSettings.js'), 'utf8');
+  const fn = (settingsSrc.match(/export function googleReadOnlyLine\(role\) \{[\s\S]*?\n\}/) || [''])[0];
+  const line = fn ? vm.runInNewContext(fn.replace('export function', 'function') + '\ngoogleReadOnlyLine') : null;
+  check(typeof line === 'function', 'CalendarSettings must compose the read-only line in googleReadOnlyLine(role)');
+  if (typeof line === 'function') {
+    check(line('reader').startsWith('View only at Google') && line('freeBusyReader').startsWith('Busy times only at Google')
+      && line('none').includes('no longer shows it to this account') && line('none').includes('keep it as a calendar of your own'),
+      'the read-only line must name view only, busy times only and not shown apart');
+    check(['reader', 'freeBusyReader', 'none'].every((r) => !/—/.test(line(r))), 'the read-only line has no em-dash');
+  }
+  check(settingsSrc.includes('googleReadOnlyLine(cal.googleAccessRole)'), 'the settings panel must use the line for a Google calendar it can\'t change');
+}
+
 console.log('');
 console.log(passed + ' checks passed, ' + failed + ' failed (' + files.length + ' modules)');
 if (failed > 0) process.exit(1);

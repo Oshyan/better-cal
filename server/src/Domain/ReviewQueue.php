@@ -44,6 +44,10 @@ final class ReviewQueue
     public const KIND_GOOGLE_DIFFERS = 'google_differs';
     /** A whole read of a Google calendar that listed nothing while the calendar holds rows (GoogleSync): not applied, a notice. */
     public const KIND_GOOGLE_EMPTY = 'google_empty';
+    /** A Google calendar whose level moved to view only or busy times only (GoogleWriter::settleAccess): read-only here until editing is restored, a notice. */
+    public const KIND_GOOGLE_READ_ONLY = 'google_read_only';
+    /** A Google calendar Google no longer shows to the account (its lists answer 404): read-only and no longer updating, a notice. */
+    public const KIND_GOOGLE_NOT_SHOWN = 'google_not_shown';
     /** A series change that stopped half way at Google (google_pending): Finish or Put back. */
     public const KIND_GOOGLE_HALF = 'google_half';
 
@@ -1424,10 +1428,44 @@ final class ReviewQueue
             [Time::nowDb(), $userId, self::KIND_GOOGLE_EMPTY, 'google-empty:' . $calendarId]);
     }
 
+    /**
+     * A Google calendar's access level moved to another tier
+     * (GoogleWriter::settleAccess): its one item says the tier it is in now,
+     * read-only (view only, or busy times only) or no longer shown, and none
+     * while it is editable. Whatever item it had for the tier before goes
+     * (closed as gone), a dismissed one included in that it stays dismissed;
+     * so a dismissed item does not come back while the level stays in its
+     * tier, and a new one is opened when the level moves again. Called inside
+     * the writer's own write.
+     *
+     * @param string $tier 'edit', 'view' or 'none' (GoogleWriter::tier)
+     */
+    public static function holdGoogleAccess(Db $db, int $userId, array $calendar, string $tier, string $words): void
+    {
+        $key = 'google-access:' . (int) $calendar['id'];
+        self::closeGoogleAccess($db, $userId, (int) $calendar['id']);
+        if ($tier === 'edit') {
+            return;
+        }
+        $db->insert('review_items', [
+            'user_id' => $userId, 'kind' => $tier === 'none' ? self::KIND_GOOGLE_NOT_SHOWN : self::KIND_GOOGLE_READ_ONLY, 'source_key' => $key, 'event_id' => null,
+            'title' => mb_substr((string) $calendar['name'], 0, 300),
+            'summary' => mb_substr($words, 0, 1000),
+            'payload_json' => json_encode(['calendarId' => (int) $calendar['id'], 'calendarName' => (string) $calendar['name'], 'access' => (string) $calendar['google_access_role']], JSON_INVALID_UTF8_SUBSTITUTE),
+        ]);
+    }
+
+    /** A calendar's access item is no longer true (editable again, kept as a calendar of its own, removed): closed as gone. */
+    public static function closeGoogleAccess(Db $db, int $userId, int $calendarId): void
+    {
+        $db->run("UPDATE review_items SET status = 'gone', decided_at = ? WHERE user_id = ? AND kind IN (?, ?) AND source_key = ? AND status = 'open'",
+            [Time::nowDb(), $userId, self::KIND_GOOGLE_READ_ONLY, self::KIND_GOOGLE_NOT_SHOWN, 'google-access:' . $calendarId]);
+    }
+
     public function dismissGoogleDifferences(int $userId, int $id): array
     {
         $row = $this->requireOpen($userId, $id);
-        if (!in_array($row['kind'], [self::KIND_GOOGLE_DIFFERS, self::KIND_GOOGLE_EMPTY], true)) throw HttpError::notFound('No such Google notice');
+        if (!in_array($row['kind'], [self::KIND_GOOGLE_DIFFERS, self::KIND_GOOGLE_EMPTY, self::KIND_GOOGLE_READ_ONLY, self::KIND_GOOGLE_NOT_SHOWN], true)) throw HttpError::notFound('No such Google notice');
         $this->close($id, 'dismissed');
         return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
     }

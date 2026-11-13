@@ -438,6 +438,21 @@ final class GoogleUndo
      */
     public function undo(array $mutation, ?RequestAuthority $authority = null, bool $force = false): array
     {
+        try {
+            return $this->undoOne($mutation, $authority, $force);
+        } catch (HttpError $e) {
+            // The access rule refused it (GoogleWriter::admit, recheck): said as an undo's refusal.
+            if (GoogleWriter::isReadOnly($e) && is_string($e->extra['access'] ?? null)) {
+                $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) ($e->extra['calendarId'] ?? 0)]) ?? [];
+                throw GoogleWriter::readOnly($calendar, (string) $e->extra['access'], true);
+            }
+            throw $e;
+        }
+    }
+
+    /** @return array{entity:string,op:string} */
+    private function undoOne(array $mutation, ?RequestAuthority $authority, bool $force): array
+    {
         $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
         if (!self::carries(is_array($details) ? $details : null)) {
             throw HttpError::badRequest('This entry has nothing to send back to Google', 'not_undoable');
@@ -448,9 +463,11 @@ final class GoogleUndo
             return $this->undoSeries($mutation, $g, $authority, $force);
         }
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $g['calendarId'], $userId]);
-        if ($calendar === null || !GoogleWriter::writable($calendar)) {
+        if ($calendar === null || !GoogleWriter::bound($calendar)) {
             throw HttpError::badRequest("That calendar no longer writes to Google from here, so this change can't be undone", 'not_undoable');
         }
+        // Stored below writer: Google is asked first, and the undo goes on if it now says writer.
+        $calendar = $this->writer()->recheck($calendar, $authority === null ? null : fn() => $authority->assertValid($this->db, false), true);
         // A day is where its series has it now (dayAt): a later change may have carried it. Its id
         // and its occurrence there are the day's identity for the whole undo, at Google and here
         // alike; the occurrence the entry recorded is never read past this point.
@@ -488,7 +505,8 @@ final class GoogleUndo
                 // here (the edit made it ordinary, or an undo removed the row
                 // the edit made), as Google shows it, read just before and
                 // sent back conditional on that read.
-                $current = $row === null && $send !== [] ? $writer->get($calendar, $googleId) : null;
+                // Read as every write's first read is: the list by the iCalendar UID, whose level decides (readNow).
+                [$current, $items] = $row === null && $send !== [] ? $writer->readNow($calendar, $googleId, $beforeSend) : [null, null];
                 $parsed = $current !== null ? GoogleSync::toParsed($current) : null;
                 if ($current !== null && (!is_array($parsed) || !empty($parsed['cancelled']))) {
                     // A day reads cancelled under a series deleted at Google (probe 10.5, 2026-11-13): that is what
@@ -513,7 +531,7 @@ final class GoogleUndo
                 if ($local) {
                     $this->undo->checkRestore($mutation, true);
                 }
-                $resp = $send === [] ? null : self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $send, $beforeSend, $current));
+                $resp = $send === [] ? null : self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $send, $beforeSend, $current, items: $items));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $send, $googleId, $now, $row, $rowId, $changed, $userId, $summary, $mutation, $local): void {
                     $was = $this->rowTables($rowId);
                     // The row put back first (made again under its id, or
@@ -537,8 +555,11 @@ final class GoogleUndo
 
             case self::DELETE:
                 // Deleted at Google, the resource stays readable under its id
-                // (probe 6.1); one that is live again came back since.
-                $current = $writer->get($calendar, $googleId);
+                // (probe 6.1), and listed cancelled by its iCalUID with showDeleted (the
+                // probe of 2026-11-13, stage listread L5); one that is live again came back since.
+                // An event in no series no longer here is listed by the iCalendar UID its row had (the entry's snapshot).
+                $uidWas = json_decode((string) ($mutation['before_json'] ?? ''), true)['tables']['events'][0]['uid'] ?? null;
+                [$current, $items] = $writer->readNow($calendar, $googleId, $beforeSend, is_string($uidWas) ? $uidWas : null);
                 if ((string) ($current['status'] ?? '') !== 'cancelled') {
                     throw self::conflict();
                 }
@@ -561,7 +582,7 @@ final class GoogleUndo
                 if (is_array($current['start'] ?? null)) {
                     $body = GoogleWriter::overForm($body, isset($current['start']['date']));
                 }
-                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $body, $beforeSend, $current));
+                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $body, $beforeSend, $current, items: $items));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $body, $googleId, $userId, $summary, $mutation, $removed): void {
                     if ($removed) {
                         $this->undo->restoreSnapshots($mutation);
@@ -619,7 +640,7 @@ final class GoogleUndo
                 }
                 // Google replaces the whole guest list on a write: the list
                 // as it is now, with only my answer put back.
-                $current = $writer->get($calendar, $googleId);
+                [$current, $items] = $writer->readNow($calendar, $googleId, $beforeSend);
                 $attendees = (array) ($current['attendees'] ?? []);
                 $was = null;
                 foreach ($attendees as $i => $a) {
@@ -631,7 +652,7 @@ final class GoogleUndo
                 if ($was === null) {
                     throw HttpError::badRequest('Google no longer lists this account as a guest of the event', 'not_undoable');
                 }
-                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['attendees' => array_values($attendees)], $beforeSend, $current));
+                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['attendees' => array_values($attendees)], $beforeSend, $current, items: $items));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $row, $googleId, $userId, $summary, $was, $current, $g, $mutation): void {
                     $attendance = $row['attendance'] ?? null;
                     // The guest list alone was sent back: the answer says nothing of the series' skipped days.
@@ -690,9 +711,11 @@ final class GoogleUndo
     {
         $userId = (int) $mutation['user_id'];
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $g['calendarId'], $userId]);
-        if ($calendar === null || !GoogleWriter::writable($calendar)) {
+        if ($calendar === null || !GoogleWriter::bound($calendar)) {
             throw HttpError::badRequest("That calendar no longer writes to Google from here, so this change can't be undone", 'not_undoable');
         }
+        // Stored below writer: Google is asked first, and the undo goes on if it now says writer.
+        $calendar = $this->writer()->recheck($calendar, $authority === null ? null : fn() => $authority->assertValid($this->db, false), true);
         $summary = self::undoSummary((string) $mutation['summary'], (string) ($mutation['details_json'] ?? ''));
         $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
         $series = new GoogleSeries($this->db, $this->writer(), new Feeds($this->db));

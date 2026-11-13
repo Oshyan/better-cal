@@ -13,6 +13,8 @@
 //   duplicate      two events that might be the same event.
 //   subscription   a feed whose automatic updates need your decision.
 //   plugin         a plugin turned off because the API key that enabled it was revoked.
+//   google_read_only, google_not_shown  a Google calendar Google now lets this account only view,
+//                  or no longer shows: read-only here until that changes (notices, dismissible).
 //
 // The rule that makes it trustworthy, stated in the UI: an emailed change or a
 // suggested plan is not on the calendar until accepted. A paused feed keeps its
@@ -37,8 +39,8 @@ import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
 import { askConfirm } from './ConfirmDialog.js';
 
-const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused', plugin: 'Plugin turned off', google_half: 'Half done at Google', google_differs: 'Google kept something else', google_empty: 'Google listed nothing' };
-const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar', plugin: 'warning', google_half: 'warning', google_differs: 'calendar', google_empty: 'warning' };
+const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused', plugin: 'Plugin turned off', google_half: 'Half done at Google', google_differs: 'Google kept something else', google_empty: 'Google listed nothing', google_read_only: 'Read-only at Google', google_not_shown: 'No longer shown by Google' };
+const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar', plugin: 'warning', google_half: 'warning', google_differs: 'calendar', google_empty: 'warning', google_read_only: 'warning', google_not_shown: 'warning' };
 
 // Which reader made a held emailed event, so an AI reading can be checked
 // before it is added: [phrase, tooltip]. A tier the item lacks (one held
@@ -127,6 +129,9 @@ function ReviewCard({ item, onChanged }) {
         toast('Notice dismissed. The calendar shows what Google stores.');
       } else if (item.kind === 'google_empty') {
         toast('Notice dismissed. Nothing was removed.');
+      } else if (item.kind === 'google_read_only' || item.kind === 'google_not_shown') {
+        // Dismissed, not resolved: the calendar stays read-only until Google says otherwise.
+        toast('Notice dismissed. The calendar stays read-only here until Google allows changes again.');
       } else if (item.kind === 'google_half') {
         // Put back is all or nothing: a series changed at Google since
         // refuses it whole (409), and its words arrive through the catch.

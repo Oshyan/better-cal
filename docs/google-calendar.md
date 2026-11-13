@@ -4,6 +4,8 @@ Better-Cal can read calendars through a connected Google account: ones you own, 
 
 Where the account may edit the calendar (Google's access role `writer` or `owner`: your own calendars, and ones shared with "make changes"), you can create, edit and delete events here too. That's **write-through**, not two-way sync: each change goes to Google first, and Google's answer is saved here the same way a poll would save it, so there's never a local-only version of a Google event. If Google refuses (network, revoked token, a changed role), the request fails with a clear error and nothing here changes. Calendars the account can only view stay read-only, like any feed.
 
+Better-Cal reads the account's access from Google at every poll and at the start of every change, from a request it makes anyway. When the calendar's owner lowers it to view only or busy times only, or stops sharing it, Better-Cal tells you once in Activity and in Review, and the calendar works read-only here: changes, and undoing past changes, are refused with the reason, and nothing is sent. Better-Cal doesn't try to work around it. A change that was half done at that moment stays listed in Review, and its event takes no other change, until full editing is restored at Google or you remove the calendar. If you try a change on a calendar that is read-only here, Better-Cal asks Google first, so access given back works at once, without waiting for the next poll. The Review notice can be dismissed; it comes back only if the access changes again.
+
 ## One-time setup (the operator)
 
 Google requires each install to have its own OAuth client, so whoever runs a Better-Cal install sets one up once, in their own Google Cloud project. It takes about ten minutes.

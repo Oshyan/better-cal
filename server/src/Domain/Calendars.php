@@ -460,6 +460,8 @@ final class Calendars
                 touches: array_merge(Undo::touchesOf($before, $after), array_map(static fn(int $e) => [Undo::keyOf('events', ['id' => $e]), 'source'], $events)));
             // A change left half done on it (its account disconnected, its access paused) can never run now: closed.
             GoogleSeries::closeNeverRunnable($this->db, $this->undo, $userId, $id, GoogleSeries::CLOSED_KEPT);
+            // Its Review notice about Google access is no longer true: the calendar is its own now.
+            ReviewQueue::closeGoogleAccess($this->db, $userId, $id);
         });
         return $this->serializeById($userId, $id);
     }
@@ -530,6 +532,7 @@ final class Calendars
             // Never refused: a change half done at Google on it can never run once it is gone (a Google
             // calendar's delete can't be undone here), so it is closed with it.
             GoogleSeries::closeNeverRunnable($this->db, $this->undo, $userId, $id, GoogleSeries::CLOSED_DELETED);
+            ReviewQueue::closeGoogleAccess($this->db, $userId, $id);
             $next = null;
             $stored = null;
             if ($wasDefault) {

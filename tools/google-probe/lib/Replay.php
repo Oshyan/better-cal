@@ -24,7 +24,7 @@ final class Replay
     public const MARKER_KEY = 'betterCalProbe';
     public const MARKER_PREFIX = 'replay-';
     /** Fields the target sets on its own; dropped on both sides before comparing. Each is listed in README.md. */
-    public const IGNORED = ['etag', 'updated', 'created', 'sequence', 'htmlLink', 'creator', 'organizer', 'kind'];
+    public const IGNORED = ['etag', 'updated', 'created', 'sequence', 'htmlLink', 'creator', 'organizer'];
     /** On a cancelled item only these are compared strictly; any other field that differs is a shape note. */
     public const CANCELLED_CORE = ['id', 'status', 'recurringEventId', 'originalStartTime'];
     private const INSTANCE = '/^(.+)_(\d{8}(?:T\d{6}Z)?)$/';
@@ -555,8 +555,9 @@ final class Replay
 
     /**
      * A resource as compared: target ids and iCalUIDs read back into the recorded namespace (when $idsBack is given),
-     * IGNORED fields dropped, reminders {useDefault: true} and eventType "default" dropped, the replay's marker taken out
-     * of extendedProperties, every dateTime as its UTC instant, each RRULE's parts in one order, keys sorted.
+     * IGNORED fields dropped, the replay's marker taken out of extendedProperties, each RRULE's parts in one order, keys
+     * sorted. What Google writes on its own and the stand-in can model (reminders, eventType, a dateTime's offset, empty
+     * fields left out) is the stand-in's to answer alike, not this function's to ignore (replay-2026-11-13.md).
      */
     public static function normalize(mixed $e, ?array $idsBack, ?array $uidsBack): mixed
     {
@@ -576,12 +577,6 @@ final class Replay
         foreach (self::IGNORED as $k) {
             unset($e[$k]);
         }
-        if (($e['reminders'] ?? null) === ['useDefault' => true]) {
-            unset($e['reminders']);
-        }
-        if (($e['eventType'] ?? null) === 'default') {
-            unset($e['eventType']);
-        }
         if (isset($e['extendedProperties']['private']) && is_array($e['extendedProperties']['private'])) {
             unset($e['extendedProperties']['private'][self::MARKER_KEY]);
             if ($e['extendedProperties']['private'] === []) {
@@ -589,15 +584,6 @@ final class Replay
             }
             if ($e['extendedProperties'] === []) {
                 unset($e['extendedProperties']);
-            }
-        }
-        foreach (['start', 'end', 'originalStartTime'] as $k) {
-            if (isset($e[$k]['dateTime']) && is_string($e[$k]['dateTime'])) {
-                try {
-                    $e[$k]['dateTime'] = (new \DateTimeImmutable($e[$k]['dateTime']))->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i:s\Z');
-                } catch (\Exception) {
-                    // left as given: an unreadable value compares as text
-                }
             }
         }
         if (isset($e['recurrence']) && is_array($e['recurrence'])) {

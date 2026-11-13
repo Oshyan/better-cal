@@ -13,6 +13,8 @@ if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
     exit;
 }
 
+// A full run's report peaks near 140 MB (it was 126 MB, at the CLI's 128 MB edge, before answers carried reminders and eventType).
+ini_set('memory_limit', '512M');
 $root = dirname(__DIR__, 2);
 require $root . '/server/src/bootstrap.php';
 require __DIR__ . '/lib/Api.php';

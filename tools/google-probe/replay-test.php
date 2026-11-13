@@ -377,12 +377,34 @@ check('error: what it made before is deleted', liveReplayMarked($target) === [] 
 // ---- 8. Normalizing: what legitimately differs is left out, nothing else -----------------------------------------------
 $a = ['id' => 'x1', 'etag' => '"1"', 'updated' => 'a', 'created' => 'b', 'sequence' => 0, 'htmlLink' => 'l', 'creator' => ['email' => 'a@example.com'], 'organizer' => ['email' => 'b@example.com'], 'kind' => 'calendar#event',
     'start' => ['dateTime' => '2027-03-01T10:00:00-08:00', 'timeZone' => LA], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=3;BYDAY=MO'], 'summary' => 'S'];
-$b = ['summary' => 'S', 'recurrence' => ['RRULE:BYDAY=MO;FREQ=WEEKLY;COUNT=3'], 'start' => ['timeZone' => LA, 'dateTime' => '2027-03-01T18:00:00Z'], 'id' => 'y1', 'etag' => '"9"', 'sequence' => 2,
-    'reminders' => ['useDefault' => true], 'eventType' => 'default', 'extendedProperties' => ['private' => [Replay::MARKER_KEY => 'replay-abc']]];
-check('normalize: ids mapped back, volatile fields, default reminders, the marker, offsets and rule order left out', Replay::normalize($a, null, null) === Replay::normalize($b, ['y1' => 'x1'], []), json_encode([Replay::normalize($a, null, null), Replay::normalize($b, ['y1' => 'x1'], [])]));
+$b = ['summary' => 'S', 'recurrence' => ['RRULE:BYDAY=MO;FREQ=WEEKLY;COUNT=3'], 'start' => ['timeZone' => LA, 'dateTime' => '2027-03-01T10:00:00-08:00'], 'id' => 'y1', 'etag' => '"9"', 'sequence' => 2,
+    'kind' => 'calendar#event', 'extendedProperties' => ['private' => [Replay::MARKER_KEY => 'replay-abc']]];
+check('normalize: ids mapped back, volatile fields, the marker and rule order left out', Replay::normalize($a, null, null) === Replay::normalize($b, ['y1' => 'x1'], []), json_encode([Replay::normalize($a, null, null), Replay::normalize($b, ['y1' => 'x1'], [])]));
 check('normalize: an instance id maps through its series, both forms', Replay::backId('y1_20270301', ['y1' => 'x1']) === 'x1_20270301' && Replay::backId('y1_20270301T180000Z', ['y1' => 'x1']) === 'x1_20270301T180000Z' && Replay::backId('z9_20270301', ['y1' => 'x1']) === null);
 check('normalize: a different summary still differs', Replay::normalize($a, null, null) !== Replay::normalize(['summary' => 'T'] + $b, ['y1' => 'x1'], []));
-check('normalize: reminders that are not the default still count', Replay::normalize($a, null, null) !== Replay::normalize(['reminders' => ['useDefault' => false]] + $b, ['y1' => 'x1'], []));
+// What Google writes on its own is the stand-in's to answer alike (replay-2026-11-13.md), so it counts here.
+check('normalize: reminders, eventType, an empty description and another offset for the same instant all still count',
+    Replay::normalize($a, null, null) !== Replay::normalize(['reminders' => ['useDefault' => true]] + $b, ['y1' => 'x1'], [])
+    && Replay::normalize($a, null, null) !== Replay::normalize(['eventType' => 'default'] + $b, ['y1' => 'x1'], [])
+    && Replay::normalize($a, null, null) !== Replay::normalize(['description' => ''] + $b, ['y1' => 'x1'], [])
+    && Replay::normalize($a, null, null) !== Replay::normalize(['start' => ['timeZone' => LA, 'dateTime' => '2027-03-01T18:00:00Z']] + $b, ['y1' => 'x1'], []));
+
+// ---- The stand-in's answers are shaped as Google's (replay-2026-11-13.md) ------------------------------------------------
+$fake = new FakeGoogle(CAL);
+$api = new Api($fake->transport(), static fn(): string => 'fake-token', CAL, $nap, 0.0);
+$timed = $api->call('POST', '/events', [], ['summary' => 'Sample', 'description' => '', 'location' => '', 'recurrence' => [], 'source' => null,
+    'start' => ['dateTime' => '2027-05-03T18:00:00+00:00', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2027-05-03T19:00:00+00:00', 'timeZone' => 'UTC']])['response'];
+$day = $api->call('POST', '/events', [], ['summary' => 'Sample day', 'start' => ['date' => '2027-05-04'], 'end' => ['date' => '2027-05-05'], 'recurrence' => ['RRULE:FREQ=DAILY;COUNT=2']])['response'];
+check('shape: an empty description, location and recurrence and a null field are left out', !array_key_exists('description', $timed) && !array_key_exists('location', $timed) && !array_key_exists('recurrence', $timed) && !array_key_exists('source', $timed), json_encode($timed));
+check('shape: a dateTime is written with the calendar\'s offset, the event\'s zone kept', $timed['start'] === ['dateTime' => '2027-05-03T11:00:00-07:00', 'timeZone' => 'UTC'], json_encode($timed['start']));
+check('shape: reminders default on a timed event, not on an all-day one; eventType default', $timed['reminders'] === ['useDefault' => true] && $day['reminders'] === ['useDefault' => false] && $timed['eventType'] === 'default');
+$items = $api->call('GET', '/events/' . $day['id'] . '/instances')['response']['items'] ?? [];
+check('shape: list items and instances shaped too', $items !== [] && ($items[0]['reminders'] ?? null) === ['useDefault' => false] && ($items[0]['eventType'] ?? null) === 'default');
+$stale = $api->call('PATCH', '/events/' . $timed['id'], [], ['summary' => 'x'], ['If-Match: "1"']);
+check('shape: a PATCH\'s 412 in Google\'s words', $stale['status'] === 412 && ($stale['response']['error']['message'] ?? '') === 'Precondition check failed.' && ($stale['response']['error']['errors'][0]['reason'] ?? '') === 'failedPrecondition');
+$gone = $api->call('GET', '/events/nosuchevent1');
+check('shape: a 404 with Google\'s reason', ($gone['response']['error']['errors'][0]['reason'] ?? '') === 'notFound' && ($gone['response']['error']['message'] ?? '') === 'Not Found');
+check('shape: the store is left as sent', ($fake->events[$timed['id']]['description'] ?? null) === '');
 $c = Replay::compare(['path' => '/events', 'status' => 200, 'response' => ['items' => [['id' => 'x1_20270301', 'status' => 'cancelled', 'summary' => 'S']]]],
     ['status' => 200, 'response' => ['items' => [['id' => 'y1_20270301', 'status' => 'cancelled']]]], ['y1' => 'x1'], []);
 check('compare: a cancelled item\'s extra field is a shape note, not a divergence', $c['differs'] === [] && count($c['shape']) === 1 && $c['shape'][0]['field'] === 'summary', json_encode($c));

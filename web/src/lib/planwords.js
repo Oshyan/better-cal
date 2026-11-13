@@ -895,15 +895,22 @@ const SPLIT_REFUSALS = {
 // is not offered there, and these say why in its place. None since 1.5.4:
 // a Google calendar takes every scope.
 const UNOFFERED = {};
-// A switch between timed and all-day that Google would hide days with (GoogleSeries::hiddenRefusal): its days, up
-// to three named and the rest counted, and the way that works, in the person's own date and time formats.
+// A switch between timed and all-day that Google would hide days with (GoogleSeries::hiddenRefusal, whose words are
+// the same: change both together). Google's own fault, undocumented: it stops showing a day of the new form at the
+// instant of a day it holds a record for. Days nobody deleted are named as lost; days deleted here as ones Better-Cal
+// could no longer read back. Up to three named, the rest counted; the dates and the time in the person's formats.
 function hiddenWords(r) {
-  const days = (r.days || []).map((d) => fmtDay(d));
-  const named = days.length > 3 ? days.slice(0, 3).join(', ') + ' and ' + (days.length - 3) + ' more' : andList(days);
-  const lose = 'Google Calendar would hide ' + (days.length === 1 ? 'a day' : 'days') + ' of this event (' + named + ')';
-  if (r.toAllDay) return lose + ' if it became all-day at its current time. Move it to another time first, then make it all-day.';
-  const clock = fmtClock(r.clock);
-  return lose + ' if it became timed at ' + clock + '. Make it timed at another time first, then change the time to ' + clock + '.';
+  const deleted = new Set(r.deleted || []);
+  const named = (list) => { const d = list.map((x) => fmtDay(x)); return d.length > 3 ? d.slice(0, 3).join(', ') + ' and ' + (d.length - 3) + ' more' : andList(d); };
+  const live = (r.days || []).filter((d) => !deleted.has(d));
+  const gone = (r.days || []).filter((d) => deleted.has(d));
+  const clock = r.toAllDay ? '' : fmtClock(r.clock);
+  const when = r.toAllDay ? 'if this event became all-day at its current time' : 'if this event became timed at ' + clock;
+  const what = live.length > 0
+    ? 'Google would stop showing ' + (live.length === 1 ? 'one of its days' : 'some of its days') + ' (' + named(live) + '), though nothing deleted ' + (live.length === 1 ? 'it' : 'them')
+    : 'Google would lose track of ' + (gone.length === 1 ? 'a day' : 'days') + ' deleted from it (' + named(gone) + '), so Better-Cal could no longer tell ' + (gone.length === 1 ? 'it was' : 'they were') + ' deleted';
+  const way = r.toAllDay ? 'Move the event to another time first, then make it all-day.' : 'Make it timed at another time first, then change the time to ' + clock + '.';
+  return 'Google Calendar has a fault here: ' + when + ', ' + what + '. ' + way;
 }
 /** A refusal's sentence, by its code (and the plan's scope: a split's are its own); $r, the refusal itself, for one whose words carry its data. */
 export const refusalWords = (code, scope, r = null) => (code === 'googleHidden' && r ? hiddenWords(r) : null)

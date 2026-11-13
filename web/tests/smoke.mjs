@@ -6668,6 +6668,16 @@ console.log('--- the scopes an occurrence has, one rule for every chooser (1.5.1
   const { changeSeriesScope, cancelSeriesChange } = await import('../src/app/serieschange.js');
   const { refusalWords, unofferedWords } = await import('../src/lib/planwords.js');
   const { planRefusal } = await import('../src/lib/seriesplan.js');
+  {
+    // A switch Google would hide days with: the client's words are the server's (GoogleSeries::hiddenWords), from the data.
+    const hidden = { code: 'googleHidden', days: ['2027-01-11', '2027-01-18'], deleted: ['2027-01-18'], toAllDay: true, clock: null };
+    const w = planRefusal({ scope: 'all', refusals: [hidden] });
+    assert('hidden switch: the refusal says it is Google Calendar\'s fault and names the day nobody deleted', w.startsWith('Google Calendar has a fault here: if this event became all-day at its current time, Google would stop showing one of its days (')
+      && !w.includes('18') && w.endsWith('though nothing deleted it. Move the event to another time first, then make it all-day.'));
+    const gone = refusalWords('googleHidden', 'all', { days: ['2027-01-18'], deleted: ['2027-01-18'], toAllDay: false, clock: '09:00' });
+    assert('hidden switch: only deleted days met, to timed: named as days Better-Cal could no longer read back, the time named', gone.includes('Google would lose track of a day deleted from it (')
+      && gone.includes('so Better-Cal could no longer tell it was deleted. Make it timed at another time first, then change the time to '));
+  }
   const { state: st, set: put } = await import('../src/app/store.js');
   const tick = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });

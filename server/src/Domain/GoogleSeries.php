@@ -825,9 +825,9 @@ final class GoogleSeries
                 // Google would hide days with is refused").
                 $h = self::held($reads[$i], (string) $t['googleId']);
                 if ($h['master'] !== null) {
-                    $hidden = self::hiddenRefusal($h['master'], $t['master'], array_merge(array_keys($h['records']), array_keys($h['cancelled'])), $thisYear);
+                    $hidden = self::hiddenRefusal($h['master'], $t['master'], array_merge(array_keys($h['records']), array_keys($h['cancelled'])), array_keys($h['cancelled']), $thisYear);
                     if ($hidden !== null) {
-                        throw new HttpError('google_hidden_days', $hidden['words'], 409, ['days' => $hidden['days'], 'toAllDay' => $hidden['toAllDay'], 'clock' => $hidden['clock']]);
+                        throw new HttpError('google_hidden_days', $hidden['words'], 409, array_diff_key($hidden, ['words' => true]));
                     }
                 }
                 $carried[$i] = self::carriedExdates($h, $t);
@@ -1739,16 +1739,18 @@ final class GoogleSeries
 
     /**
      * The refusal of such a switch, or null when it hides no day: `days`, the
-     * days it would hide, as they would show after it (dates, Y-m-d), `toAllDay`, and
-     * `clock` (H:i in the new zone) when the switch is to timed; `words`, the
-     * sentence (up to three days named, the rest counted, and the way that
-     * works, 3.63 and 3.64). The client composes the same sentence from the
-     * data in the person's own formats.
+     * days it would hide, as they would show after it (dates, Y-m-d), with
+     * `deleted` those of them that are days deleted here (their record at
+     * Google a cancelled one), `toAllDay`, and `clock` (H:i in the new zone)
+     * when the switch is to timed; `words`, the sentence (hiddenWords). The
+     * client composes the same sentence from the data in the person's own
+     * formats (planwords.js, hiddenWords).
      *
-     * @param list<string> $keys
-     * @return array{days:list<string>, toAllDay:bool, clock:?string, words:string}|null
+     * @param list<string> $keys every day Google holds a record for
+     * @param list<string> $deletedKeys those of them it holds cancelled
+     * @return array{days:list<string>, deleted:list<string>, toAllDay:bool, clock:?string, words:string}|null
      */
-    public static function hiddenRefusal(array $old, array $new, array $keys, int $thisYear): ?array
+    public static function hiddenRefusal(array $old, array $new, array $keys, array $deletedKeys, int $thisYear): ?array
     {
         $hidden = self::hiddenBySwitch($old, $new, $keys);
         if ($hidden === []) {
@@ -1757,16 +1759,49 @@ final class GoogleSeries
         // The days hidden are the new form's, each where it would show after the switch: a daily series' record can
         // hide the next day's all-day day (19:00 New York is 00:00 UTC the day after).
         $zone = Time::zone((int) $new['all_day'] === 1 ? 'UTC' : (string) $new['tzid']);
-        $dns = array_values(array_unique(array_map(static fn(string $k): int => Cal::dnOf(Time::fromDb($k)->setTimezone($zone)), $hidden)));
-        $days = array_map(static fn(int $dn): string => Words::date($dn, $thisYear), $dns);
-        $named = count($days) > 3 ? implode(', ', array_slice($days, 0, 3)) . ' and ' . (count($days) - 3) . ' more' : Words::andList($days);
-        $lose = 'Google Calendar would hide ' . (count($days) === 1 ? 'a day' : 'days') . " of this event ($named)";
+        $deletedSet = array_fill_keys(array_map(static fn($k): string => Time::toDb(Time::fromDb((string) $k)), $deletedKeys), true);
+        $days = [];
+        $deleted = [];
+        foreach ($hidden as $k) {
+            $date = Cal::date(Cal::dnOf(Time::fromDb($k)->setTimezone($zone)));
+            $days[$date] = true;
+            if (isset($deletedSet[$k])) {
+                $deleted[$date] = true;
+            }
+        }
+        $days = array_keys($days);
+        $deleted = array_keys($deleted);
         $toAllDay = (int) $new['all_day'] === 1;
         $clock = $toAllDay ? null : Time::fromDb((string) $new['start_utc'])->setTimezone(Time::zone((string) $new['tzid']))->format('H:i');
-        $words = $toAllDay
-            ? "$lose if it became all-day at its current time. Move it to another time first, then make it all-day."
-            : "$lose if it became timed at $clock. Make it timed at another time first, then change the time to $clock.";
-        return ['days' => array_map(static fn(int $dn): string => Cal::date($dn), $dns), 'toAllDay' => $toAllDay, 'clock' => $clock, 'words' => $words];
+        return ['days' => $days, 'deleted' => $deleted, 'toAllDay' => $toAllDay, 'clock' => $clock, 'words' => self::hiddenWords($days, $deleted, $toAllDay, $clock, $thisYear)];
+    }
+
+    /**
+     * The sentence of a switch Google would hide days with: the one place its
+     * words are written here (the client's planwords.js hiddenWords is the
+     * same; change both together). It says that it is Google Calendar's own
+     * fault, what would be lost, and the way that works (3.63, 3.64): days
+     * nobody deleted are named as days Google would stop showing; where only
+     * deleted days meet, as days Better-Cal could no longer read back as
+     * deleted. Up to three named, the rest counted.
+     *
+     * @param list<string> $days dates (Y-m-d)
+     * @param list<string> $deleted those of $days deleted here
+     */
+    public static function hiddenWords(array $days, array $deleted, bool $toAllDay, ?string $clock, int $thisYear): string
+    {
+        $named = static function (array $dates) use ($thisYear): string {
+            $words = array_map(static fn(string $d): string => Words::date(Cal::dnOf(Time::fromDb($d . ' 00:00:00')), $thisYear), $dates);
+            return count($words) > 3 ? implode(', ', array_slice($words, 0, 3)) . ' and ' . (count($words) - 3) . ' more' : Words::andList($words);
+        };
+        $live = array_values(array_diff($days, $deleted));
+        $gone = array_values(array_intersect($days, $deleted));
+        $when = $toAllDay ? 'if this event became all-day at its current time' : "if this event became timed at $clock";
+        $what = $live !== []
+            ? 'Google would stop showing ' . (count($live) === 1 ? 'one of its days' : 'some of its days') . ' (' . $named($live) . '), though nothing deleted ' . (count($live) === 1 ? 'it' : 'them')
+            : 'Google would lose track of ' . (count($gone) === 1 ? 'a day' : 'days') . ' deleted from it (' . $named($gone) . '), so Better-Cal could no longer tell ' . (count($gone) === 1 ? 'it was' : 'they were') . ' deleted';
+        $way = $toAllDay ? 'Move the event to another time first, then make it all-day.' : "Make it timed at another time first, then change the time to $clock.";
+        return "Google Calendar has a fault here: $when, $what. $way";
     }
 
     /**

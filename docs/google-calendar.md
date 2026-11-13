@@ -98,7 +98,7 @@ Activity records each write ("Updated 'Team lunch' on Google calendar 'Book club
 
 ## When Someone Else Changes the Same Event
 
-Better-Cal reads Google first, before every change it makes: before a change, before Finish, before Put back and before an undo. If the event changed at Google since the calendar here last read it, the change is refused and nothing is sent, and the notice says what differs. Each write also tells Google which version it was made from, and Google refuses it if that version is gone. A change at Google to a field Better-Cal isn't changing is no conflict and stays as Google has it.
+Better-Cal reads Google first, before every change it makes: before a change, before Finish, before Put back and before an undo. If the event changed at Google since the calendar here last read it, the change is refused and nothing is sent, and the notice says so (it doesn't yet name what changed there: refresh to see it). A change's first write to the event also tells Google which version it was made from, and Google refuses it if that version is gone; the days of a change to all events, written right after it, go without that check. A change at Google to a field Better-Cal isn't changing is no conflict and stays as Google has it.
 
 While one of Better-Cal's own changes is being sent (a few requests, a few seconds for a change to all events of a repeating event), the last write wins: Better-Cal doesn't try to catch a change someone else makes to the same event inside that window. If someone renames a day of the series in Google Calendar in the same seconds, the change from here may write over it. What the calendar shows afterwards is what Google holds.
 

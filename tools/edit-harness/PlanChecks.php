@@ -226,7 +226,7 @@ trait PlanChecks
         'next[]' => ['start', 'allDay', 'tz', 'kind', 'words'],
         'counts' => ['events', 'edited', 'skipped'],
         'groups[]' => ['id', 'label', 'selected', 'day', 'days', 'count', 'field', 'value', 'dates', 'side', 'splits', 'counted', 'from', 'to', 'shift', 'by', 'length', 'options'],
-        'options[]' => ['id', 'label', 'rrule', 'date', 'start', 'next', 'dates', 'then', 'earlier', 'earlierSeries', 'bound', 'differs', 'words', 'disabled', 'reason', 'code', 'days', 'toAllDay', 'clock'],
+        'options[]' => ['id', 'label', 'rrule', 'date', 'start', 'next', 'dates', 'then', 'earlier', 'earlierSeries', 'bound', 'differs', 'words', 'disabled', 'reason', 'code', 'days', 'deleted', 'toAllDay', 'clock'],
         'entry' => ['start', 'allDay', 'tz'],
         'days[]' => ['key', 'newKey', 'kind', 'row', 'title', 'day', 'ownDate', 'before', 'after', 'shows', 'to', 'at', 'tz', 'why', 'side', 'outcome', 'head', 'outcomeWords', 'words', 'kept', 'takes'],
         'placement' => ['date', 'at', 'tz', 'kind'],
@@ -234,7 +234,7 @@ trait PlanChecks
         'losses[]' => ['why', 'count', 'dates', 'member', 'period', 'every', 'words'],
         'every' => ['count', 'span', 'unit'],
         'notes[]' => ['kind', 'date', 'clock', 'at', 'tz', 'fold', 'daylight', 'words'],
-        'refusals[]' => ['group', 'option', 'code', 'words', 'days', 'toAllDay', 'clock'],
+        'refusals[]' => ['group', 'option', 'code', 'words', 'days', 'deleted', 'toAllDay', 'clock'],
         'fields[]' => ['field', 'words', 'was', 'now', 'mixed'],
     ];
     /** Fields every plan has; the refused plan (a refusal of the whole change) has no zone, acted or bound.from. */

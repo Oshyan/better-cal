@@ -848,8 +848,15 @@ export async function undoEntries(ids) {
     }
     toast('Undone');
   } catch (e) {
-    toast(e.code === 'stale_undo' ? 'Not undone: this was changed again after that. To undo it anyway and overwrite the newer change, use Undo on the Activity page.' : e.code === 'not_undoable' || e.code === 'google_conflict' ? e.message : 'Undo failed: ' + e.message, { error: true });
+    toast(e.code === 'stale_undo' ? 'Not undone: this was changed again after that. To undo it anyway and overwrite the newer change, use Undo on the Activity page.' : undoFailedWords(e), { error: true });
   }
   await afterUndo();
 }
 
+
+// A refused undo in words: the server's own sentence where it is one written for the person (it says what happened and
+// what to do), else "Undo failed: " and the error.
+const WHOLE_SENTENCE = new Set(['not_undoable', 'google_conflict', 'google_deleted', 'google_hidden_days']);
+export function undoFailedWords(e) {
+  return WHOLE_SENTENCE.has(e && e.code) ? e.message : 'Undo failed: ' + (e && e.message);
+}

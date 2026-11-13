@@ -168,12 +168,6 @@ return [
         'cases' => ['zone-same-moment-from-a-gap-day-keeps-its-instant-and-stays'],
     ],
     [
-        'id' => 'refused-default-stays-selected', 'file' => $model, 'checks' => ['i-google'],
-        'what' => 'a group the mapping picks keeps its default when that option\'s plan is refused at Google, so the change is refused though another option holds',
-        'patch' => [["if ((\$this->hold && !\$probe) || \$out === null || \$out['writes'] !== null) {", "if (true || \$out === null || \$out['writes'] !== null) {"]],
-        'cases' => ['google-a-bound-keeping-a-timed-day-under-an-all-day-series-is-offered-as-locally'],
-    ],
-    [
         'id' => 'day-from-before', 'file' => $model, 'checks' => ['c-placement'],
         'what' => 'day taken from the before placement instead of the old key\'s day',
         'patch' => [["\$out = ['day' => \$this->identityOut((string) \$row['recurrence_instance_utc'])]", "\$out = ['day' => \$this->placementOut(\$row, \$this->displayZone())['date']]"]],

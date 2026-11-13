@@ -773,8 +773,9 @@ final class Model
      * option is. A named option that is refused moves too, so its plan shows
      * it disabled; committing it is refused (SeriesPlans::checkedPlan).
      * This covers the groups picked before the mapping (the zone, the
-     * adoptions); mapHeld() the ones the mapping picks. A plan that leaves
-     * no events is the readings' own refusal (Bounds), not moved here.
+     * adoptions). The groups the mapping picks (bound, edge, outside, moved
+     * days, own fields) are never refused by map(): its plan is refused only
+     * as leaving no events, the readings' own refusal (Bounds), not moved here.
      */
     private function selectedEnabled(array $choices, array $refused): array
     {
@@ -1292,7 +1293,7 @@ final class Model
                 $reading = $r;
             }
         }
-        $out = $this->mapHeld($reading, $land, false);
+        $out = $this->map($reading, $land, false);
         if ($out === null) {
             return $this->refused('empty');
         }
@@ -1306,46 +1307,12 @@ final class Model
                     $keys[] = (string) $row['recurrence_instance_utc'];
                 }
             }
-            $hidden = \BetterCal\Domain\GoogleSeries::hiddenRefusal($this->master, $out['writes']['master'] + $this->master, $keys, $this->thisYear);
+            $hidden = \BetterCal\Domain\GoogleSeries::hiddenRefusal($this->master, $out['writes']['master'] + $this->master, $keys, $this->exdates, $this->thisYear);
             if ($hidden !== null) {
-                return $this->refused('googleHidden', $hidden['words'], ['days' => $hidden['days'], 'toAllDay' => $hidden['toAllDay'], 'clock' => $hidden['clock']]);
+                return $this->refused('googleHidden', $hidden['words'], array_diff_key($hidden, ['words' => true]));
             }
         }
         return $out;
-    }
-
-    /**
-     * map() with the one rule for every group (selectedEnabled): when the
-     * plan under the current choices is refused, each group the mapping
-     * picked (the bound, the edge, the days outside, the moved days, the own
-     * fields) moves, in the plans' order, to its first other enabled option
-     * whose plan holds. So a reading's own plan (merged()) is its plan with
-     * those selections moved, never refused for a default another option
-     * avoids. Nothing moves in the mapping of one option's own plan
-     * (run()), though its readings are still judged by their own plans.
-     */
-    private function mapHeld(array $reading, array $land, bool $probe): ?array
-    {
-        $saved = [$this->groups, $this->refusals, $this->notes, $this->choices];
-        $out = $this->map($reading, $land, $probe);
-        if (($this->hold && !$probe) || $out === null || $out['writes'] !== null) {
-            return $out;
-        }
-        foreach (array_slice($this->groups, count($saved[0])) as $g) {
-            foreach ($g['options'] as $o) {
-                if (!empty($o['disabled']) || $o['id'] === $g['selected']) {
-                    continue;
-                }
-                [$this->groups, $this->refusals, $this->notes] = [$saved[0], $saved[1], $saved[2]];
-                $this->choices = [$g['id'] => $o['id']] + $saved[3];
-                $alt = $this->map($reading, $land, $probe);
-                if ($alt !== null && $alt['writes'] !== null) {
-                    return $alt;
-                }
-            }
-        }
-        [$this->groups, $this->refusals, $this->notes, $this->choices] = $saved;
-        return $this->map($reading, $land, $probe);
     }
 
     /**
@@ -1999,7 +1966,7 @@ final class Model
             $saved = [$this->groups, $this->refusals, $this->notes, $this->choices];
             $this->groups = [];
             $this->choices = [];
-            $m = $this->mapHeld($r, $land, true);
+            $m = $this->map($r, $land, true);
             [$this->groups, $this->refusals, $this->notes, $this->choices] = $saved;
             if ($m === null) {
                 // Nothing left (Bounds): refused, and the rest of the plan stands.

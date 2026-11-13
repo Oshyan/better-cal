@@ -89,7 +89,7 @@ What hides a day is a record (live or cancelled, with its `originalStartTime`) a
 - The planner's refusal, from the rows here, before anything is sent: an edited or deleted day at such an instant.
 - A second check in `run()`, over step 1's read: any record of the series at such an instant, a record at the series' values included. The rows here can't show that one (it is an ordinary day to the app), and 3.65 shows it is hidden too, so this check is needed. It costs no request. It refuses before the master write, with the same sentence.
 
-The refusal in `Model::compute()` does not make the mutation `refused-default-stays-selected` killable: `compute()`'s refusals reach the option-disabling loop in `run()` (each option's plan computed and disabled with the reason), not the loop in `mapHeld()`, which only a refused plan from `map()` reaches. Placed in `map()`, the refusal would let `mapHeld()` pick another bound or edge to avoid it, silently cutting a person's series; it belongs in `compute()`. So the `mapHeld()` loop stays unreachable and should go with its mutation.
+The refusal in `Model::compute()` does not make the mutation `refused-default-stays-selected` killable: `compute()`'s refusals reach the option-disabling loop in `run()` (each option's plan computed and disabled with the reason), not the loop in `mapHeld()`, which only a refused plan from `map()` reaches. Placed in `map()`, the refusal would let `mapHeld()` pick another bound or edge to avoid it, silently cutting a person's series; it belongs in `compute()`. So the `mapHeld()` loop stays unreachable and should go with its mutation (it went with the narrow path: `map()` is called directly).
 
 ## Tests whose expectation changes
 

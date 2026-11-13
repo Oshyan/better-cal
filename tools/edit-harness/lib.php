@@ -457,6 +457,10 @@ final class Runner
                 $cur = $c;
             }
         }
+        // A case with no vector (a sequence, or one recorded without an edit) has nothing more to shrink.
+        if (!is_array($cur['vector'] ?? null)) {
+            return $best;
+        }
         foreach (Delta::ZEROABLE as $d) {
             $z = Delta::zero($cur['vector'], $d);
             if ($z === null) {

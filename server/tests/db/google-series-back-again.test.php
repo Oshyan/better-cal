@@ -72,17 +72,23 @@ return static function (Db $db): void {
     }
 
     // Requirement 1: a field Google sets by itself on our write is ours. A switch to all-day stopped right after its master
-    // write (the next write meets the network down): Google answered the master with reminders it set itself (useDefault
-    // false, as on every all-day event), and Put back runs.
+    // write (the next write refused by Google, the network up, so the change reads the series where it stops): Google
+    // answered the master with reminders it set itself (useDefault false, as on every all-day event), and Put back runs
+    // on what that stop read found.
     scenario('google back again: a switch to all-day stopped after its master write, Google setting the master\'s reminders itself; Put back runs', function () use ($begin, $to, $state, $keys, $db): void {
         $t = $begin('10:00');
         try {
             $t->s->knobs->writes = 0;
-            $t->s->knobs->netAt = 2;
+            $t->s->knobs->beforeAt = 2;
+            $from = count($t->s->fake->requests);
             [, $stopped] = H::tryChange($t, $to('10:00', 'all-day'));
-            $t->s->knobs->netAt = null;
-            $t->s->knobs->down = false;
+            $t->s->knobs->beforeAt = null;
             checkEq('the switch stops half done after its master write', [true, 1], [$stopped !== null, count(H::halfDone($t))]);
+            // The stop read: after the master's write and its read-back, the series is read once more where the change stopped.
+            $after = array_values(array_map(static fn(array $r): string => $r['method'] . (str_ends_with((string) $r['path'], '/events') ? ' list' : ''), array_slice($t->s->fake->requests, $from)));
+            $patch = array_search('PATCH', $after, true);
+            checkEq('the change read the series after its master write twice: the read-back, and the read where it stopped', ['GET list', 'GET list'],
+                $patch === false ? null : array_values(array_filter(array_slice($after, $patch + 1), static fn(string $m): bool => $m === 'GET list')));
             [, $refused] = H::recover($t, 'putback');
             checkEq('Put back runs: the series timed again, the renamed day and the deleted day as they were, nothing half done',
                 [null, ['Sample series (own)', [$keys['10:00'][1]], 'Sample series (own)', [$keys['10:00'][1]], 0]], [$refused, $state($t, '10:00')]);

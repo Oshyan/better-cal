@@ -64,25 +64,30 @@ No prediction is needed: whatever our change did is already in the stop's read, 
 
 ## What Google accepts with no If-Match
 
-| The day at Google | Proven with no If-Match | Proven only with its own etag | Case to settle |
-|---|---|---|---|
-| Ordinary, no record: its fields | 2.1 to 2.3 (timed and all-day), 2.7 (the app's whole body), 2.8 and 2.9 (east of UTC), the setup of every group 3 and 10 case | | |
-| Ordinary, no record: cancelled | 2.5 (`PATCH` status), 2.4 (`DELETE`) | | |
-| A live record (an edited day) written again | | 3.36 and 3.40 change 2, 10.2, 10.3 | 3.66 |
-| A revived record (dropped, then a day again) | | 3.36, 3.37, 10.2, 10.3 | 3.66 |
-| A cancelled record made a live edited day | | none at instance level (10.4 is the master's) | 3.66 |
-| A record put back to the series' values | | 10.2 (8 sent again) | 3.66 |
-| A live record cancelled | | 3.36 (occurrence 3 after revival) | 3.66 |
-| A day hidden by a switch at a meeting key | 404 (3.48) | 412 (3.48) | none needed: named |
-| A day past the 730-occurrence cap | 404 (contract) | | |
+| The day at Google | With no If-Match | Also with its own etag |
+|---|---|---|
+| Ordinary, no record: its fields | 2.1 to 2.3 (timed and all-day), 2.7 (the app's whole body), 2.8 and 2.9 (east of UTC), the setup of every group 3 and 10 case | |
+| Ordinary, no record: cancelled | 2.5 (`PATCH` status), 2.4 (`DELETE`) | |
+| A live record (an edited day) written again whole | 3.66: 200, its new values | 3.36 and 3.40 change 2, 10.2, 10.3 |
+| A revived record (dropped, then a day again) | 3.66: 200, its own values | 3.36, 3.37, 10.2, 10.3 |
+| A cancelled record made a live edited day | 3.66: 200, `confirmed`, listed live with its own values | |
+| A record put back to the series' values | 3.66: 200, the series' title and notes | 10.2 (8 sent again) |
+| A live record cancelled | 3.66: 200, `cancelled` | 3.36 (occurrence 3 after revival) |
+| Ordinary, no record: cancelled again in the same run | 3.66: 200 | |
+| Days sent after a clock change and after a switch (the run's own order) | 3.63, 3.64: every day write 200 | |
+| A day hidden by a switch at a meeting key | 404 (3.48, 3.65) | 412 (3.48) |
+| A day past the 730-occurrence cap | 404 (contract) | |
 
-Unproven until 3.66 answers: every state with a record. Unproven and not cased: a day of a series someone deleted inside the window (10.5 shows its instances read 200 `cancelled`; whether a `PATCH` with no If-Match revives one is unknown; the final read shows the master cancelled and the change names it).
+Every state a run meets is now proven with no If-Match (live run of 2026-11-13T20:56:40+01:00). Still unproven and not cased: a day of a series someone deleted inside the window (10.5 shows its instances read 200 `cancelled`; whether a `PATCH` with no If-Match revives one is unknown; the final read shows the master cancelled and the change names it).
 
 `GoogleWriter::call` refuses a `PATCH` or `DELETE` with no If-Match ("none goes without the etag of a read"). The day steps of `run()` need an explicit exemption there, named for what it is; every other write stays conditional.
 
 ## Cause 1 under this model
 
-The planner's refusal (a switch between timed and all-day while an edited or deleted day sits at an instant that is also a day of the new form) stays the one guard, from the rows here, before anything is sent. A second check in `run()` over the first read's records is needed only if probe 3.65 shows that a record at the series' values (which the rows here don't show: an ordinary day to the app) is hidden too; it would cost no request, using step 1's read. If 3.65 shows such a day survives, the second check is not needed: a day hidden by some other path answers 404 to its unconditional write and is named, not passed over in silence.
+What hides a day is a record (live or cancelled, with its `originalStartTime`) at an instant that is also a day of the new form, at the moment of the switch. A dropped record there does not (3.63, 3.64), and a record at the series' values does (3.65). Two guards, one predicate:
+
+- The planner's refusal, from the rows here, before anything is sent: an edited or deleted day at such an instant.
+- A second check in `run()`, over step 1's read: any record of the series at such an instant, a record at the series' values included. The rows here can't show that one (it is an ordinary day to the app), and 3.65 shows it is hidden too, so this check is needed. It costs no request. It refuses before the master write, with the same sentence.
 
 The refusal in `Model::compute()` does not make the mutation `refused-default-stays-selected` killable: `compute()`'s refusals reach the option-disabling loop in `run()` (each option's plan computed and disabled with the reason), not the loop in `mapHeld()`, which only a refused plan from `map()` reaches. Placed in `map()`, the refusal would let `mapHeld()` pick another bound or edge to avoid it, silently cutting a person's series; it belongs in `compute()`. So the `mapHeld()` loop stays unreachable and should go with its mutation.
 
@@ -112,7 +117,33 @@ The harness computes it from its own records: the target from what was asked and
 
 - `server/src/Domain/GoogleSeries.php`: `run()` (steps 3 to 5, the stop's read stored), `finish()` and `putBack()` (their comparison halves), one new comparison and adopt function, the deletions above.
 - `server/src/Domain/GoogleWriter.php`: `call()` (the day steps' exemption from If-Match).
+- `server/src/Domain/GoogleSeries.php` also: one predicate for cause 1 (a record at an instant that is a day of the new form), used by the planner and by `run()`'s second check.
 - `server/src/Domain/Series/Model.php`: `compute()` (cause 1's refusal), `map()` (cause 3's count), and the dead loop in `mapHeld()` removed; `Split.php`'s two `empty` checks.
 - One migration (the stop's read column).
 - Tests and harness as listed; `tools/google-probe/lib/FakeGoogle.php` (cause 2's clearing, cause 1's hidden day, cause 3's cancelled master) so the check can fail on the stand-in.
 - Docs: `docs/google-calendar.md` ("the notice says what differs" made true; day writes unconditional inside the window), `docs/design/series-model.md` (about line 431), the probe README's error-reason sentence, and a `decisions.md` entry.
+
+3.63 to 3.66 change the size only by cause 1's second check, which is now needed (one call in `run()`, the predicate shared); 3.66 removed the one risk the build carried (unconditional writes over records).
+
+## The narrow path
+
+If the redesign waits one release, the current branch can ship with three narrow fixes and the reader's small items that don't depend on it.
+
+The three fixes:
+
+- **Cause 1, refused.** One predicate in `GoogleSeries` (a record at an instant that is also a day of the new form), called by `Model::compute()` from the rows here (edited and deleted days) and by `run()` over the first read (every record, 3.65), each refusing with the sentence in the probe's third section. The way out it offers is proven (3.63, 3.64).
+- **Cause 2, by prediction.** `afterMaster()`: when the write doesn't send `description` and the series has no notes, every kept record's notes are predicted cleared, so the edited day's step sends them again and `rebase` doesn't read it as someone else's change. The stand-in (`FakeGoogle::patchMaster`) clears them the same way first, so the test can fail.
+- **Cause 3, refused.** `Model::map()` counts the new series' days less its skips and refuses `empty` at none; `Split.php`'s two `empty` checks the same.
+
+The reader's small items:
+
+- `dayCondition()` reads the day by a GET alone and drops the series list and its content check: a day costs a GET and a `PATCH`, 2N + 4 for N days, and the mid-run conflict the docs say we don't make goes.
+- The untrue sentences: `docs/google-calendar.md` ("the notice says what differs"; "doesn't try to catch" becomes true with the item above), `docs/design/series-model.md` about line 431, the probe README's "the stand-in's error reason is always fake".
+- The dead loop in `Model::mapHeld()` and the mutation `refused-default-stays-selected` removed.
+- The toast's "Undo failed: " in front of the deleted-series sentence (`web/src/app/ActivityPage.js`).
+- The baseline test in `google-series-back-again.test.php` made to stop with the read up, so it tests the stop's read and not the guess.
+- `unproven()` narrowed: the link (3.32, 3.52, 3.58, 3.61) and a zone change at the same moments (3.17, 3.54, 3.60) keep records; a zone change that moves the instants stays. `sameAsStored`'s `UNWRITTEN` (the link) follows the same evidence.
+
+Size: about 8 code files and 12 functions (`GoogleSeries`: the predicate, `run()`, `afterMaster()`, `unproven()`, `dayCondition()`, `UNWRITTEN`; `Model`: `compute()`, `map()`, `mapHeld()`, `REASONS`; `Split`: its two checks; `FakeGoogle::patchMaster()` for causes 1 to 3; `ActivityPage.js`; the mutation list), with tests for each cause, the baseline test, and four docs. No migration.
+
+What it leaves that the redesign fixes: any other effect Google has that `afterMaster` doesn't predict is still kept in silence as someone else's change, mid-run and in Finish; a day costs two requests, not one (2N + 4, not N + 4), and one lost read still stops a change; Put back after a stop whose read failed still compares with the guess and can refuse falsely; the notices still name no field.

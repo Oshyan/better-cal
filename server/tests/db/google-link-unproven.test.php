@@ -29,6 +29,16 @@ return static function (Db $db): void {
         H::this($t, '2027-01-06T19:00:00-05:00', ['description' => 'Notes A']);
         return $t;
     };
+    // The stop scenarios' series: the edited day also has a link of its own. A link set on the series is written into
+    // every record by Google (probe 3.32, 2026-11-10 and 2026-11-13), so a day that only has its own notes needs no
+    // second write (the link reaches it with the master's), and the stop these scenarios are about never comes. A day
+    // with its own link has it overwritten by the master's write, and the app writes it back: the second write.
+    $ownLink = 'https://example.test/sample-own-day';
+    $buildOwn = static function () use ($db, $ny, $ownLink): object {
+        $t = H::make($db, ['start' => '2027-01-04T19:00:00-05:00', 'end' => '2027-01-04T20:00:00-05:00', 'tzid' => $ny, 'rrule' => 'FREQ=DAILY;COUNT=5']);
+        H::this($t, '2027-01-06T19:00:00-05:00', ['description' => 'Notes A', 'url' => $ownLink]);
+        return $t;
+    };
     $change = ['scope' => 'all', 'instanceStart' => '2027-01-04T19:00:00-05:00', 'url' => $link];
     $linkOf = static fn(object $t, string $id): ?string => $t->s->fake->events[$id]['source']['url'] ?? null;
 
@@ -72,9 +82,9 @@ return static function (Db $db): void {
     });
 
     foreach (['refused' => 'beforeAt', 'the network down' => 'netAt'] as $how => $knob) {
-        scenario("F1: a link for all events, its second write $how, then Finish", function () use ($db, $build, $change, $linkOf, $ny, $link, $how, $knob): void {
+        scenario("F1: a link for all events over a day with its own link, its second write $how, then Finish", function () use ($db, $buildOwn, $change, $linkOf, $ny, $link, $ownLink, $how, $knob): void {
             $name = "F1 (second write $how)";
-            $t = $build();
+            $t = $buildOwn();
             try {
                 $t->s->knobs->writes = 0;
                 $t->s->knobs->$knob = 2; // the master write is taken; the edited day's write after it does not get through
@@ -86,6 +96,8 @@ return static function (Db $db): void {
 
                 [, $finish1] = H::recover($t, 'finish');
                 check("$name: Finish completes the change", $finish1 === null, (string) $finish1);
+                checkEq("$name: after Finish the edited day (Wed 6 Jan) has its own link back at Google, the series the new one", [$ownLink, $link],
+                    [$linkOf($t, $t->gid . '_20270107T000000Z'), $linkOf($t, $t->gid)]);
 
                 [, $putback] = H::recover($t, 'putback');
                 if (H::halfDone($t) !== []) {

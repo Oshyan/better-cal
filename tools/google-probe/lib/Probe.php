@@ -271,9 +271,12 @@ final class Probe
     }
 
     /** Insert with the probe's marker; the new id joins the case's series and is deleted after it. */
-    private function insert(CaseRun $c, string $phase, string $label, array $body, bool $sendUpdates = true): array
+    private function insert(CaseRun $c, string $phase, string $label, array $body, bool $sendUpdates = true, bool $markDescription = true): array
     {
-        $body['description'] = trim((string) ($body['description'] ?? 'Probe notes') . ' ' . self::MARKER_TEXT);
+        // $markDescription false: the description as given (an empty one, as the app sends a series without notes); the private property still marks it.
+        if ($markDescription) {
+            $body['description'] = trim((string) ($body['description'] ?? 'Probe notes') . ' ' . self::MARKER_TEXT);
+        }
         $body['extendedProperties']['private'][self::MARKER_KEY] = $this->runId;
         $x = $this->send($c, $phase, $label, 'POST', '/events', [], $body, [], $sendUpdates);
         if ($x['status'] >= 200 && $x['status'] < 300 && isset($x['response']['id'])) {
@@ -1177,6 +1180,229 @@ final class Probe
                 $c->finding = $this->formFinding($c, $m);
             });
         }
+
+        // Replay round 4, cause 1: where a day's timed and all-day keys meet at 00:00 UTC, a switch between the forms
+        // hides an edited or deleted day at Google (3.21, 3.25). Which request, if any, brings the day back with its
+        // own values, and what a person sees meanwhile.
+        $this->probeCase('3', '3.48', 'midnight UTC, timed to all-day over a renamed day with notes and a deleted day: every way to write the renamed day back', function (CaseRun $c): void {
+            $this->hiddenDay($c, 'UTC', '00:00', false, ['master', 'dropped', 'none', 'instance', 'insert', 'delete dropped', 'revive dropped'], true);
+        });
+        $this->probeCase('3', '3.49', 'midnight UTC, all-day to timed over a renamed day with notes and a deleted day: the main ways to write the renamed day back', function (CaseRun $c): void {
+            $this->hiddenDay($c, 'UTC', '00:00', true, ['master', 'dropped', 'instance', 'delete dropped'], false);
+        });
+        $this->probeCase('3', '3.50', '09:00 Tokyo (00:00 UTC), timed to all-day over a renamed day with notes and a deleted day: the main ways to write it back', function (CaseRun $c): void {
+            $this->hiddenDay($c, 'Asia/Tokyo', '09:00', false, ['master', 'dropped', 'instance', 'delete dropped'], false);
+        });
+        $this->probeCase('3', '3.51', 'midnight UTC, timed to all-day with no day edited or deleted: does every day survive', function (CaseRun $c): void {
+            $this->hiddenDay($c, 'UTC', '00:00', false, [], true, false);
+        });
+
+        // Replay round 4, cause 2: a kept day's own notes cleared by a master change that does not send notes. Which
+        // master writes clear them, and whether only under a series with no notes of its own (as the app creates one).
+        $la = static fn(string $local, int $minutes = 60): array => self::clockAt(self::LA, $local, $minutes);
+        $notesCases = [
+            ['3.52', 'a link', false, ['source' => ['url' => 'https://example.test/probe-series', 'title' => 'example.test']]],
+            ['3.53', 'the start a week later, along the pattern', false, $la('2027-03-08 10:00')],
+            ['3.54', 'the zone at the same moments (11:00 Denver)', false, self::clockAt('America/Denver', '2027-03-01 11:00', 60)],
+            ['3.55', 'the title', false, ['summary' => 'Probe notes series renamed']],
+            ['3.56', 'the length (ninety minutes)', false, $la('2027-03-01 10:00', 90)],
+            ['3.57', 'COUNT longer (8)', false, []],
+            ['3.58', 'a link', true, ['source' => ['url' => 'https://example.test/probe-series', 'title' => 'example.test']]],
+            ['3.59', 'the start a week later, along the pattern', true, $la('2027-03-08 10:00')],
+            ['3.60', 'the zone at the same moments (11:00 Denver)', true, self::clockAt('America/Denver', '2027-03-01 11:00', 60)],
+            ['3.61', 'a link, sent with the series\' own (empty) notes', false, ['source' => ['url' => 'https://example.test/probe-series', 'title' => 'example.test'], 'description' => '']],
+        ];
+        foreach ($notesCases as [$id, $what, $seriesNotes, $patch]) {
+            $title = 'a day with its own notes, title and place; the series with ' . ($seriesNotes ? 'notes of its own' : 'no notes (as the app makes one)') . "; the master changed: $what";
+            $this->probeCase('3', $id, $title, function (CaseRun $c) use ($seriesNotes, $patch, $id): void {
+                $this->dayNotes($c, $seriesNotes, $patch + ['recurrence' => [$id === '3.57' ? 'RRULE:FREQ=WEEKLY;COUNT=8' : 'RRULE:FREQ=WEEKLY;COUNT=6']]);
+            });
+        }
+
+        // Replay round 4, cause 3: a rule change that leaves only days already deleted.
+        $this->probeCase('3', '3.62', 'a rule change that leaves only a deleted day (COUNT=1, the first day deleted), then the master PATCHed to confirmed', function (CaseRun $c): void {
+            $x = $this->insert($c, 'setup', 'insert the series', self::timed('Probe only skipped', self::LA, '2027-03-01 10:00', 60, ['RRULE:FREQ=WEEKLY;COUNT=3']));
+            $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+            $first = $this->nth($c, $m, 1, 'deleted, then the only day');
+            $d = $this->send($c, 'setup', 'delete occurrence 1', 'DELETE', '/events/' . rawurlencode((string) $first['id']));
+            if ($d['status'] >= 300) {
+                throw new \RuntimeException('deleting occurrence 1 failed: HTTP ' . $d['status']);
+            }
+            $etag = self::etagNamer();
+            $words = [];
+            $this->standard($c, function (CaseRun $c) use ($m, $etag, &$words): void {
+                foreach ([['the rule cut to COUNT=1', ['recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=1']]], ['the master PATCHed to confirmed', ['status' => 'confirmed', 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=1']]]] as [$what, $body]) {
+                    $g = $c->step('read', 'get the master for its etag', $this->api->call('GET', '/events/' . rawurlencode($m)));
+                    $ifMatch = is_array($g['response']) && is_string($g['response']['etag'] ?? null) ? $g['response']['etag'] : null;
+                    $x = $this->send($c, 'write', $what, 'PATCH', '/events/' . rawurlencode($m), [], $body, $ifMatch !== null ? ['If-Match: ' . $ifMatch] : []);
+                    $words[] = "$what (If-Match " . $etag($ifMatch) . '): ' . self::answer($x, $etag);
+                }
+            });
+            $c->finding = implode('; ', $words) . '; ' . $this->seriesFinding($c, $m);
+        });
+    }
+
+    // ---- 3.48 to 3.51: a day hidden where its two forms meet at 00:00 UTC (replay round 4, cause 1) ----
+
+    private const HIDDEN_OWN = ['summary' => 'Probe hidden (one changed)', 'description' => 'Probe own notes of the day'];
+
+    /**
+     * A weekly series of six in zone $tz at $clock (or all-day when $allDayFirst), whose timed occurrences fall at
+     * 00:00 UTC, so a day's timed and all-day ids name the same instant; occurrence 2 renamed with its own notes and
+     * occurrence 3 deleted (when $edits); every event switched to the other form as the app sends it (the held form's
+     * fields null, the rule). Then each of $attempts at writing occurrence 2's own values back, in order, each followed
+     * by a read of every id of occurrences 2 and 3 in both forms, the showDeleted list and events.instances:
+     *   master: PATCH its id in the new form, If-Match the master's listed etag;
+     *   dropped: the same, If-Match the etag the list shows under its id in the old form (the dropped record);
+     *   none: the same with no If-Match;
+     *   instance: PATCH the id events.instances lists for that day, If-Match its own etag (when it lists the day);
+     *   insert: POST a record naming the series (recurringEventId) and the day (originalStartTime), as a client would
+     *     make an exception anew;
+     *   delete dropped: DELETE the dropped record of the old form (its own etag), then the next read;
+     *   revive dropped: PATCH the dropped record to status confirmed (its own etag).
+     * After the switch, also what a person sees: the plain singleEvents=true list without showDeleted over the weeks.
+     */
+    private function hiddenDay(CaseRun $c, string $tz, string $clock, bool $allDayFirst, array $attempts, bool $personView, bool $edits = true): void
+    {
+        $rule = ['RRULE:FREQ=WEEKLY;COUNT=6'];
+        $timedAt = static fn(string $date): array => self::clockAt($tz, "$date $clock", 60);
+        $datesAt = static fn(string $date): array => ['start' => ['date' => $date], 'end' => ['date' => (new \DateTimeImmutable($date))->modify('+1 day')->format('Y-m-d')]];
+        $body = ['summary' => 'Probe hidden', 'description' => 'Probe series notes', 'location' => 'Probe room 1', 'recurrence' => $rule] + ($allDayFirst ? $datesAt('2027-03-01') : $timedAt('2027-03-01'));
+        $x = $this->insert($c, 'setup', 'insert the series', $body);
+        $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+        $uid = (string) ($x['response']['iCalUID'] ?? '');
+        $date = static fn(int $n): string => (new \DateTimeImmutable('2027-03-01'))->modify('+' . (7 * ($n - 1)) . ' days')->format('Y-m-d');
+        $ids = function (int $n) use ($m, $tz, $clock, $date): array {
+            $d = $date($n);
+            return ['timed' => GoogleWriter::instanceId($m, Time::toDb(new \DateTimeImmutable("$d $clock", new \DateTimeZone($tz))), false), 'all-day' => GoogleWriter::instanceId($m, "$d 00:00:00", true)];
+        };
+        $days = [];
+        foreach ([2 => 'renamed, own notes', 3 => 'deleted'] as $n => $kind) {
+            $label = "occurrence $n (" . ($edits ? $kind : 'ordinary') . ')';
+            $days[$n] = ['kind' => $kind, 'label' => $label, 'date' => $date($n), 'ids' => $ids($n)];
+            $c->labels[str_replace('-', '', $date($n))] = $label;
+            $c->labels[substr($ids($n)['timed'], strlen($m) + 1)] = $label;
+        }
+        $from = $allDayFirst ? 'all-day' : 'timed';
+        $to = $allDayFirst ? 'timed' : 'all-day';
+        if ($edits) {
+            $r = $this->send($c, 'setup', 'rename occurrence 2 with its own notes', 'PATCH', '/events/' . rawurlencode($days[2]['ids'][$from]), [], self::HIDDEN_OWN);
+            $d = $this->send($c, 'setup', 'delete occurrence 3', 'DELETE', '/events/' . rawurlencode($days[3]['ids'][$from]));
+            if ($r['status'] >= 300 || $d['status'] >= 300) {
+                throw new \RuntimeException("setting up the days failed: HTTP {$r['status']}, {$d['status']}");
+            }
+        }
+        $etag = self::etagNamer();
+        $story = [];
+        $this->standard($c, function (CaseRun $c) use ($m, $uid, $days, $from, $to, $allDayFirst, $timedAt, $datesAt, $rule, $attempts, $personView, $etag, $date, &$story): void {
+            [$w, $list] = $this->idSnapshot($c, $m, $uid, $days, $etag, 'before the switch', true);
+            $story[] = $w;
+            $switch = self::overHeld($allDayFirst ? $timedAt('2027-03-01') : $datesAt('2027-03-01'), $allDayFirst) + ['recurrence' => $rule];
+            $ifMatch = self::etagIn($list, $m);
+            $x = $this->send($c, 'write', "every event to $to", 'PATCH', '/events/' . rawurlencode($m), [], $switch, $ifMatch !== null ? ['If-Match: ' . $ifMatch] : []);
+            $story[] = "every event to $to, PATCH master (If-Match " . $etag($ifMatch) . '): ' . self::answer($x, $etag);
+            [$w, $list] = $this->idSnapshot($c, $m, $uid, $days, $etag, "after the switch to $to", true, is_string($x['response']['etag'] ?? null) ? $x['response']['etag'] : null);
+            $story[] = $w;
+            if ($personView) {
+                $v = $this->pages($c, 'read', 'what a person sees: singleEvents=true, no showDeleted', '/events', ['singleEvents' => 'true', 'showDeleted' => 'false', 'timeMin' => '2027-02-28T00:00:00Z', 'timeMax' => '2027-04-12T00:00:00Z']);
+                $shown = array_values(array_filter($v['items'], static fn(array $e): bool => ($e['recurringEventId'] ?? '') === $m));
+                $story[] = 'what a person sees (singleEvents=true, no showDeleted): ' . ($shown === [] ? 'no day of the series' : implode(' | ', array_map(static fn(array $e): string => (string) ($e['start']['date'] ?? substr((string) ($e['start']['dateTime'] ?? '?'), 0, 16)) . ' ' . (string) ($e['summary'] ?? ''), $shown)));
+            }
+            $newId = $days[2]['ids'][$to];
+            $oldId = $days[2]['ids'][$from];
+            $own = self::HIDDEN_OWN + ($allDayFirst ? $timedAt($date(2)) : $datesAt($date(2)));
+            foreach ($attempts as $how) {
+                $listedEtag = static function (array $list, string $id): ?string {
+                    foreach ($list as $e) {
+                        if (($e['id'] ?? '') === $id && is_string($e['etag'] ?? null)) {
+                            return $e['etag'];
+                        }
+                    }
+                    return null;
+                };
+                $label = '';
+                $x = null;
+                switch ($how) {
+                    case 'master':
+                    case 'dropped':
+                    case 'none':
+                        $im = $how === 'master' ? self::etagIn($list, $m) : ($how === 'dropped' ? $listedEtag($list, $oldId) : null);
+                        $label = "PATCH occurrence 2's $to id, its own values, If-Match " . ($how === 'none' ? 'none' : ($how === 'master' ? "the master's (" . $etag($im) . ')' : "the dropped $from record's (" . $etag($im) . ')'));
+                        $x = $this->send($c, 'write', $label, 'PATCH', '/events/' . rawurlencode($newId), [], $own, $im !== null ? ['If-Match: ' . $im] : []);
+                        break;
+                    case 'instance':
+                        $inst = $this->pages($c, 'read', 'instances, for the day', '/events/' . rawurlencode($m) . '/instances', ['showDeleted' => 'true'])['items'];
+                        $hit = null;
+                        foreach ($inst as $e) {
+                            $o = $e['originalStartTime'] ?? $e['start'] ?? [];
+                            if (str_starts_with((string) ($o['date'] ?? (new \DateTimeImmutable((string) ($o['dateTime'] ?? '1970-01-01')))->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d')), $date(2))) {
+                                $hit = $e;
+                            }
+                        }
+                        if ($hit === null) {
+                            $story[] = 'events.instances lists no instance for occurrence 2, so there is no instance id to PATCH';
+                            continue 2;
+                        }
+                        $label = 'PATCH the id events.instances lists for occurrence 2 (' . str_replace($m, '{master}', (string) $hit['id']) . '), If-Match its own (' . $etag((string) ($hit['etag'] ?? '')) . ')';
+                        $x = $this->send($c, 'write', $label, 'PATCH', '/events/' . rawurlencode((string) $hit['id']), [], $own, isset($hit['etag']) ? ['If-Match: ' . $hit['etag']] : []);
+                        break;
+                    case 'insert':
+                        $label = "POST a record naming the series and occurrence 2 (recurringEventId, originalStartTime as a $to day)";
+                        $orig = $allDayFirst ? ['dateTime' => $timedAt($date(2))['start']['dateTime'], 'timeZone' => $timedAt($date(2))['start']['timeZone']] : ['date' => $date(2)];
+                        $x = $this->send($c, 'write', $label, 'POST', '/events', [], $own + ['recurringEventId' => $m, 'originalStartTime' => $orig, 'iCalUID' => $uid,
+                            'extendedProperties' => ['private' => [self::MARKER_KEY => $this->runId]]]);
+                        if ($x['status'] >= 200 && $x['status'] < 300 && isset($x['response']['id']) && $x['response']['id'] !== $m && empty($x['response']['recurringEventId'])) {
+                            // A separate event, not a record of the series: delete it after the case.
+                            $this->created[(string) $x['response']['id']] = true;
+                            $c->created[] = (string) $x['response']['id'];
+                        }
+                        break;
+                    case 'delete dropped':
+                    case 'revive dropped':
+                        $im = $listedEtag($list, $oldId);
+                        $label = ($how === 'delete dropped' ? 'DELETE' : 'PATCH to status confirmed') . " the dropped $from record (" . str_replace($m, '{master}', $oldId) . '), If-Match its own (' . $etag($im) . ')';
+                        $x = $how === 'delete dropped'
+                            ? $this->send($c, 'write', $label, 'DELETE', '/events/' . rawurlencode($oldId), [], null, $im !== null ? ['If-Match: ' . $im] : [])
+                            : $this->send($c, 'write', $label, 'PATCH', '/events/' . rawurlencode($oldId), [], ['status' => 'confirmed'], $im !== null ? ['If-Match: ' . $im] : []);
+                        break;
+                }
+                $story[] = "$label: " . self::answer($x, $etag) . (is_array($x['response']) && isset($x['response']['id']) ? ', the answer\'s id ' . str_replace($m, '{master}', (string) $x['response']['id']) . ', recurringEventId ' . (isset($x['response']['recurringEventId']) ? 'set' : 'none') : '');
+                [$w, $list] = $this->idSnapshot($c, $m, $uid, $days, $etag, 'after that', true);
+                $story[] = $w;
+            }
+        });
+        $c->sent = 'setup: a weekly series of six ' . ($allDayFirst ? 'all-day' : "at $clock $tz (00:00 UTC)") . ' from 2027-03-01' . ($edits ? ', occurrence 2 renamed with its own notes, occurrence 3 deleted' : '') . "; every event to $to as the app sends it; then "
+            . ($attempts === [] ? 'nothing more' : 'occurrence 2 written back: ' . implode(', ', $attempts)) . '; every id of occurrences 2 and 3 in both forms, the showDeleted list and events.instances read after each request';
+        $c->finding = implode('; ', $story) . '; ' . $this->syncStory($c);
+    }
+
+    // ---- 3.52 to 3.61: a kept day's own notes and a master change (replay round 4, cause 2) ----
+
+    /**
+     * A weekly 10:00 Los Angeles series of six, with notes of its own or none (as the app creates one: an empty
+     * description), occurrence 2 given its own title, notes and place; then the master PATCH $patch, conditional on the
+     * master's read. The finding: each record's title, notes and place before and after.
+     */
+    private function dayNotes(CaseRun $c, bool $seriesNotes, array $patch): void
+    {
+        $body = self::timed('Probe notes series', self::LA, '2027-03-01 10:00', 60, ['RRULE:FREQ=WEEKLY;COUNT=6']);
+        $body['description'] = $seriesNotes ? 'Probe series notes' : '';
+        $x = $this->insert($c, 'setup', 'insert the series', $body, true, false);
+        $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+        $inst = $this->nth($c, $m, 2, 'own title, notes and place');
+        $r = $this->send($c, 'setup', 'occurrence 2 given its own title, notes and place', 'PATCH', '/events/' . rawurlencode((string) $inst['id']), [],
+            ['summary' => 'Probe notes (one changed)', 'description' => 'Probe own notes of the day', 'location' => 'Probe own room']);
+        if ($r['status'] >= 300) {
+            throw new \RuntimeException('setting up occurrence 2 failed: HTTP ' . $r['status']);
+        }
+        $before = '';
+        $this->standard($c, function (CaseRun $c) use ($m, $patch, &$before): void {
+            $g = $c->step('read', 'get the master for its etag', $this->api->call('GET', '/events/' . rawurlencode($m)));
+            $ifMatch = is_array($g['response']) && is_string($g['response']['etag'] ?? null) ? $g['response']['etag'] : null;
+            $before = self::short(is_array($g['response']) ? ($g['response']['description'] ?? null) : null);
+            $this->send($c, 'write', 'patch the master', 'PATCH', '/events/' . rawurlencode($m), [], $patch, $ifMatch !== null ? ['If-Match: ' . $ifMatch] : []);
+        });
+        $c->finding = 'the series\' description before: ' . $before . '; ' . $this->seriesFinding($c, $m);
     }
 
     // ---- 3.36, 3.37, 3.40, 3.41: back to old keys (issue 256) ----

@@ -22,9 +22,11 @@ use BetterCal\Domain\GoogleWriter;
 use BetterCal\Domain\Recurrence;
 use BetterCal\Domain\Undo;
 use BetterCal\GoogleProbe\FakeGoogle;
+use BetterCal\GoogleProbe\TraceRecorder;
 use BetterCal\Infra\Db;
 
 require_once dirname(__DIR__) . '/google-probe/lib/FakeGoogle.php';
+require_once dirname(__DIR__) . '/google-probe/lib/Trace.php';
 
 final class GoogleStand
 {
@@ -82,7 +84,10 @@ final class GoogleStand
         $auth = new GoogleAuth($db, $cfg, static fn(string $url, array $fields, ?float $deadline): array
             => ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])]);
         $feeds = new Feeds($db);
-        $inner = $fake->writerTransport();
+        // GOOGLE_TRACE=<file.json> records every request the app sends the stand-in, with its answer, for
+        // tools/google-probe/replay.php (README there, "Replaying the App's Requests"); unset, the transports are the stand-in's.
+        $recorder = TraceRecorder::fromEnv($fake, 'edit-harness', 'edit-harness');
+        $inner = $recorder?->writerTransport() ?? $fake->writerTransport();
         // HARNESS_GOOGLE_TRACE=1 prints every request to the stand-in on stderr.
         $trace = getenv('HARNESS_GOOGLE_TRACE') !== false;
         // Failures injected into the app's writes (the interleaving mode, Interleave.php): the write numbered beforeAt
@@ -146,7 +151,7 @@ final class GoogleStand
             }
             return $answer;
         });
-        $list = $fake->syncTransport();
+        $list = $recorder?->syncTransport() ?? $fake->syncTransport();
         $sync = new GoogleSync($db, $auth, $feeds, static function (string $url, array $headers) use ($list, $knobs): array {
             if ($knobs->duringFetch !== null) {
                 $during = $knobs->duringFetch;

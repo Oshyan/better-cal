@@ -65,6 +65,7 @@ suites_light() { # no database server needed
   start static node --experimental-vm-modules web/tests/static.mjs
   start mcp node tools/mcp/test.mjs
   start google-probe php tools/google-probe/test.php
+  start google-replay php tools/google-probe/replay-test.php
 }
 
 suites_all() {

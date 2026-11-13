@@ -45,6 +45,56 @@ php tools/google-probe/test.php
 
 Runs the whole probe against a fake API (`lib/FakeGoogle.php`) that models ids, instance ids, etags, If-Match, sync tokens and cancelled instances, and checks the probe's own plumbing: every group runs, the report is written and scrubbed, cleanup deletes what was made and what an aborted run left, a 412 is reported as a conflict, only the mail case leaves out `sendUpdates`. The fake models none of Google's series behaviour, so the test says nothing about Google.
 
+## Replaying the App's Requests
+
+The probe's cases are written by hand. The app's tests run against the stand-in (`lib/FakeGoogle.php`), and twice the stand-in was more forgiving than Google and a fault shipped. The replay closes that loop: it records every request the app itself sends the stand-in in a scenario, with the stand-in's answer, then sends the same requests to Google and compares each answer with the recorded one.
+
+What it proves: for each recorded request, that Google answers as the stand-in did, after the normalizing listed below, up to the first request where they differ, which it reports with both answers and the difference. What it doesn't prove: anything about requests the app didn't send in the recorded scenarios, a request after a scenario's first divergence (later requests depend on it), what an answer holds in a field the normalizing leaves out, or that the app does the right thing with an answer. A scenario that answers the same on Google is evidence the stand-in models that path; a divergence is a place where it doesn't, to be judged before the stand-in or the app changes.
+
+### Recording
+
+A trace is one scenario's requests and answers, in order, as JSON (`lib/Trace.php` has the format). `GOOGLE_TRACE=<file.json>` makes the edit harness's stand-in (`tools/edit-harness/GoogleStand.php`) record through a wrapper around its transports; nothing in the stand-in changes. The trace set comes from one process per scenario, so each trace holds its scenario alone: the three scenarios in `record-app.php` (a timed single event and an all-day one created, changed and deleted, a series deleted whole), the harness's fixed cases whose names start with `google-`, every sequence, and drawn cases 1 to 15 of seed 7, a poll after each write. On the test database:
+
+```bash
+BC_TEST_DB=127.0.0.1:33308 php tools/google-probe/record.php --out workfolder/google-traces
+```
+
+It prints how many scenarios and requests it kept (49 and 1,147 when it was written), what kinds of write they cover, and any kind it should cover and doesn't. A change the harness makes to the stand-in outside a request (its adopt of a series it just made, a rule written straight into the row) is recorded with the PATCH that repeats it, which the replay sends first; a change no request can repeat moves the trace to `unreplayable/`.
+
+### Replaying on the Stand-In
+
+```bash
+php tools/google-probe/replay.php --trace workfolder/google-traces --target fake
+```
+
+Each trace goes to a fresh stand-in set as it was recorded (its zone, list settings and occurrences). Every scenario must answer the same; anything else is a fault in the replay or the recorder. `php tools/google-probe/replay-test.php` checks the tool itself: traces of every probe group and of hand-made scenarios replay with no divergence, a stand-in with one behaviour changed diverges at the request the trace says it must, a tampered answer diverges there, ids, etags and tokens map, and everything made is marked and deleted, also after an error.
+
+### Replaying on Google
+
+The maintainer runs this, on the same kind of throwaway calendar the probe uses, set to the zone the traces were recorded in (UTC for the harness's; a trace from another zone is skipped and listed):
+
+```bash
+php tools/google-probe/replay.php --trace workfolder/google-traces --calendar <googleCalendarId> --account <google_accounts id or email>
+```
+
+It refuses the main calendar, a calendar it can't write and one with events neither it nor the probe made (unless `--allow-other-events`), deletes what an earlier replay left, and goes through `lib/Api.php` (the token, `sendUpdates=none` on every write, a pause between writes, retries on rate limits). Every event it creates carries the probe's marker in its private extended properties (`betterCalProbe`, a value starting `replay-`), and each scenario deletes what it created when it ends, also after an error. `--only <text>` replays the scenarios whose names contain it; `--read-tries N` (5 by default) is how often a read that differs is asked again. The report goes to `workfolder/google-replay/` as `replay-<time>.md` and `.json`, scrubbed as the probe's is. Exit 0 when every scenario answered as recorded.
+
+### What Is Mapped and Normalized
+
+Each of these is a place a real difference could hide; any other difference is a divergence.
+
+- **Ids.** An event id is learned from each insert's answer; an insert with an id of the app's own goes out with a fresh one (Google never takes an id twice), the same fresh one each time that id is sent. An instance id (`<id>_<YYYYMMDD>`, `<id>_<YYYYMMDDTHHMMSSZ>`) maps through its series id with the suffix kept, so a suffix Google forms differently is a divergence. iCalUIDs map the same way.
+- **Etags.** If-Match maps by the event and the value, then by the value alone, to the etag the target gave in the answer that showed the same event. A value the stand-in never gave goes as recorded, and the report notes it.
+- **Tokens.** Sync and page tokens map to the target's from the same answer; one never seen goes as recorded, noted.
+- **Left out on both sides:** `etag`, `updated`, `created`, `sequence` (the app counts it as Google's own bookkeeping, `GoogleSeries::VOLATILE`), `htmlLink`, `creator`, `organizer`, `kind`; `reminders` when it is exactly `{"useDefault": true}`; `eventType` when it is `default`; the replay's marker in `extendedProperties.private` (and that object when nothing else is in it).
+- **Read as equal:** a `dateTime` in `start`, `end` and `originalStartTime` as its UTC instant (the offset it is written with is not compared; `timeZone` is); an `RRULE` line's parts in any order (`EXDATE` and `RDATE` lines are compared as text); keys in any order.
+- **Lists.** Items compared as a set, matched by id and status, in any order. Items of events the scenario doesn't know (by id or series id), which a whole read of the calendar lists from other scenarios, are left out and counted. Whether there is a further page is compared; a target that splits a list the stand-in gave whole is read to its end and compared as one, and the report notes it. Nothing else at a list's top level is compared (its zone is checked once against the trace's).
+- **Cancelled items.** On an item both sides list as cancelled, `id`, `status`, `recurringEventId` and `originalStartTime` are compared strictly; any other field that differs is listed as a shape note beside the result, not a divergence.
+- **Status and errors.** Every answer's status must be the same (200 against 204 is a divergence); for an error, then `error.message`. An error's reason is not compared: the stand-in's is always `fake`.
+- **The calendar and its list entry:** the status alone.
+- **Reads that lag.** A GET whose answer differs is asked again (`--read-tries`, 2 seconds apart) before it counts; the divergence shown is the last try's. A write is never sent twice.
+- **Setup.** The PATCH that repeats a harness change outside a request is not compared, only learned from; a target that refuses it makes that scenario unreplayable there, with the target's reason.
+
 ## Files
 
-`run.php` (the command line and the real transport), `lib/Api.php` (every request: token, `sendUpdates=none`, retries, the exchange record), `lib/Probe.php` (the groups and cases, the read-backs, the findings, cleanup), `lib/Report.php` (the report and its scrubbing), `lib/FakeGoogle.php` and `test.php` (the tests).
+`run.php` (the command line and the real transport), `lib/Api.php` (every request: token, `sendUpdates=none`, retries, the exchange record), `lib/Probe.php` (the groups and cases, the read-backs, the findings, cleanup), `lib/Report.php` (the report and its scrubbing), `lib/FakeGoogle.php` and `test.php` (the tests). The replay: `lib/Trace.php` (the recorder and the coverage kinds), `lib/Replay.php` (mapping, normalizing, comparing, cleanup, and the two targets), `replay.php` (the command line), `record.php` and `record-app.php` (the trace set), `replay-test.php` (its tests).

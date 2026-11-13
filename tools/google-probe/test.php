@@ -13,6 +13,10 @@ if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
     exit;
 }
 
+// The whole probe runs in this one process and its report is read back whole: about 140 MB since the
+// back-to-old-keys cases (3.36 on), which read every id after every request.
+ini_set('memory_limit', '512M');
+
 $root = dirname(__DIR__, 2);
 require $root . '/server/src/bootstrap.php';
 require __DIR__ . '/lib/Api.php';

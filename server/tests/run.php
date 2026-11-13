@@ -9110,8 +9110,9 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     // As a poll leaves them: the series' etag on the master and its exception.
     $gw->run('UPDATE events SET google_etag = ? WHERE id IN (11, 12)', [$fakeGoogle->events['g-series']['etag']]);
     BetterCal\Domain\RequestAuthority::during($kinds['session'][0], fn() => planned($gev, 1, 11, ['title' => 'From the start', 'scope' => 'following', 'instanceStart' => '2030-06-01T09:00:00+00:00']));
+    // The edited day's write after a read of the series for that day's own etag (issue 256).
     checkEq('google following from the first day: the series itself is edited through GoogleSeries, nothing inserted, its rule and start kept, the edited day keeps its own title', [
-        ['GET', 'PATCH', 'GET', 'PATCH', 'GET'], 'From the start', 'Sample standup, later', 'FREQ=DAILY;COUNT=6', '2030-06-01 09:00:00', 1, null, 0,
+        ['GET', 'PATCH', 'GET', 'GET', 'PATCH', 'GET'], 'From the start', 'Sample standup, later', 'FREQ=DAILY;COUNT=6', '2030-06-01 09:00:00', 1, null, 0,
     ], [
         $googleCalls,
         $gw->scalar('SELECT title FROM events WHERE id = 11'),

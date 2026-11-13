@@ -969,10 +969,17 @@ final class GoogleSeries
                 $chain = self::masterEtag($items, (string) $t['googleId']) ?? $chain;
                 $now = self::held($items, (string) $t['googleId']);
                 $len = max(0, Time::fromDb($t['master']['end_utc'])->getTimestamp() - Time::fromDb($t['master']['start_utc'])->getTimestamp());
+                $daySteps = 0;
                 foreach (self::stepsFor($t, $items) as [$kind, $id, $body, $key]) {
                     $after = self::heldAfter($now, $kind, $key, $kind === 'exception' ? $t['exceptions'][$key] : ($kind === 'plain' ? self::plainAt($t['master'], $key, $len) : null));
+                    // Each day's write is conditional on that day's own etag, read just before it (dayCondition): the etag one write answers with is not the one the next day holds (probe 2026-11-13, 3.36, 3.37, 3.40; issue 256).
+                    $ifMatch = $this->dayCondition($calendar, $send, $t, $now, $id, $key, $beforeSend);
+                    if ($ifMatch === null) {
+                        continue; // Google has no such day (a GET answered 404): as a 404 to the write below
+                    }
+                    $daySteps++;
                     try {
-                        $resource = $step($kind, $id, $key, fn() => $send('PATCH', '/' . rawurlencode($id), $body, $chain), ['expect' => self::digest(self::state($after, true)), 'extras' => true]);
+                        $resource = $step($kind, $id, $key, fn() => $send('PATCH', '/' . rawurlencode($id), $body, $ifMatch), ['expect' => self::digest(self::state($after, true)), 'extras' => true]);
                     } catch (HttpError $e) {
                         // Google lists no such instance (404): a day past the
                         // 730 occurrences an unbounded series expands to
@@ -989,10 +996,10 @@ final class GoogleSeries
                         }
                         throw $e;
                     }
-                    $chain = $resource['etag'] ?? $chain;
                     $now = $after;
                 }
-                $items = $this->readBack($calendar, $send, $t['uid'], (string) $t['googleId'], $chain, $beforeSend);
+                // Waited for by the master's etag only while no day was written since: a day's write may leave the master's etag as it was.
+                $items = $this->readBack($calendar, $send, $t['uid'], (string) $t['googleId'], $daySteps === 0 ? $chain : null, $beforeSend);
                 $readbacks[(string) $t['uid']] = $items;
                 $differences = array_merge($differences, self::differences($t, $items, $thisYear));
             }
@@ -1081,6 +1088,45 @@ final class GoogleSeries
             }
             return $this->writer->patch($calendar, $id, GoogleWriter::patchOf($found, $body + ['status' => 'confirmed']), $beforeSend, $found, false);
         }
+    }
+
+    /**
+     * The If-Match of one day's write in a change to all events: the etag
+     * Google holds for that day's own id, read just before the write, never
+     * an etag chained from another resource's answer. Google gives each
+     * resource of a series an etag of its own once a day has a record: a
+     * write to one day moves that day's etag and may leave the master's and
+     * the others' as they were, so the etag one step answers with is not
+     * the etag the next day holds (probe 2026-11-13, 3.36, 3.37, 3.40, 10.2;
+     * issue 256). The read is the series' list (a day with a record, live,
+     * cancelled or dropped, is listed under its id), else a GET of the id
+     * (an ordinary day). Before that etag is used, the day must hold what
+     * the change read back and has sent since ($now): a day changed at
+     * Google meanwhile is refused as a conflict, so "This event changed at
+     * Google since you last saw it" stays true, and the If-Match then
+     * guards the moment between this read and the write. Null when Google
+     * has no such day (a GET answered 404): a day past the 730 occurrences
+     * an unbounded series expands to, which run() passes over.
+     */
+    private function dayCondition(array $calendar, \Closure $send, array $t, array $now, string $id, string $key, ?\Closure $beforeSend): ?string
+    {
+        $googleId = (string) $t['googleId'];
+        $fresh = self::held($this->readBack($calendar, $send, !empty($t['uid']) ? (string) $t['uid'] : null, $googleId, null, $beforeSend), $googleId);
+        if ($fresh['master'] === null || $now['master'] === null || self::dayIn($fresh, $key) !== self::dayIn($now, $key)) {
+            throw new HttpError('google_conflict', GoogleWriter::CONFLICT_MESSAGE, 409);
+        }
+        $etag = $fresh['etags'][$id] ?? null;
+        if ($etag === null) {
+            try {
+                $etag = $send('GET', '/' . rawurlencode($id), null, null)['etag'] ?? null;
+            } catch (HttpError $e) {
+                if ((int) ($e->extra['googleStatus'] ?? 0) === 404) {
+                    return null;
+                }
+                throw $e;
+            }
+        }
+        return is_string($etag) && $etag !== '' ? $etag : null;
     }
 
     /** A DELETE, conditional on the etag of a read (GoogleWriter refuses one without); an event already gone (404, or 410 once deleted) is gone. */

@@ -209,10 +209,12 @@ return static function (Db $db): void {
         ], 'cancelled' => ['20270405T180000Z']];
         checkEq('the stand-in holds the plan: the master at 11:00 and every exception and skip under its new instance id', $want, $held($s, 'smpl1weekly'));
         checkEq('the rows here hold what the stand-in holds', $want, $stored($s, 'smpl1weekly'));
-        checkEq('the sequence: the series read (what the master write should leave), the master with If-Match, a read-back, one PATCH per edited or skipped day, a read-back; no pending row left', [
-            ['GET', 'PATCH', 'GET', 'PATCH', 'PATCH', 'PATCH', 'PATCH', 'GET'], $etag0, [],
+        // Each day's write is conditional on that day's own etag, read just before it (issue 256): the series' list, and a GET
+        // of the day's id where no record is listed under it (every day here: the clock change dropped the records).
+        checkEq('the sequence: the series read (what the master write should leave), the master with If-Match, a read-back, then per edited or skipped day a read of it and its PATCH, a read-back; no pending row left', [
+            array_merge(['GET', 'PATCH', 'GET'], ...array_fill(0, 4, ['GET', 'GET', 'PATCH']), ...[['GET']]), $etag0, [],
         ], [array_column($s->t->calls, 0), $ifMatches($s)[0], $pending($s)]);
-        check('every write after the first carries the etag the write before it answered with', count(array_filter($ifMatches($s), static fn(?string $m): bool => $m !== null)) === 5);
+        check('every write carries an If-Match: the master the change\'s read\'s, each day its own, read just before it', count(array_filter($ifMatches($s), static fn(?string $m): bool => $m !== null)) === 5);
         [$before, $after] = $secondSync($s);
         checkEq('a second sync changes nothing', $before, $after);
     });
@@ -226,7 +228,7 @@ return static function (Db $db): void {
             'Sample weekly, renamed', ['Sample weekly, renamed', 'Sample weekly, renamed', 'Sample weekly, special'], ['20270405T170000Z'],
         ], [$h['title'], array_values(array_map(static fn(array $r): string => $r[0], $h['records'])), $h['cancelled']]);
         checkEq('the rows here hold what the stand-in holds', $h, $stored($s, 'smpl1weekly'));
-        checkEq('the own title\'s PATCH is the one step after the master', ['GET', 'PATCH', 'GET', 'PATCH', 'GET'], array_column($s->t->calls, 0));
+        checkEq('the own title\'s PATCH is the one step after the master, after a read of the series for its etag (its record is listed)', ['GET', 'PATCH', 'GET', 'GET', 'PATCH', 'GET'], array_column($s->t->calls, 0));
         [$before, $after] = $secondSync($s);
         checkEq('a second sync changes nothing', [$before, []], [$after, $pending($s)]);
     });
@@ -270,7 +272,7 @@ return static function (Db $db): void {
         checkEq('Mondays and Wednesdays: the exceptions kept with their keys, the skip a cancelled record again', [
             'RRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=20', ['20270315T170000Z', '20270322T170000Z', '20270329T170000Z'], ['20270405T170000Z'],
         ], [$h['rule'], array_keys($h['records']), $h['cancelled']]);
-        checkEq('the one step after the master is the skip\'s', ['GET', 'PATCH', 'GET', 'PATCH', 'GET'], array_column($s->t->calls, 0));
+        checkEq('the one step after the master is the skip\'s, after a read of the series for its etag', ['GET', 'PATCH', 'GET', 'GET', 'PATCH', 'GET'], array_column($s->t->calls, 0));
         checkEq('the rows here hold what the stand-in holds', $h, $stored($s, 'smpl1weekly'));
         [$before, $after] = $secondSync($s);
         checkEq('a second sync changes nothing', $before, $after);
@@ -332,7 +334,7 @@ return static function (Db $db): void {
         ], 'cancelled' => ['20270405T180000Z']];
         checkEq('Finish carries the rest from Google\'s state: the plan holds at Google and here, the pending row is gone', [true, $want, $want, []],
             [$out['ok'], $held($s, 'smpl1weekly'), $stored($s, 'smpl1weekly'), $pending($s)]);
-        checkEq('Finish read the series afresh, sent no master PATCH again (nothing on it differed), only the steps left', ['GET', 'GET', 'PATCH', 'PATCH', 'PATCH', 'GET'], array_column($s->t->calls, 0));
+        checkEq('Finish read the series afresh, sent no master PATCH again (nothing on it differed), only the steps left, each after a read of its day', array_merge(['GET', 'GET'], ...array_fill(0, 3, ['GET', 'GET', 'PATCH']), ...[['GET']]), array_column($s->t->calls, 0));
         [$before, $after] = $secondSync($s);
         checkEq('a second sync changes nothing', $before, $after);
     });

@@ -134,7 +134,7 @@ So the common answer to Google's behavior is to accept it: send the one change, 
 Carrying days across is several requests where Google's way is one, and most of what's listed here comes from that.
 
 - **Undo of a change to all events on a Google calendar is off** until 1.5.6 ([#235](https://github.com/Oshyan/better-cal/issues/235)). Whether it comes back at all is one of the questions for #243.
-- **Switching a repeating event with a deleted day back to a form it had before stops half done.** Finish completes it correctly, but it shouldn't need Finish ([#256](https://github.com/Oshyan/better-cal/issues/256)).
+- **A change to all events that wrote more than one day could stop half done** (a switch between timed and all-day, a clock time changed and back), with Finish completing it ([#256](https://github.com/Oshyan/better-cal/issues/256)). Fixed after 1.5.5: each day's write now carries that day's own version tag.
 - **A half-done change that can be neither finished nor put back** has no "leave it as Google has it" yet ([#244](https://github.com/Oshyan/better-cal/issues/244)).
 - **Better-Cal doesn't notice when your access to a calendar is taken away at Google** ([#245](https://github.com/Oshyan/better-cal/issues/245)).
 - **A change made in Google Calendar while one of ours is half done** is kept only when ours leaves every day where it was. Otherwise it's dropped, and named.

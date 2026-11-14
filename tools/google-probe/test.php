@@ -446,6 +446,28 @@ ksort($listed);
 check('stand-in, round 5 cause 5: after an ordinary day is deleted the delta lists the master, the deleted day and the renamed day unchanged',
     $listed === ['delta001' => 'Sample weekly/confirmed', 'delta001_20270510T180000Z' => 'Sample weekly, one day/confirmed', 'delta001_20270517T180000Z' => 'Sample weekly/cancelled'], json_encode($listed));
 
+// Cause 7 (google-an-untouched-edited-day-keeps-its-own-list-after-a-zone-and-rule-change, request 16): a series weekly
+// on Saturdays at 02:30 Kolkata (Fridays 13:00 Los Angeles), a day with its own 12:30 to 14:00 Los Angeles, put back
+// to daily at 13:00 to 14:30 Los Angeles from an earlier date. Google moved the day's start onto the series' 13:00 and
+// left its end at 14:00.
+$fake = new FakeGoogle(CAL);
+$fake->token = null;
+$kol = static fn(string $l): array => ['dateTime' => (new DateTimeImmutable($l, new DateTimeZone('Asia/Kolkata')))->format('Y-m-d\TH:i:sP'), 'timeZone' => 'Asia/Kolkata'];
+$la = static fn(string $l): array => ['dateTime' => (new DateTimeImmutable($l, new DateTimeZone('America/Los_Angeles')))->format('Y-m-d\TH:i:sP'), 'timeZone' => 'America/Los_Angeles'];
+$fake->seed(['id' => 'back0001', 'summary' => 'Sample series', 'start' => $kol('2027-03-06 02:30'), 'end' => $kol('2027-03-06 04:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;BYDAY=SA;UNTIL=20270311T075959Z']]);
+$call($fake, 'PATCH', 'back0001_20270305T210000Z', ['start' => $la('2027-03-05 12:30'), 'end' => $la('2027-03-05 14:00')]);
+$call($fake, 'PATCH', 'back0001', ['start' => $la('2027-03-03 13:00'), 'end' => $la('2027-03-03 14:30'), 'recurrence' => ['RRULE:FREQ=DAILY;BYDAY=WE,TH,FR,SA;UNTIL=20270311T075959Z']]);
+$own = $fake->records('back0001')['20270305T210000Z'] ?? [];
+$at = static fn(array $w): string => isset($w['dateTime']) ? (new DateTimeImmutable((string) $w['dateTime']))->setTimezone(new DateTimeZone('America/Los_Angeles'))->format('Y-m-d H:i') : '';
+check('stand-in, round 5 cause 7: a series put back to another zone, rule and start date moves a kept day\'s start onto the series\' time and leaves its end',
+    $at($own['start'] ?? []) === '2027-03-05 13:00' && $at($own['end'] ?? []) === '2027-03-05 14:00' && ($own['end']['timeZone'] ?? null) === 'America/Los_Angeles', json_encode($own));
+// 3.5 (2026-11-07): the start onto its second occurrence; the moved day's start follows, its end stays (none reported changed).
+$fake = $standIn();
+$call($fake, 'PATCH', 'standin01', ['start' => $la('2027-03-08 10:00'), 'end' => $la('2027-03-08 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=10']]);
+$moved = $fake->records('standin01')['20270315T170000Z'] ?? [];
+check('stand-in, 3.5: the start moved along the pattern moves the moved day\'s start onto its occurrence and leaves its end',
+    $at($moved['start'] ?? []) === '2027-03-15 10:00' && $at($moved['end'] ?? []) === '2027-03-16 11:00', json_encode($moved));
+
 // ---- Report scrubbing on its own ---------------------------------------------
 $r = new Report($tmp . '/scrub');
 $r->secret('someone@example.net', '{account}');

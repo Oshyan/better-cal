@@ -463,7 +463,12 @@ final class FakeGoogle
                 }
                 continue;
             }
-            if ($sameInstants && isset($r['end']['dateTime'])) {
+            // The start changed and the length did not: a kept timed record's start goes onto its occurrence and its end
+            // stays at its instant, in the series' zone. Seen for the zone alone at the same moments (3.17, replay round 2
+            // D), for a start date moved along the pattern (3.5: no record's end reported changed) and for a zone and rule
+            // change put back (replay round 5, google-an-untouched-edited-day-keeps-its-own-list-after-a-zone-and-rule-change
+            // request 16: a day with its own 12:30 to 14:00 read back 13:00 to 14:00 under a 13:00 to 14:30 series).
+            if (($sameInstants || ($startChanged && $newLen === $oldLen && !$allDay)) && isset($r['end']['dateTime'])) {
                 $tz = (string) $new['start']['timeZone'];
                 [$r['start']] = $this->span($occ[$key], $newLen, $allDay, $tz);
                 $r['end'] = ['dateTime' => (new \DateTimeImmutable((string) $r['end']['dateTime']))->setTimezone(new \DateTimeZone($tz))->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz];

@@ -103,6 +103,21 @@ return static function (Db $db): void {
     // A time value in the served form, compared as instants and the all-day setting.
     $instants = static fn(?array $v): ?array => $v === null ? null : [strtotime((string) ($v['start'] ?? '')), strtotime((string) ($v['end'] ?? '')), (bool) ($v['allDay'] ?? false)];
     $keptOf = static fn(array $json): mixed => array_key_exists('kept', $json) ? $json['kept'] : 'no kept in the answer';
+    // Overwrite as the page's section (c) says the app sends it: the same request again, with, for each field in `fields`,
+    // over[field] set to its `now` and the body's value for it set to its `yours` (the time whole: start, end, allDay); a
+    // delete's yours is null and sets no body value.
+    $overwrite = static function (array $body, array $json): array {
+        foreach ((array) ($json['error']['fields'] ?? []) as $f) {
+            $keys = $f['field'] === 'time' ? ['start', 'end', 'allDay'] : [$f['field']];
+            foreach ($keys as $k) {
+                $body['over'][$k] = $f['field'] === 'time' ? ($f['now'][$k] ?? null) : $f['now'];
+                if ($f['yours'] !== null) {
+                    $body[$k] = $f['field'] === 'time' ? ($f['yours'][$k] ?? null) : $f['yours'];
+                }
+            }
+        }
+        return $body;
+    };
     $bodyKeys = static fn(?array $body): array => array_values(array_intersect(array_keys((array) $body), ['summary', 'description', 'location', 'source', 'status', 'start', 'end']));
     $googleTime = static fn(string $s, string $e): array => ['start' => ['dateTime' => $s, 'timeZone' => 'UTC'], 'end' => ['dateTime' => $e, 'timeZone' => 'UTC']];
 
@@ -163,7 +178,7 @@ return static function (Db $db): void {
     });
 
     // Case 3, Overwrite; and the unlikely "second change before Overwrite asks again".
-    scenario('Overwrite after the question: one PATCH, rows hold your value', function () use ($fresh, $send, $overOf, $atGoogle, $mark, $sent, $methods, $row, $atG, $keptOf): void {
+    scenario('Overwrite after the question: one PATCH, rows hold your value', function () use ($fresh, $send, $overOf, $atGoogle, $mark, $sent, $methods, $row, $atG, $keptOf, $overwrite): void {
         $t = $fresh();
         $over = $overOf($t, ['title']);
         $atGoogle($t, ['summary' => 'Standup']);
@@ -171,20 +186,20 @@ return static function (Db $db): void {
         [$status, $json] = $send($t, 'patch', $body);
         checkEq('the question first', 409, $status);
         $m = $mark($t);
-        $field = $json['error']['fields'][0] ?? ['now' => 'Standup'];
-        [$status, $json] = $send($t, 'patch', ['over' => ['title' => $field['now']] + $over] + $body);
+        [$status, $json] = $send($t, 'patch', $overwrite($body, $json));
         checkEq('Overwrite: 200, one read and one PATCH, nothing kept', [200, ['GET', 'PATCH'], []], [$status, $methods($sent($t, $m)), $keptOf($json)]);
         checkEq('Google and the row hold your title, and the tags are written', ['Weekly sync', 'Weekly sync', ['sample-tag']], [$atG($t)['summary'] ?? null, $row($t)['title'], $row($t)['tags']]);
+        H::done($t);
     });
-    scenario('second change before Overwrite asks again', function () use ($fresh, $send, $overOf, $atGoogle, $mark, $sent, $methods, $row): void {
+    scenario('second change before Overwrite asks again', function () use ($fresh, $send, $overOf, $atGoogle, $mark, $sent, $methods, $row, $overwrite): void {
         $t = $fresh();
         $over = $overOf($t, ['title']);
         $atGoogle($t, ['summary' => 'Standup']);
         $body = ['title' => 'Weekly sync', 'over' => $over];
-        $send($t, 'patch', $body);
+        [, $first] = $send($t, 'patch', $body);
         $atGoogle($t, ['summary' => 'Daily sync']);
         $m = $mark($t);
-        [$status, $json] = $send($t, 'patch', ['over' => ['title' => 'Standup']] + $body);
+        [$status, $json] = $send($t, 'patch', $overwrite($body, $first));
         $e = $json['error'] ?? [];
         checkEq('409 google_changed again, with the newer value; one read, nothing written; the row holds the newer title', [409, 'google_changed', [['field' => 'title', 'was' => 'Standup', 'now' => 'Daily sync', 'yours' => 'Weekly sync']], ['GET'], 'Daily sync'],
             [$status, $e['code'] ?? null, $e['fields'] ?? null, $methods($sent($t, $m)), $row($t)['title']]);
@@ -229,20 +244,23 @@ return static function (Db $db): void {
         $e = $json['error'] ?? [];
         checkEq('409 google_changed, the place alone, yours null', [409, 'google_changed', [['field' => 'location', 'was' => 'Room 2', 'now' => 'Sample Hall', 'yours' => null]]],
             [$status, $e['code'] ?? null, $e['fields'] ?? null]);
-        checkEq('the message is whole on its own', "'Team sync' wasn't deleted: since it was last shown, its place was changed in Google Calendar.", $e['message'] ?? null);
-        checkEq('one read, nothing written to Google; the event lives at Google and here, here with Google\'s place', [['GET'], 'confirmed', ['location' => 'Sample Hall'] + $before],
-            [$methods($sent($t, $m)), $atG($t)['status'] ?? null, $row($t)]);
+        checkEq('the message is whole on its own', "'Team sync' wasn't deleted: since it was last shown, its place was changed in Google Calendar. Open the event to see it, and delete it again if you still mean to.", $e['message'] ?? null);
+        $sorted = static function (array $r): array {
+            ksort($r);
+            return $r;
+        };
+        checkEq('one read, nothing written to Google; the event lives at Google and here, here with Google\'s place', [['GET'], 'confirmed', $sorted(['location' => 'Sample Hall'] + $before)],
+            [$methods($sent($t, $m)), $atG($t)['status'] ?? null, $sorted($row($t))]);
         H::done($t);
     });
-    scenario('Delete after the question deletes', function () use ($fresh, $send, $overOf, $allKeys, $atGoogle, $mark, $sent, $methods, $row, $atG): void {
+    scenario('Delete after the question deletes', function () use ($fresh, $send, $overOf, $allKeys, $atGoogle, $mark, $sent, $methods, $row, $atG, $overwrite): void {
         $t = $fresh();
         $over = $overOf($t, $allKeys);
         $atGoogle($t, ['location' => 'Sample Hall']);
         [$status, $json] = $send($t, 'delete', ['over' => $over]);
         checkEq('the question first', 409, $status);
         $m = $mark($t);
-        $now = $json['error']['fields'][0]['now'] ?? 'Sample Hall';
-        [$status] = $send($t, 'delete', ['over' => ['location' => $now] + $over]);
+        [$status] = $send($t, 'delete', $overwrite(['over' => $over], $json));
         checkEq('Delete: 200, one read and one DELETE; deleted at Google and here', [200, ['GET', 'DELETE'], 'cancelled', true],
             [$status, $methods($sent($t, $m)), $atG($t)['status'] ?? 'gone', $row($t)['deleted']]);
         H::done($t);
@@ -334,7 +352,7 @@ return static function (Db $db): void {
     });
 
     // The damage list: Overwrite sends what the person was shown as theirs, never the drag read again over the stored row.
-    scenario('a drag over an event made all-day at Google asks, and Overwrite puts it at the dragged time, timed', function () use ($fresh, $send, $overOf, $atGoogle, $mark, $sent, $methods, $row, $atG, $instants): void {
+    scenario('a drag over an event made all-day at Google asks, and Overwrite puts it at the dragged time, timed', function () use ($fresh, $send, $overOf, $atGoogle, $mark, $sent, $methods, $row, $atG, $instants, $overwrite): void {
         $t = $fresh();
         $over = $overOf($t, ['start', 'end', 'allDay']);
         $atGoogle($t, ['start' => ['date' => '2027-03-03', 'dateTime' => null, 'timeZone' => null], 'end' => ['date' => '2027-03-04', 'dateTime' => null, 'timeZone' => null]]);
@@ -345,8 +363,7 @@ return static function (Db $db): void {
             [strtotime('2027-03-04T18:00:00+00:00'), strtotime('2027-03-04T19:00:00+00:00'), false]],
             [$status, $json['error']['code'] ?? null, $f['field'] ?? null, (bool) ($f['now']['allDay'] ?? false), $instants($f['yours'] ?? null)]);
         $m = $mark($t);
-        $now = $f['now'] ?? [];
-        [$status] = $send($t, 'patch', ['over' => ['start' => $now['start'] ?? null, 'end' => $now['end'] ?? null, 'allDay' => $now['allDay'] ?? null]] + $body);
+        [$status] = $send($t, 'patch', $overwrite($body, $json));
         checkEq('Overwrite: 200, one PATCH; Google and the row hold the dragged time, timed', [200, ['GET', 'PATCH'], '2027-03-04T18:00:00+00:00', ['2027-03-04 18:00:00', '2027-03-04 19:00:00', 0]],
             [$status, $methods($sent($t, $m)), isset($atG($t)['start']['dateTime']) ? gmdate('Y-m-d\TH:i:s+00:00', strtotime($atG($t)['start']['dateTime'])) : 'all-day', $row($t)['time']]);
         H::done($t);

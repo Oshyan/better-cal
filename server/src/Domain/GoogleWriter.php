@@ -205,12 +205,17 @@ final class GoogleWriter
     /**
      * The refusal when Google's word on the level could not be read: before a
      * change's first write (admit), or after a write Google refused (call).
-     * Nothing was changed; `refused` says Google took nothing, so a change
-     * under way does not count it as a step sent (GoogleSeries::refused).
+     * Nothing was changed by this request; `refused` says Google took
+     * nothing, so a change under way does not count it as a step sent
+     * (GoogleSeries::refused). Whether anything was changed is known from
+     * what the change sent, not from this one request: `said` is the reason
+     * without "nothing was changed", for a change that had already sent part
+     * of itself and stops here (GoogleSeries::run).
      */
     public static function unconfirmed(): HttpError
     {
-        return new HttpError('google_write_failed', 'Google did not say what this account may do with this calendar, so nothing was changed. Try again in a minute.', 502, ['refused' => true]);
+        return new HttpError('google_write_failed', 'Google did not say what this account may do with this calendar, so nothing was changed. Try again in a minute.', 502,
+            ['refused' => true, 'said' => 'Google did not say what this account may do with this calendar.']);
     }
 
     /** Whether a refusal is the access rule's (readOnly). Pure. */
@@ -1004,7 +1009,8 @@ final class GoogleWriter
             }
             // Any other refusal of a list says nothing of an event: never read as one deleted (gone).
             if ($role === null && (int) $r['status'] >= 400 && self::refusal((int) $r['status'], (string) $r['body']) === 'deleted') {
-                throw new HttpError('google_write_failed', 'Google gave an answer Better-Cal does not read for this calendar\'s list; nothing was changed. Try again in a minute.', 502, ['googleStatus' => 0]);
+                throw new HttpError('google_write_failed', 'Google gave an answer Better-Cal does not read for this calendar\'s list; nothing was changed. Try again in a minute.', 502,
+                    ['googleStatus' => 0, 'said' => 'Google gave an answer Better-Cal does not read for this calendar\'s list.']);
             }
         }
         // A write refused for what may be the account's access (a 403 not about a rate, a 404, a 410, a

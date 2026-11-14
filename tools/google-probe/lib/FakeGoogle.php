@@ -75,6 +75,14 @@ final class FakeGoogle
     public int $orderSeed = 0;
     public bool $listDropped = true;
     public string $zoneAlone = 'kept';
+    /**
+     * A test's own effect on each record a master write keeps or revives: fn(array $record, array $before, array $master): array,
+     * given the record as this write leaves it by the rules above, the record as it was held before the write, and the
+     * master as written; it returns the record as held from then on. For a check that asks what the app does with an
+     * effect of Google's that no rule here names (one nobody has seen included). Null, the default, changes nothing.
+     * Never a claim about Google.
+     */
+    public ?\Closure $masterEffect = null;
     /** The label Google adds to a colour set on one day (10.6, 2026-11-13); invented, the form of the one seen. */
     public const LABEL = '00000000-0000-4000-8000-00000000c010';
 
@@ -488,7 +496,7 @@ final class FakeGoogle
             if ($clearNotes) {
                 unset($r['description']);
             }
-            $this->events[$rid] = $r;
+            $this->events[$rid] = $this->masterEffect !== null ? ($this->masterEffect)($r, $this->events[$rid], $new) : $r;
         }
         // A record an earlier master change dropped, whose id is a day of the master again (a clock or form changed back,
         // a bound or split taken back): revived as a live record at the series' values (3.36, 3.37, 3.40, 10.2, 10.3,
@@ -499,7 +507,8 @@ final class FakeGoogle
         }
         foreach ($this->events as $rid => $r) {
             if (isset($generated[$rid]) && !isset($this->zoneDropped[$rid]) && $this->isDropped($r) && $this->seriesIdOf((string) $rid) === $id) {
-                $this->events[$rid] = ['sequence' => (int) ($r['sequence'] ?? 0) + 1] + $generated[$rid];
+                $revived = ['sequence' => (int) ($r['sequence'] ?? 0) + 1] + $generated[$rid];
+                $this->events[$rid] = $this->masterEffect !== null ? ($this->masterEffect)($revived, $r, $new) : $revived;
             }
         }
         // A rule change that leaves the series no day but deleted ones: Google cancels the series (3.62).

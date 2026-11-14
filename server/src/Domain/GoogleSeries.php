@@ -935,11 +935,16 @@ final class GoogleSeries
         // expectation: it is read by whether what it removed is still gone (landed).
         // A read made below reader (access dropped to busy times only during the change) shows no titles: it is never
         // kept, neither stored over the rows (store) nor recorded as what Google held (GoogleWriter::shows).
-        $settled = function (int $i, array $items, string $googleId) use (&$steps, $save, $back, $calendar): void {
+        // Only a step this run journaled itself is given the read ($own: the journal's length when the run began).
+        // A read by a run that has written nothing says what Google holds now, not what this change left: a Finish
+        // refused at its first write, after someone changed the event in Google Calendar, must leave the earlier
+        // run's expectation as it was, or that change would be taken for the change's own from then on.
+        $own = count($steps);
+        $settled = function (int $i, array $items, string $googleId) use (&$steps, $save, $back, $calendar, $own): void {
             if (!$this->writer->listShows($calendar)) {
                 return;
             }
-            for ($n = count($steps) - 1; $n >= 0; $n--) {
+            for ($n = count($steps) - 1; $n >= $own; $n--) {
                 if (!empty($steps[$n]['back']) !== $back) {
                     return;
                 }

@@ -68,7 +68,7 @@ The owner's rule (2026-11-14): the last write wins, "and the way to be clear abo
 What a stop stores, in the form it had before (a step's `expect`, a digest; nothing new is stored and no older row is rewritten):
 
 - Before each request, the step as sent, with a prediction of what the series holds once it lands where one can be made: an insert (the series as sent), a day's write (that day as sent over the last read), and the series' write where the series has a row here, a UID and a first read (`afterMaster`). A series' write with none of those journals no expectation. A removal and an event of its own take none: a removal is read by whether what it removed is still gone, an event of its own by its etag.
-- After each read, that read's digest in place of whatever the series' last such step carried.
+- After each read, that read's digest in place of whatever the series' last such step carried, where this run journaled that step itself. A run that has written nothing gives its read to no step: what it read is what Google holds now, not what the change left.
 
 **Finish and Put back ask one question first** (`asLeft`): does Google hold each series exactly as this change last read it?
 

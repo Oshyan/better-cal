@@ -470,10 +470,18 @@ final class FakeGoogle
             // change put back (replay round 5, google-an-untouched-edited-day-keeps-its-own-list-after-a-zone-and-rule-change
             // request 16: a day with its own 12:30 to 14:00 read back 13:00 to 14:00 under a 13:00 to 14:30 series), and
             // for the first day dragged a week later (3.67, 2026-11-14: a day at its own 14:00 to 15:30 read 10:00 to 15:30).
-            if (($sameInstants || ($startChanged && $newLen === $oldLen && !$allDay)) && isset($r['end']['dateTime'])) {
-                $tz = (string) $new['start']['timeZone'];
-                [$r['start']] = $this->span($occ[$key], $newLen, $allDay, $tz);
-                $r['end'] = ['dateTime' => (new \DateTimeImmutable((string) $r['end']['dateTime']))->setTimezone(new \DateTimeZone($tz))->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz];
+            // A timed day of an all-day series the same way, its start the occurrence's date at 00:00 UTC and neither
+            // end named in a zone (replay round 5, google-a-reading-keeping-a-timed-day-under-an-all-day-series-is-
+            // offered-as-locally request 9: a day at 09:00 to 10:00 Berlin read 00:00 UTC to 10:00 Berlin, no timeZone).
+            if (($sameInstants || ($startChanged && $newLen === $oldLen)) && isset($r['end']['dateTime'])) {
+                if ($allDay) {
+                    $r['start'] = ['dateTime' => $occ[$key]->format('Y-m-d') . 'T00:00:00+00:00'];
+                    $r['end'] = ['dateTime' => (new \DateTimeImmutable((string) $r['end']['dateTime']))->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i:sP')];
+                } else {
+                    $tz = (string) $new['start']['timeZone'];
+                    [$r['start']] = $this->span($occ[$key], $newLen, $allDay, $tz);
+                    $r['end'] = ['dateTime' => (new \DateTimeImmutable((string) $r['end']['dateTime']))->setTimezone(new \DateTimeZone($tz))->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz];
+                }
             } elseif ($startChanged) {
                 [$r['start'], $r['end']] = $this->span($occ[$key], $newLen, $allDay, (string) ($new['start']['timeZone'] ?? $this->zone));
             } elseif ($newLen !== $oldLen) {

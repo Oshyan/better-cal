@@ -819,20 +819,21 @@ final class GoogleSeries
                     $found[$i] = self::stateOf($before, $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $before['id']]));
                 }
                 $reads[$i] = $this->readBack($calendar, $send, !empty($t['uid']) ? (string) $t['uid'] : null, (string) $t['googleId'], null, $beforeSend);
-                // A switch between timed and all-day that would hide days at Google is refused before anything is
-                // sent, by every record Google holds, one at the series' values included, which the rows here can't
-                // show (3.65; the planner refuses by the rows: decisions.md, "A switch between timed and all-day that
-                // Google would hide days with is refused").
                 $h = self::held($reads[$i], (string) $t['googleId']);
+                $carried[$i] = self::carriedExdates($h, $t);
+                if (self::masterBody($old, $t['master']) !== [] || ($t['singles'] ?? []) !== [] || self::stepsFor($t, $reads[$i]) !== []) {
+                    $first[$i] = $this->condition($calendar, (string) $t['googleId'], $beforeSend, $reads[$i])['etag'];
+                }
+                // After the condition above (a series changed at Google since the last poll is refused as that, before
+                // anything else is judged: the second independent read), a switch between timed and all-day that would
+                // hide days at Google is refused before anything is sent, by every record Google holds, one at the
+                // series' values included, which the rows here can't show (3.65; the planner refuses by the rows:
+                // decisions.md, "A switch between timed and all-day that Google would hide days with is refused").
                 if ($h['master'] !== null) {
                     $hidden = self::hiddenRefusal($h['master'], $t['master'], array_merge(array_keys($h['records']), array_keys($h['cancelled'])), array_keys($h['cancelled']), $thisYear, $made ? 'new' : ($back ? 'putBack' : 'finish'));
                     if ($hidden !== null) {
                         throw new HttpError('google_hidden_days', $hidden['words'], 409, array_diff_key($hidden, ['words' => true]));
                     }
-                }
-                $carried[$i] = self::carriedExdates($h, $t);
-                if (self::masterBody($old, $t['master']) !== [] || ($t['singles'] ?? []) !== [] || self::stepsFor($t, $reads[$i]) !== []) {
-                    $first[$i] = $this->condition($calendar, (string) $t['googleId'], $beforeSend, $reads[$i])['etag'];
                 }
             }
             foreach ($targets as $i => $t) {

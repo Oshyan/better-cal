@@ -132,6 +132,26 @@ php tools/google-probe/access.php --calendar <id> --account <google_accounts id 
 
 Each run adds a table to `access-<hash>.md` (and `.json`, every exchange raw), where the hash stands for the calendar id; the state (event ids, their last etags, the last sync token and the stage it came from) is `access-state-<hash>.json` beside them and holds the raw token. The report opens with a table of every request's status by stage and ends with the questions to answer from it, left blank. It is scrubbed as the probe's is, and any other address in it is replaced too. Every write sends `sendUpdates=none`, and every event made carries the probe's marker.
 
+### Round 2
+
+A second live round, run with `--round 2` on every stage and a fresh `--report` folder so the state starts empty; the owner's steps are the same up to step 8 (the calendar can be deleted, or kept and cleaned up). What it adds to the fixed set, each a row like the others:
+
+- At `writer`, after what it makes today: three sets of deletables (a single timed event, and a weekly series of four with its second day renamed), one each for `reader`, `freebusy` and `unshared`, each read back for its current etag (the renamed day's record its own). The owner's event's etag after the stage is kept as the one stored at writer.
+- At `reader`, `freebusy` and `unshared`, in this order, each conditional on the etag stored: D1 deletes that stage's single event, D2 its renamed day's record, D3 its series, D4 the owner's own event (on the etag stored at writer). A delete that is not refused is noted and followed by a GET. None of these is sent at `writer` or `restored`.
+- At every stage: U1 and U2 list the single event and the series the writer stage made by iCalUID (`singleEvents=false`, `showDeleted=true`): item count, `accessRole`, and each item's key names (the items stay raw in the JSON). Request 4's row adds the key names of the first of the probe's own items. I inserts an event under the id of the writer stage's single event (409, 403 or another answer).
+- At `restored`, first of all, R0 PATCHes the single event's title once a second until Google takes it or 180 seconds pass, each try a row, and a note gives the try and the seconds from the stage's start to the first one taken. At its end, R9 lists what of the deletables still exists, by iCalUID with `showDeleted`.
+
+`--stage cleanup` deletes the deletables too.
+
+```bash
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --report workfolder/google-access-2 --round 2 --stage writer     # after step 4
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --report workfolder/google-access-2 --round 2 --stage reader     # after step 5
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --report workfolder/google-access-2 --round 2 --stage freebusy   # after step 6
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --report workfolder/google-access-2 --round 2 --stage unshared   # after step 7
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --report workfolder/google-access-2 --round 2 --stage restored   # after step 8, at once
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --report workfolder/google-access-2 --round 2 --stage cleanup    # when the calendar is kept
+```
+
 ### Stage listread
 
 Whether a list by iCalUID (`GET /events?iCalUID=<uid>&singleEvents=false`, with `showDeleted=true` and `false`) returns the same resource a GET by id does, which decides whether a write's first read can be that list and bring the calendar's `accessRole` with it. It runs on any calendar the account may write (owner or writer, the probe's own throwaway calendar included; not the main one), needs no owner's event, and leaves the other stages' state alone:

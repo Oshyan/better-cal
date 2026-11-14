@@ -6,7 +6,10 @@
 // Google account and shared with this one. See README.md, "The Access Probe".
 //
 //   php tools/google-probe/access.php --calendar <googleCalendarId> --account <google_accounts id or email>
-//       --stage <label> [--report <dir>] [--allow-other-events]
+//       --stage <label> [--report <dir>] [--allow-other-events] [--round 2]
+//
+// --round 2 adds the second live round's requests (lib/AccessProbe.php's
+// header): run every stage of that round with it, into a fresh --report.
 //
 // Loads the app's config and database as run.php does, and talks to Google
 // through lib/Api.php (the token, sendUpdates=none on every write, retries).
@@ -32,9 +35,9 @@ use BetterCal\GoogleProbe\Report;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
 
-$usage = "usage: php tools/google-probe/access.php --calendar <googleCalendarId> --account <google_accounts id or email> --stage <label> [--report <dir>] [--allow-other-events]\n"
+$usage = "usage: php tools/google-probe/access.php --calendar <googleCalendarId> --account <google_accounts id or email> --stage <label> [--report <dir>] [--allow-other-events] [--round 2]\n"
     . "  stages the README uses, in order: writer, reader, freebusy, unshared, restored, deleted (and cleanup, which only deletes what the probe made); listread, on any calendar the account may write, compares a GET by id with a list by iCalUID and deletes what it made\n";
-$opts = getopt('', ['calendar:', 'account:', 'stage:', 'report:', 'allow-other-events', 'help']);
+$opts = getopt('', ['calendar:', 'account:', 'stage:', 'report:', 'allow-other-events', 'round:', 'help']);
 if (isset($opts['help']) || !isset($opts['calendar'], $opts['account'], $opts['stage'])) {
     fwrite(STDERR, $usage);
     exit(isset($opts['help']) ? 0 : 2);
@@ -80,8 +83,13 @@ $scrubber = new Report($dir);
 $scrubber->secret((string) $account['email'], '{account}');
 $scrubber->secret($calendarId, '{calendar}');
 
-$probe = new AccessProbe($api, $scrubber, $dir, isset($opts['allow-other-events']));
-fwrite(STDERR, "Stage $stage; state in {$probe->statePath}.\n");
+$round = (int) ($opts['round'] ?? 1);
+if (!in_array($round, [1, 2], true)) {
+    fwrite(STDERR, "--round is 1 or 2.\n");
+    exit(2);
+}
+$probe = new AccessProbe($api, $scrubber, $dir, isset($opts['allow-other-events']), null, false, $round, $sleep);
+fwrite(STDERR, "Stage $stage" . ($round === 2 ? ', round 2' : '') . "; state in {$probe->statePath}.\n");
 $record = $probe->run($stage);
 foreach ($record['rows'] as $r) {
     fwrite(STDERR, sprintf("  %-3s %-55s %d %s\n", $r['n'], $r['request'], $r['status'], $r['reason']));

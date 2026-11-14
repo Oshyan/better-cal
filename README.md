@@ -55,7 +55,7 @@ It's had less use on iPhone than on Android, so if you have one, I'd especially 
 For a one-person project, taking security seriously means doing the work in public rather than making promises:
 
 - **Five full scans** of the whole codebase before 1.0 (Codex Security and Claude Security). Every finding was independently verified, then fixed or, in a handful of cases, accepted with the reason recorded. Every finding is recorded with what was done about it in its round's record (for the last two rounds, `docs/security-remediation-checklist-<date>.md`), and a fix commit names its finding where it has one of its own; [SECURITY.md](SECURITY.md#what-has-been-reviewed) lists each round, what it found and what remains.
-- **Latest review:** 2026-11-04, Codex Security (Daybreak Blue), of the changes from 1.0.0 to 1.5.0: 6 Low findings, fixed in 1.5.1. [Every review](SECURITY.md#what-has-been-reviewed).
+- **Latest review:** 2026-11-14, Codex Security (Daybreak Blue), of the changes from 1.5.0 to 1.5.6: 2 Low findings, both in maintainer tools and neither affecting an install ([#279](https://github.com/Oshyan/better-cal/issues/279), [#280](https://github.com/Oshyan/better-cal/issues/280)). [Every review](SECURITY.md#what-has-been-reviewed).
 - **The fixes reviewed too**, for gaps, ways around them and anything they broke.
 - **Tests** run on every change and before every deploy, including a regression test for each security fix.
 - **Published advisories**, listed in [SECURITY.md](SECURITY.md#past-advisories) with the affected and fixed versions.

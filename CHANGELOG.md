@@ -4,7 +4,7 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## 1.5.6 (unreleased)
+## 1.5.6 (2026-11-14)
 
 Google calendars, after replaying Better-Cal's own requests against Google and probing what it does: fixes, one rule for a change to all events (read back, then send every day that is not as you asked), and access that is read from Google and said plainly.
 
@@ -25,6 +25,8 @@ Google calendars, after replaying Better-Cal's own requests against Google and p
 - Maintainers: `tools/google-probe` ran three times on 2026-11-13 ([findings](docs/design/research/google-series/probe-2026-11-13.md)), and the stand-in for Google now hides days, clears notes and cancels a series as Google does. The stand-in reads whether a date is a day of a rule from the rule itself, not from its 730-item listing, and the harness no longer moves a start past the editing horizon ([#278](https://github.com/Oshyan/better-cal/issues/278)). The harness's shrinker no longer stops on a case with no edit, and its interleaving mode refuses `--product` instead of ignoring it.
 
 **What the upgrade loses:** a change left half done by 1.5.5 that had already brought a deleted day back keeps it back after Finish; Put back restores it. A half-done switch between timed and all-day at such a time may be refused by Finish with the new sentence, which then says to Put back first; if the event was also changed in Google Calendar meanwhile, neither completes and the notice can only be dismissed. A day whose notes or end time 1.5.5 had already lost in a half-done change stays as it is after Finish. Nothing else: no event, tag, person or setting changes.
+
+Operators: no migrations; `update.php` or the update page as usual.
 
 ## 1.5.5 (2026-11-10)
 

@@ -12,8 +12,9 @@
 
 import {
   fmtDayMedium, fmtDateFull, fmtDateShort, fmtDateShortYear, fmtTimeIn, fmtTimeInZone,
-  dateOfDayKey, tzCity, untilDayKey,
+  dateOfDayKey, tzCity, untilDayKey, fmtRange, parseISO,
 } from './dates.js';
+import { stripToText } from './richtext.js';
 import { describeRepeat, ruleParts } from './repeat.js';
 
 const lowerFirst = (s) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
@@ -950,3 +951,149 @@ export function noteWords(n, opts = {}) {
 export const CHANGED_WORDS = 'The series changed since this was worked out. Here is the new plan.';
 export const WORKING_WORDS = 'Working out the plan…';
 export const SAVING_WORDS = 'Saving…';
+
+// ---- a single event changed in Google Calendar --------------------------------
+//
+// What a change or delete of one event on a Google calendar is told when the
+// event changed there since it was shown (docs/design/google-conflict-choice.md,
+// slice 1). The server sends data only: per asked field {field, was, now,
+// yours} (yours null for a delete), per kept field {field, now}, values in
+// the served form ('time' is {start, end, allDay}). Every sentence is
+// composed here from those fields and values; nothing reads the 409's
+// message, which is for callers with no dialog.
+
+const PLURAL_NOUNS = new Set(['notes', 'tags', 'people', 'reminders']);
+const isAre = (noun) => (PLURAL_NOUNS.has(noun) ? 'are' : 'is');
+const wasWere = (noun) => (PLURAL_NOUNS.has(noun) ? 'were' : 'was');
+const itThem = (noun) => (PLURAL_NOUNS.has(noun) ? 'them' : 'it');
+// Text this long, or on several lines, is shortened where two values are
+// set side by side, and not repeated at all in a toast.
+const TEXT_MAX = 80;
+const TOAST_MAX = 40;
+
+/** A value as plain text: notes as the text the person reads, never markup; whitespace runs as one space. */
+function plainOf(field, v) {
+  if (v == null) return '';
+  const s = field === 'description' ? stripToText(String(v)) : String(v);
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+const isEmptyValue = (field, v) => (field === 'time' ? !v : plainOf(field, v) === '');
+
+/**
+ * A time value, {start, end, allDay} in the served form, in the person's
+ * formats, as the popover says a range: "Tue, Nov 17, 10:00 AM to 11:00
+ * AM", "Wed, Nov 18, 2026, all day" (the year when it isn't `now`'s).
+ */
+export function timeValueWords(t, now = new Date()) {
+  if (!t || !t.start || !t.end) return '';
+  const at = (iso) => (t.allDay ? dateOfDayKey(String(iso).slice(0, 10)) : parseISO(iso));
+  // A sentence's spaces are plain: Intl puts a narrow one before AM and PM.
+  return fmtRange(at(t.start), at(t.end), !!t.allDay, now).replace(/[\u00a0\u202f]/g, ' ') + (t.allDay ? ', all day' : '');
+}
+
+/**
+ * Two texts said side by side, each cut to about 80 characters from a
+ * little before where they first differ, at word boundaries, with "…"
+ * where cut, so the difference shows: "'…the agenda and the slides for…'".
+ * With one text (other null) it is cut from its start.
+ */
+function cutPair(a, b) {
+  let i = 0;
+  if (b != null) while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  const cut = (s) => {
+    let from = b != null && i > 20 ? i - 20 : 0;
+    if (from > 0) {
+      const space = s.indexOf(' ', from);
+      from = space !== -1 && space < i ? space + 1 : from;
+    }
+    if (from === 0 && s.length <= TEXT_MAX) return s;
+    let to = Math.min(s.length, from + TEXT_MAX);
+    if (to < s.length) {
+      const space = s.lastIndexOf(' ', to);
+      if (space > from + TEXT_MAX / 2) to = space;
+    }
+    return (from > 0 ? '…' : '') + s.slice(from, to).replace(/[\s,.;:]+$/, '') + (to < s.length ? '…' : '');
+  };
+  return [cut(a), b != null ? cut(b) : null];
+}
+
+/** A non-empty value as a sentence says it; `other` (the value it is set beside) decides where long text is cut. */
+function valueWords(field, v, other = undefined, now = new Date()) {
+  if (field === 'time') return timeValueWords(v, now);
+  if (field === 'status') return v === 'tentative' ? 'Maybe' : 'Planned';
+  const s = plainOf(field, v);
+  const o = other === undefined || isEmptyValue(field, other) ? null : plainOf(field, other);
+  return quoted(cutPair(s, o)[0]);
+}
+
+/**
+ * The question when a change or a delete of one event finds that event
+ * changed in Google Calendar since it was shown: {title, body, lines, foot,
+ * confirmLabel, danger} for the app's confirm dialog. `fields` from the
+ * 409; `name`, the event's title as it was shown; `remove`, a delete;
+ * `back`, whether Cancel returns the person to a form holding their change.
+ * One field is said in a sentence; several get a line each, their values
+ * apart by semicolons (a time's own words hold commas).
+ */
+export function googleChangedAsk({ name, fields, remove = false, back = false, now = new Date() }) {
+  const list = (fields || []).filter((f) => f && f.field);
+  const said = (f, v, other) => valueWords(f.field, v, other, now);
+  // A value in a line: the value, or "no link" for an empty one.
+  const side = (f, v, other) => (isEmptyValue(f.field, v) ? 'no ' + fieldNoun(f.field) : said(f, v, other));
+  const since = 'Since ' + quoted(name || 'Untitled event') + ' was last shown to you, ';
+  const one = list.length === 1 ? list[0] : null;
+  let body;
+  let lines = [];
+  if (one) {
+    const noun = fieldNoun(one.field);
+    const its = 'its ' + noun + ' ' + wasWere(noun) + ' ';
+    const there = isEmptyValue(one.field, one.now) ? its + 'removed in Google Calendar'
+      : remove && isEmptyValue(one.field, one.was) ? its + 'set in Google Calendar to ' + said(one, one.now)
+      : remove ? its + 'changed in Google Calendar from ' + said(one, one.was, one.now) + ' to ' + said(one, one.now, one.was)
+      : its + 'changed in Google Calendar to ' + said(one, one.now, one.yours);
+    const yours = remove ? ''
+      : isEmptyValue(one.field, one.yours) ? ' Your change removes the ' + noun + '.'
+      : ' Your change makes ' + itThem(noun) + ' ' + said(one, one.yours, one.now) + '.';
+    body = since + there + '.' + yours;
+  } else {
+    body = since + 'these were changed in Google Calendar:';
+    lines = list.map((f) => upperFirst(fieldNoun(f.field)) + ': ' + (remove
+      ? 'was ' + side(f, f.was, f.now) + '; now ' + side(f, f.now, f.was) + '.'
+      : side(f, f.now, f.yours) + ' in Google Calendar; ' + side(f, f.yours, f.now) + ' in your change.'));
+  }
+  const title = remove ? 'Delete it anyway?'
+    : one ? 'The ' + fieldNoun(one.field) + ' ' + wasWere(fieldNoun(one.field)) + ' changed in Google Calendar'
+    : 'Changed in Google Calendar';
+  const foot = remove
+    ? 'Delete deletes it here and in Google Calendar. Cancel keeps it, as it is in Google Calendar now.'
+    : 'Overwrite saves your change. Cancel saves nothing' + (back ? ' and takes you back to your change.' : ', and the event shows as it is in Google Calendar now.');
+  return { title, body, lines, foot, confirmLabel: remove ? 'Delete' : 'Overwrite', danger: remove };
+}
+
+/**
+ * The toast's added line when a change went through and other fields
+ * changed in Google Calendar meanwhile stayed: "Changed in Google Calendar
+ * meanwhile, and kept: the title is now 'Team sync'." Text too long for a
+ * toast is not repeated (the event shows it). Clauses whose words hold
+ * commas (a time) are apart by semicolons. Empty `kept`: null, and the
+ * toast is as it always was.
+ */
+export function keptWords(kept, now = new Date()) {
+  const list = (kept || []).filter((k) => k && k.field);
+  if (!list.length) return null;
+  const clause = (k) => {
+    const noun = fieldNoun(k.field);
+    if (isEmptyValue(k.field, k.now)) return 'the ' + noun + ' ' + wasWere(noun) + ' removed';
+    const long = k.field !== 'time' && k.field !== 'status' && plainOf(k.field, k.now).length > TOAST_MAX;
+    return long ? 'the ' + noun + ' ' + wasWere(noun) + ' changed' : 'the ' + noun + ' ' + isAre(noun) + ' now ' + valueWords(k.field, k.now, undefined, now);
+  };
+  const clauses = list.map(clause);
+  const joined = clauses.some((c) => c.includes(',')) && clauses.length > 1
+    ? clauses.slice(0, -1).join('; ') + '; and ' + clauses[clauses.length - 1]
+    : andList(clauses);
+  return 'Changed in Google Calendar meanwhile, and kept: ' + joined + '.';
+}
+
+/** A run of deletes stopped at a question the person cancelled, after some went: "Stopped. Already deleted: 'Sample hike' and 'Sample dinner'." */
+export const stoppedWords = (deleted) => 'Stopped. Already deleted: ' + andList(deleted.map((t) => quoted(t || 'Untitled event'))) + '.';

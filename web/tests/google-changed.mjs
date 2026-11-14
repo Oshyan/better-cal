@@ -25,45 +25,58 @@ const DELETE_FOOT = 'Delete deletes it here and in Google Calendar. Cancel keeps
 
 assert.deepEqual(ask({ back: true, fields: [{ field: 'title', was: 'Team sync', now: 'Standup', yours: 'Weekly sync' }] }), {
   title: 'The title was changed in Google Calendar',
-  body: "Since 'Team sync' was last shown to you, its title was changed in Google Calendar to 'Standup'. Your change makes it 'Weekly sync'.",
+  body: "Since 'Team sync' was last shown to you, its title was changed in Google Calendar. It is now 'Standup' there; your change makes it 'Weekly sync'.",
   lines: [],
   foot: OVERWRITE_BACK,
   confirmLabel: 'Overwrite', danger: false,
 }, 'one field, from the editor');
 
-assert.deepEqual(ask({ fields: [{ field: 'location', was: 'Room 2', now: '', yours: 'Sample Hall' }] }).body,
-  "Since 'Team sync' was last shown to you, its location was removed in Google Calendar. Your change makes it 'Sample Hall'.",
+assert.equal(ask({ fields: [{ field: 'location', was: 'Room 2', now: '', yours: 'Sample Hall' }] }).body,
+  "Since 'Team sync' was last shown to you, its location was removed in Google Calendar; your change makes it 'Sample Hall'.",
   'a value removed in Google Calendar');
 
-assert.deepEqual(ask({ back: true, fields: [{ field: 'location', was: 'Room 2', now: 'Sample Hall', yours: null }] }).body,
-  "Since 'Team sync' was last shown to you, its location was changed in Google Calendar to 'Sample Hall'. Your change removes the location.",
+assert.equal(ask({ back: true, fields: [{ field: 'location', was: 'Room 2', now: 'Sample Hall', yours: null }] }).body,
+  "Since 'Team sync' was last shown to you, its location was changed in Google Calendar. It is now 'Sample Hall' there; your change removes it.",
   'a value the change removes');
 
 const time = ask({ fields: [{ field: 'time', was: timed(17, '10:00', '11:00'), now: allDay(17), yours: timed(18, '14:00', '15:00') }] });
 assert.equal(time.title, 'The time was changed in Google Calendar');
 assert.equal(time.body,
-  "Since 'Team sync' was last shown to you, its time was changed in Google Calendar to Tue, Nov 17, 2026, all day. Your change makes it Wed, Nov 18, 2:00 PM to 3:00 PM.",
-  'a time, made all-day at Google, in the person\'s formats');
+  "Since 'Team sync' was last shown to you, its time was changed in Google Calendar. It is now all day on Tue, Nov 17 there; your change makes it Wed, Nov 18, 2:00 PM to 3:00 PM.",
+  'a time, made all-day at Google, in the person\'s formats, no year this year');
 assert.equal(time.foot, OVERWRITE_STAY, 'a drag: Cancel leaves the event as Google has it');
+
+assert.equal(ask({ fields: [{ field: 'time', was: timed(17, '10:00', '11:00'), now: { start: '2027-01-05T00:00:00+00:00', end: '2027-01-06T00:00:00+00:00', allDay: true }, yours: timed(18, '18:00', '19:00') }] }).body,
+  "Since 'Team sync' was last shown to you, its time was changed in Google Calendar. It is now all day on Tue, Jan 5, 2027 there; your change makes it Wed, Nov 18, 2026, 6:00 PM to 7:00 PM.",
+  'two times in another year than each other: both say the year');
+
+assert.equal(ask({ fields: [{ field: 'status', was: 'confirmed', now: 'tentative', yours: 'confirmed' }] }).body,
+  "Since 'Team sync' was last shown to you, it was changed in Google Calendar. It is now a Maybe there; your change makes it Planned.",
+  'Planned or Maybe, never called a status');
 
 const notes = ask({ back: true, fields: [{ field: 'description', was: '<p>Bring the agenda.</p>', now: notesThere, yours: notesYours }] });
 assert.equal(notes.title, 'The notes were changed in Google Calendar');
 assert.equal(notes.body,
-  "Since 'Team sync' was last shown to you, its notes were changed in Google Calendar to 'Bring the agenda and the slides for the quarterly review, and the printed…'. "
-  + "Your change makes them 'Bring the agenda for the quarterly review, and the printed handouts for everyone…'.",
+  "Since 'Team sync' was last shown to you, its notes were changed in Google Calendar. They are now 'Bring the agenda and the slides for the quarterly review, and the printed…' there; "
+  + "your change makes them 'Bring the agenda for the quarterly review, and the printed handouts for everyone…'.",
   'long notes: as text, not markup, cut at a word');
 
 const later = 'The room is booked from nine, and the projector is in the cupboard by the door. ';
 const cutLate = ask({ fields: [{ field: 'description', was: '', now: later + 'Bring the agenda and the slides.', yours: later + 'Bring the agenda.' }] });
 assert.equal(cutLate.body,
-  "Since 'Team sync' was last shown to you, its notes were changed in Google Calendar to '…Bring the agenda and the slides'. Your change makes them '…Bring the agenda'.",
+  "Since 'Team sync' was last shown to you, its notes were changed in Google Calendar. They are now '…Bring the agenda and the slides' there; your change makes them '…Bring the agenda'.",
   'notes that differ late: cut from a little before where they differ');
+
+assert.equal(ask({ back: true, fields: [{ field: 'description', was: '<p>x</p>', now: '<p>Bring the agenda and the slides.</p>', yours: '' }] }).body,
+  "Since 'Team sync' was last shown to you, its notes were changed in Google Calendar. They are now 'Bring the agenda and the slides.' there; your change removes them.",
+  'notes the change removes');
 
 // ---- several fields -----------------------------------------------------------
 
 assert.deepEqual(ask({ back: true, fields: [
   { field: 'title', was: 'Team sync', now: 'Standup', yours: 'Weekly sync' },
   { field: 'location', was: 'Room 2', now: 'Sample Hall', yours: '' },
+  { field: 'status', was: 'confirmed', now: 'tentative', yours: 'confirmed' },
   { field: 'time', was: timed(17, '10:00', '11:00'), now: timed(17, '10:30', '11:30'), yours: timed(18, '10:00', '11:00') },
 ] }), {
   title: 'Changed in Google Calendar',
@@ -71,6 +84,7 @@ assert.deepEqual(ask({ back: true, fields: [
   lines: [
     "Title: 'Standup' in Google Calendar; 'Weekly sync' in your change.",
     "Location: 'Sample Hall' in Google Calendar; no location in your change.",
+    'Planned or Maybe: a Maybe in Google Calendar; Planned in your change.',
     'Time: Tue, Nov 17, 10:30 AM to 11:30 AM in Google Calendar; Wed, Nov 18, 10:00 AM to 11:00 AM in your change.',
   ],
   foot: OVERWRITE_BACK,
@@ -81,21 +95,31 @@ assert.deepEqual(ask({ back: true, fields: [
 
 assert.deepEqual(ask({ remove: true, fields: [{ field: 'location', was: 'Room 2', now: 'Sample Hall', yours: null }] }), {
   title: 'Delete it anyway?',
-  body: "Since 'Team sync' was last shown to you, its location was changed in Google Calendar from 'Room 2' to 'Sample Hall'.",
+  body: "Since 'Team sync' was last shown to you, its location was changed in Google Calendar. It was 'Room 2'; it is now 'Sample Hall'.",
   lines: [],
   foot: DELETE_FOOT,
   confirmLabel: 'Delete', danger: true,
 }, 'a delete over one change');
 assert.equal(ask({ remove: true, fields: [{ field: 'url', was: null, now: 'https://example.org/agenda', yours: null }] }).body,
-  "Since 'Team sync' was last shown to you, its link was set in Google Calendar to 'https://example.org/agenda'.", 'a delete over a value added');
+  "Since 'Team sync' was last shown to you, its link was added in Google Calendar; it is now 'https://example.org/agenda'.", 'a delete over a value added');
+assert.equal(ask({ remove: true, fields: [{ field: 'location', was: 'Room 2', now: null, yours: null }] }).body,
+  "Since 'Team sync' was last shown to you, its location was removed in Google Calendar; it was 'Room 2'.", 'a delete over a value removed');
 assert.equal(ask({ remove: true, fields: [{ field: 'status', was: 'confirmed', now: 'tentative', yours: null }] }).body,
-  "Since 'Team sync' was last shown to you, its status was changed in Google Calendar from Planned to Maybe.", 'a delete over Maybe');
+  "Since 'Team sync' was last shown to you, it was changed in Google Calendar. It was Planned; it is now a Maybe.", 'a delete over Maybe');
+assert.equal(ask({ remove: true, fields: [{ field: 'time', was: { start: '2027-03-03T10:00:00-08:00', end: '2027-03-03T11:00:00-08:00', allDay: false }, now: { start: '2027-03-03T00:00:00+00:00', end: '2027-03-04T00:00:00+00:00', allDay: true }, yours: null }] }).body,
+  "Since 'Team sync' was last shown to you, its time was changed in Google Calendar. It was Wed, Mar 3, 2027, 10:00 AM to 11:00 AM; it is now all day on Wed, Mar 3, 2027.",
+  'a delete over a time made all-day: read once through, the year on both sides');
+assert.equal(ask({ remove: true, fields: [{ field: 'description', was: '<p>Bring the agenda.</p>', now: '<p>Bring the agenda and slides.</p>', yours: null }] }).body,
+  "Since 'Team sync' was last shown to you, its notes were changed in Google Calendar. They were 'Bring the agenda.'; they are now 'Bring the agenda and slides.'",
+  'a quoted value that ends its own sentence takes no second full stop');
 assert.deepEqual(ask({ remove: true, fields: [
   { field: 'title', was: 'Team sync', now: 'Standup', yours: null },
   { field: 'url', was: 'https://example.org/agenda', now: null, yours: null },
+  { field: 'status', was: 'tentative', now: 'confirmed', yours: null },
 ] }).lines, [
   "Title: was 'Team sync'; now 'Standup'.",
   "Link: was 'https://example.org/agenda'; now no link.",
+  'Planned or Maybe: was a Maybe; now Planned.',
 ], 'a delete over several changes');
 
 // ---- kept, on the toast -------------------------------------------------------
@@ -103,7 +127,9 @@ assert.deepEqual(ask({ remove: true, fields: [
 assert.equal(keptWords([], now), null, 'nothing kept: the toast is as always');
 assert.equal(keptWords(undefined, now), null, 'no kept at all (the setting off): the toast is as always');
 assert.equal(keptWords([{ field: 'title', now: 'Team sync' }], now), "Changed in Google Calendar meanwhile, and kept: the title is now 'Team sync'.");
-assert.equal(keptWords([{ field: 'status', now: 'tentative' }], now), 'Changed in Google Calendar meanwhile, and kept: the status is now Maybe.');
+assert.equal(keptWords([{ field: 'status', now: 'tentative' }], now), 'Changed in Google Calendar meanwhile, and kept: it is now a Maybe.');
+assert.equal(keptWords([{ field: 'status', now: 'confirmed' }, { field: 'title', now: 'Standup' }], now),
+  "Changed in Google Calendar meanwhile, and kept: it is now Planned and the title is now 'Standup'.");
 assert.equal(keptWords([{ field: 'location', now: 'Sample Hall' }, { field: 'url', now: '' }], now),
   "Changed in Google Calendar meanwhile, and kept: the location is now 'Sample Hall' and the link was removed.");
 assert.equal(keptWords([{ field: 'time', now: timed(17, '10:00', '11:00') }, { field: 'location', now: null }, { field: 'description', now: notesThere }], now),
@@ -111,7 +137,7 @@ assert.equal(keptWords([{ field: 'time', now: timed(17, '10:00', '11:00') }, { f
   'a time with commas, and notes too long to repeat');
 
 assert.equal(stoppedWords(['Sample hike', 'Sample dinner']), "Stopped. Already deleted: 'Sample hike' and 'Sample dinner'.");
-assert.equal(timeValueWords(allDay(17), now), 'Tue, Nov 17, 2026, all day');
+assert.equal(timeValueWords(allDay(17), now), 'all day on Tue, Nov 17');
 
 console.log('Google changed: sentences read as written');
 
@@ -170,7 +196,7 @@ assert.deepEqual(sent.map((s) => s.body), [
   { title: 'Weekly sync', over: { title: 'Standup' } },
   { title: 'Weekly sync', over: { title: 'Daily standup' } },
 ], 'Overwrite is the same request with over set to what Google holds now');
-assert.equal(asked[1].body, "Since 'Team sync' was last shown to you, its title was changed in Google Calendar to 'Daily standup'. Your change makes it 'Weekly sync'.", 'the second question has the newer value');
+assert.equal(asked[1].body, "Since 'Team sync' was last shown to you, its title was changed in Google Calendar. It is now 'Daily standup' there; your change makes it 'Weekly sync'.", 'the second question has the newer value');
 assert.equal(keptLine(res), "Changed in Google Calendar meanwhile, and kept: the location is now 'Sample Hall'.");
 
 // A time: Overwrite sets all three keys of over from Google's time.
@@ -192,7 +218,7 @@ const yoursAt6 = { start: '2026-11-17T18:00:00-08:00', end: '2026-11-17T19:00:00
 answers = [changed([{ field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: googleAllDay, yours: yoursAt6 }]), json(200, { kept: [] })];
 reply = [true];
 await sendEventChange(shown, '/events/7', 'PATCH', { start: yoursAt6.start, end: yoursAt6.end, tagNames: ['sample'] });
-assert.equal(asked[0].body, "Since 'Team sync' was last shown to you, its time was changed in Google Calendar to Tue, Nov 17, 2026, all day. Your change makes it Tue, Nov 17, 6:00 PM to 7:00 PM.",
+assert.equal(asked[0].body, "Since 'Team sync' was last shown to you, its time was changed in Google Calendar. It is now all day on Tue, Nov 17 there; your change makes it Tue, Nov 17, 6:00 PM to 7:00 PM.",
   'overwrite yours: the question said six o\'clock');
 assert.deepEqual(sent[1].body, { start: yoursAt6.start, end: yoursAt6.end, allDay: false, tagNames: ['sample'], over: googleAllDay },
   'overwrite yours: a time sends start, end and allDay from yours, over from now');

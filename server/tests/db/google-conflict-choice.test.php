@@ -244,7 +244,7 @@ return static function (Db $db): void {
         $e = $json['error'] ?? [];
         checkEq('409 google_changed, the place alone, yours null', [409, 'google_changed', [['field' => 'location', 'was' => 'Room 2', 'now' => 'Sample Hall', 'yours' => null]]],
             [$status, $e['code'] ?? null, $e['fields'] ?? null]);
-        checkEq('the message is whole on its own', "'Team sync' wasn't deleted: since it was last shown, its place was changed in Google Calendar. Open the event to see it, and delete it again if you still mean to.", $e['message'] ?? null);
+        checkEq('the message is whole on its own', "'Team sync' wasn't deleted: since it was last shown, its location was changed in Google Calendar. Open the event to see it, and delete it again if you still mean to.", $e['message'] ?? null);
         $sorted = static function (array $r): array {
             ksort($r);
             return $r;

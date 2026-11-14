@@ -515,6 +515,14 @@ check('stand-in, round 5 cause 8: a UTC series\' start moved: its records name n
     $zonesBefore === ['UTC', 'UTC', 'UTC'] && $zonesAfter === ['utczone1' => ['UTC', 'UTC', null], 'utczone1_20270102T090000Z' => [null, null, null], 'utczone1_20270103T090000Z' => [null, null, null]],
     json_encode([$zonesBefore, $zonesAfter]));
 
+// Replay round 6 (google-undo-of-a-move-onto-a-skipped-day-date-only request 16, -with-a-status-change request 15): the
+// renamed day's record, its times in no zone since the start moved, PATCHed to status cancelled; Google answered with
+// start, end and originalStartTime in the calendar's zone (America/Los_Angeles), the same instants.
+[$st, $cancelled] = $call($fake, 'PATCH', 'utczone1_20270103T090000Z', ['status' => 'cancelled']);
+check('stand-in, replay round 6: a zoneless record written with no times takes the calendar\'s zone on start, end and originalStartTime',
+    $st === 200 && [$cancelled['start']['timeZone'] ?? null, $cancelled['end']['timeZone'] ?? null, $cancelled['originalStartTime']['timeZone'] ?? null] === ['America/Los_Angeles', 'America/Los_Angeles', 'America/Los_Angeles']
+    && (new DateTimeImmutable((string) $cancelled['originalStartTime']['dateTime']))->getTimestamp() === (new DateTimeImmutable('2027-01-03T09:00:00Z'))->getTimestamp(), json_encode($cancelled));
+
 // ---- The stand-in against the probe of 2026-11-14 (3.67, 3.68) ----------------
 // 3.67: weekly 10:00 to 11:00 Los Angeles, occurrence 2 at its own 14:00 to 15:30, occurrence 3 renamed; the first day
 // moved a week later for all events. Google: occurrence 2 read 10:00 to 15:30 (start onto its occurrence, end left),

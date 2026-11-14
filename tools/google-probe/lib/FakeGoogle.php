@@ -372,6 +372,18 @@ final class FakeGoogle
             }
         }
         $e = array_replace($e, $body);
+        // A day's record whose times name no zone (a UTC series' records after its start moved, replay round 5, cause
+        // 8) takes the calendar's zone on a write that sends no times: replay round 6,
+        // google-undo-of-a-move-onto-a-skipped-day-date-only request 16 and -with-a-status-change request 15, a PATCH of
+        // status cancelled answered with start, end and originalStartTime in America/Los_Angeles, the calendar's zone,
+        // where the read before named none. Whether a later list shows the zone too is not yet seen.
+        if ($master !== null) {
+            foreach (['start', 'end'] as $k) {
+                if (isset($e[$k]['dateTime']) && !isset($e[$k]['timeZone'])) {
+                    $e[$k]['timeZone'] = $this->zone;
+                }
+            }
+        }
         $e['updated'] = gmdate('Y-m-d\TH:i:s.000\Z');
         self::allDayOnce($e);
         $this->events[$id] = $e;

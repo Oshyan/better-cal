@@ -33,8 +33,12 @@ final class GoogleConflict
      */
     public const DELETE = ['deleted' => true];
 
-    /** The word a person reads for each field. */
-    private const WORDS = ['title' => 'title', 'description' => 'description', 'location' => 'place', 'url' => 'link', 'status' => 'Planned or Maybe', 'time' => 'time'];
+    /**
+     * The one name a person reads for each field (the page, "Words"), and
+     * whether it is plural; null for the status, which a sentence says as
+     * Planned or Maybe, never by a name.
+     */
+    private const WORDS = ['title' => ['title', false], 'description' => ['notes', true], 'location' => ['location', false], 'url' => ['link', false], 'status' => null, 'time' => ['time', false]];
 
     /**
      * One outcome per field: `same` (not wanted, now equals base), `kept`
@@ -118,20 +122,27 @@ final class GoogleConflict
     public static function message(string $title, array $asks, bool $delete): string
     {
         $what = trim($title) !== '' ? "'" . trim($title) . "'" : 'This event';
-        $done = $delete ? 'deleted' : 'changed';
-        $names = array_map(static fn(array $a): string => self::WORDS[$a['field']] ?? (string) $a['field'], $asks);
-        if (count($asks) !== 1 || $delete) {
-            return "$what wasn't $done: since it was last shown, its " . self::listOf($names) . ' ' . (count($names) === 1 ? 'was' : 'were')
-                . ' changed in Google Calendar. ' . ($delete ? 'Open the event to see it, and delete it again if you still mean to.' : 'Open the event to see it and make the change again.');
+        $clauses = [];
+        // The fields a noun names (WORDS), said together; with one, and not a delete, what it is now.
+        $named = array_values(array_filter($asks, static fn(array $a): bool => (self::WORDS[$a['field']] ?? null) !== null));
+        if ($named !== []) {
+            $nouns = array_map(static fn(array $a): string => self::WORDS[$a['field']][0], $named);
+            $verb = count($named) > 1 || self::WORDS[$named[0]['field']][1] ? 'were' : 'was';
+            $value = count($named) === 1 && !$delete ? self::valueWords((string) $named[0]['field'], $named[0]['now']) : '';
+            $clauses[] = 'its ' . self::listOf($nouns) . " $verb " . ($value === null ? 'removed in Google Calendar'
+                : ($value === '' ? 'changed in Google Calendar' : 'changed in Google Calendar to ' . $value));
         }
-        $ask = $asks[0];
-        $value = self::valueWords((string) $ask['field'], $ask['now']);
-        $change = $value === null ? 'was removed in Google Calendar'
-            : ($value === '' ? 'was changed in Google Calendar' : 'was changed in Google Calendar to ' . $value);
-        return "$what wasn't changed: since it was last shown, its {$names[0]} $change. Open the event to see it and make the change again.";
+        // Planned or Maybe has no noun: the sentence says which it is now.
+        foreach ($asks as $a) {
+            if ((self::WORDS[$a['field']] ?? null) === null) {
+                $clauses[] = 'it was changed ' . ($clauses === [] ? 'in Google Calendar' : 'there') . ' to ' . (self::valueWords((string) $a['field'], $a['now']) ?? '');
+            }
+        }
+        return "$what wasn't " . ($delete ? 'deleted' : 'changed') . ': since it was last shown, ' . implode(', and ', $clauses) . '. '
+            . ($delete ? 'Open the event to see it, and delete it again if you still mean to.' : 'Open the event to see it and make the change again.');
     }
 
-    /** "title", "title and place", "title, place and time". */
+    /** "title", "title and location", "title, location and time". */
     private static function listOf(array $names): string
     {
         if (count($names) <= 1) {
@@ -151,7 +162,10 @@ final class GoogleConflict
         if ($field === 'time') {
             return is_array($value) ? self::timeWords($value) : '';
         }
-        if ($field === 'description' || $field === 'status') {
+        if ($field === 'status') {
+            return $value === 'tentative' ? 'Maybe' : 'Planned';
+        }
+        if ($field === 'description') {
             return '';
         }
         $text = trim((string) $value);

@@ -149,7 +149,7 @@ final class EventsController
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
-        return Response::json(['ok' => true] + self::split($this->events) + ['kept' => $this->events->kept()]);
+        return Response::json(['ok' => true] + self::split($this->events) + $this->events->keptAnswer((int) $req->user['id']));
     }
 
     public function delete(Request $req, array $params): Response
@@ -227,7 +227,7 @@ final class EventsController
         // What Google changed that the answer left as it is, each with its value as served.
         $keptFields = $out['keptFields'] ?? [];
         unset($out['keptFields']);
-        return Response::json($out + ['kept' => $keptFields === [] ? [] : $this->events->keptOf($this->events->get($userId, (int) $params['id']), $keptFields)]);
+        return Response::json($out + $this->events->keptAnswer($userId, $keptFields === [] ? [] : $this->events->keptOf($this->events->get($userId, (int) $params['id']), $keptFields)));
     }
 
     /** POST /events/:id/relationship {relationship, scope?, instanceStart?} -> {ok:true} */
@@ -250,7 +250,7 @@ final class EventsController
             self::plan($req),
             self::over($req)
         );
-        return Response::json(['ok' => true] + self::split($this->events) + ['kept' => $this->events->kept()]);
+        return Response::json(['ok' => true] + self::split($this->events) + $this->events->keptAnswer((int) $req->user['id']));
     }
 
     public function attendance(Request $req, array $params): Response

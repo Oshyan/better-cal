@@ -947,6 +947,18 @@ final class Events
     }
 
     /**
+     * The `kept` key of a 200 (PATCH, relationship, rsvp): present only with
+     * the setting on, so with it off the answers are 1.5.6's key for key.
+     * $kept: the answer's own (an rsvp's); else the last change's.
+     *
+     * @return array{kept?:list<array>}
+     */
+    public function keptAnswer(int $userId, ?array $kept = null): array
+    {
+        return Settings::googleConflictChoice($this->db, $userId) ? ['kept' => $kept ?? $this->googleKept] : [];
+    }
+
+    /**
      * A removal at Google of one event or one day, read as every removal
      * reads one (GoogleWriter::gone, the series path's reading): a target
      * Google no longer has is removed already, so the removal completes
@@ -1819,8 +1831,8 @@ final class Events
             // series, whichever row and scope it names. A link names a row
             // and no edit moves one, so every link the edit can make live,
             // or leave without its trip, touches these rows.
-            // A Google path runs them before its first call (tripRules), so a
-            // refusal sends Google nothing.
+            // A Google path runs them before its first write (tripRules), so a
+            // refusal sends Google no write: at most the conflict choice's read, whose store rolls back with the rest.
             $tripRows = array_key_exists('isContainer', $in) ? $this->seriesRowIds($fresh) : [];
             $outer = $this->tripRule;
             $this->tripRule = $tripRows === [] ? null : [$tripRows, Trips::flaggedAmong($this->db, $tripRows)];
@@ -1847,8 +1859,8 @@ final class Events
 
     /**
      * The trip rules (Trips::assertRules) over the patch under way's rows,
-     * as they stand. A Google path calls it before its first call to
-     * Google, with $flagRow and the local columns it will write there: the
+     * as they stand. A Google path calls it before its first write to
+     * Google (after the conflict choice's read, googleChoice), with $flagRow and the local columns it will write there: the
      * flag goes on first (Google never reads it, and Google's answer never
      * writes it), so the rules read the rows as the commit will leave them.
      * Inside the patch's transaction: a refusal, or Google's failing,

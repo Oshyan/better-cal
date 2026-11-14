@@ -44,4 +44,35 @@ return static function (Db $db): void {
             check("served then parsed from over alone is the row's own value: $field, $name", $one[$field] === $own[$field]);
         }
     }
+
+    // The `kept` key of the 200s of PATCH, relationship and rsvp (Events::keptAnswer, which all three add):
+    // absent with the setting off, as shipped, so those answers are 1.5.6's key for key; present, empty or not, with it on.
+    conflictChoice($db, $u, false);
+    checkEq('setting off: no kept key in the answers', [[], []], [$e->keptAnswer($u), $e->keptAnswer($u, [['field' => 'title', 'now' => 'Sample']])]);
+    conflictChoice($db, $u, true);
+    checkEq('setting on: the kept key, empty or the answer\'s own', [['kept' => []], ['kept' => [['field' => 'title', 'now' => 'Sample']]]],
+        [$e->keptAnswer($u), $e->keptAnswer($u, [['field' => 'title', 'now' => 'Sample']])]);
+
+    // The 409's own sentence, one name per field (the page, "Words"): title, time, location, notes, link; the status
+    // never by a name, said as Planned or Maybe.
+    $ask = static fn(string $field, mixed $now): array => ['field' => $field, 'was' => null, 'now' => $now, 'yours' => null];
+    $words = [
+        "'Team sync' wasn't changed: since it was last shown, its title was changed in Google Calendar to 'Standup'. Open the event to see it and make the change again."
+            => GoogleConflict::message('Team sync', [$ask('title', 'Standup')], false),
+        "'Team sync' wasn't deleted: since it was last shown, its location was changed in Google Calendar. Open the event to see it, and delete it again if you still mean to."
+            => GoogleConflict::message('Team sync', [$ask('location', 'Room 7')], true),
+        "'Team sync' wasn't changed: since it was last shown, its location was removed in Google Calendar. Open the event to see it and make the change again."
+            => GoogleConflict::message('Team sync', [$ask('location', null)], false),
+        "'Team sync' wasn't changed: since it was last shown, its notes were changed in Google Calendar. Open the event to see it and make the change again."
+            => GoogleConflict::message('Team sync', [$ask('description', '<p>New</p>')], false),
+        "'Team sync' wasn't deleted: since it was last shown, its title, notes and link were changed in Google Calendar, and it was changed there to Maybe. Open the event to see it, and delete it again if you still mean to."
+            => GoogleConflict::message('Team sync', [$ask('title', 'Standup'), $ask('description', 'x'), $ask('url', 'https://example.test/x'), $ask('status', 'tentative')], true),
+        "'Team sync' wasn't deleted: since it was last shown, it was changed in Google Calendar to Planned. Open the event to see it, and delete it again if you still mean to."
+            => GoogleConflict::message('Team sync', [$ask('status', 'confirmed')], true),
+        "'Team sync' wasn't changed: since it was last shown, its time was changed in Google Calendar to Tue, Nov 18, 10:00 AM to 11:00 AM. Open the event to see it and make the change again."
+            => GoogleConflict::message('Team sync', [$ask('time', ['start' => '2025-11-18T10:00:00-08:00', 'end' => '2025-11-18T11:00:00-08:00', 'allDay' => false])], false),
+    ];
+    foreach ($words as $want => $got) {
+        checkEq('the question in words: ' . $want, $want, $got);
+    }
 };

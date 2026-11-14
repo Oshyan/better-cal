@@ -9,13 +9,14 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 Google calendars, after replaying Better-Cal's own requests against Google and probing what it does.
 
 - **A repeating event is no longer switched between timed and all-day where Google Calendar would stop showing some of its days.** Google does this, undocumented, when a day of the event has its own changes or was deleted and the event's time is midnight in UTC (09:00 in Tokyo, 16:00 or 17:00 in Los Angeles). Better-Cal now says so before sending anything, names the days, and gives the way that works: move the event's time first, then switch.
-- **A day keeps its own notes** when you change something for all events of a repeating event that has no notes itself (a link, its title, its time, how often it repeats). Google cleared them, and Better-Cal kept what Google had.
-- **A change that would leave a repeating event only deleted days is refused,** as one that leaves no days is ("Delete it instead?"). Google deleted the whole event.
-- **A change to all events sends fewer requests** (one per day it writes, where it sent three) and no longer stops half done because a day was changed in Google Calendar in the seconds it is being sent: the last write wins, as documented. A day the event no longer has at Google is named instead of sent.
+- **A day keeps its own notes** when you change something for all events of a repeating event that has no notes itself (a link, its title, its time, how often it repeats). Google cleared them, and Better-Cal kept what Google had. Known limit: the notes sent back are Better-Cal's cleaned copy of them, so markup Google held (a non-breaking space, a link's attributes, text in angle brackets) can come back changed.
+- **A change that would leave a repeating event only deleted days is refused,** on every calendar, as one that leaves no days is ("Delete it instead?"); for "this and following" it says so of the days from then on. Google deleted the whole event. "This and following" from the first day still showing is the whole event's change, even when earlier days were deleted.
+- **A change to all events that writes more than one day no longer stops half done** on Google's own bookkeeping, or because a day was changed in Google Calendar in the seconds it is being sent: the last write wins, as documented. A day the event no longer has at Google is named instead of sent.
+- **One day of an all-day repeating event can take a time** on a Google calendar.
 - **Undo's refusals read as one sentence,** without "Undo failed:" in front of one that already says what happened.
 - Maintainers: `tools/google-probe` ran three times on 2026-11-13 ([findings](docs/design/research/google-series/probe-2026-11-13.md)), and the stand-in for Google now hides days, clears notes and cancels a series as Google does. The harness's shrinker no longer stops on a case with no edit, and its interleaving mode refuses `--product` instead of ignoring it.
 
-**What the upgrade loses:** a change left half done by 1.5.5 that had already brought a deleted day back keeps it back after Finish; Put back restores it. A half-done switch between timed and all-day at such a time may be refused by Finish with the new sentence. Nothing else: no event, tag, person or setting changes.
+**What the upgrade loses:** a change left half done by 1.5.5 that had already brought a deleted day back keeps it back after Finish; Put back restores it. A half-done switch between timed and all-day at such a time may be refused by Finish with the new sentence, which then says to Put back first. Nothing else: no event, tag, person or setting changes.
 
 ## 1.5.5 (2026-11-10)
 

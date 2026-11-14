@@ -182,6 +182,29 @@ const moved = await sendEventChange(shown, '/events/7', 'PATCH', { start: '2026-
 assert.deepEqual(sent[1].body.over, now2, 'the time asked: over.start, over.end, over.allDay are Google\'s');
 assert.equal(keptLine(moved), null, 'empty kept: no line');
 
+// Overwrite sends what the question showed as yours. A drag (start and end
+// only) over an event Google made all-day: the repeat carries yours whole,
+// allDay false with it, and over from Google's all-day time; the scope
+// fields and anything else in the body stay as they were.
+sent.length = 0; asked.length = 0;
+const googleAllDay = { start: '2026-11-17T00:00:00+00:00', end: '2026-11-18T00:00:00+00:00', allDay: true };
+const yoursAt6 = { start: '2026-11-17T18:00:00-08:00', end: '2026-11-17T19:00:00-08:00', allDay: false };
+answers = [changed([{ field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: googleAllDay, yours: yoursAt6 }]), json(200, { kept: [] })];
+reply = [true];
+await sendEventChange(shown, '/events/7', 'PATCH', { start: yoursAt6.start, end: yoursAt6.end, tagNames: ['sample'] });
+assert.equal(asked[0].body, "Since 'Team sync' was last shown to you, its time was changed in Google Calendar to Tue, Nov 17, 2026, all day. Your change makes it Tue, Nov 17, 6:00 PM to 7:00 PM.",
+  'overwrite yours: the question said six o\'clock');
+assert.deepEqual(sent[1].body, { start: yoursAt6.start, end: yoursAt6.end, allDay: false, tagNames: ['sample'], over: googleAllDay },
+  'overwrite yours: a time sends start, end and allDay from yours, over from now');
+
+// A plain field: the body's value is yours, over is now.
+sent.length = 0; asked.length = 0;
+answers = [changed([{ field: 'location', was: 'Room 2', now: 'Sample Hall', yours: 'Room 3' }]), json(200, { kept: [] })];
+reply = [true];
+await sendEventChange(shown, '/events/7', 'PATCH', { location: 'Room 3', locationLat: null, locationLng: null });
+assert.deepEqual(sent[1].body, { location: 'Room 3', locationLat: null, locationLng: null, over: { location: 'Sample Hall' } },
+  'overwrite yours: a plain field sends yours, over from now');
+
 // Cancel: nothing more is sent, the caller's copy is put back, CANCELLED.
 sent.length = 0; asked.length = 0;
 let reverted = 0;

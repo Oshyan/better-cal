@@ -8,7 +8,8 @@
 //   person saw, not with what a poll stored meanwhile;
 // - a 409 google_changed becomes the one question (googleChangedAsk in
 //   lib/planwords.js): Overwrite sends the same request again with `over`
-//   set to what Google holds now, and a second google_changed asks again
+//   set to what Google holds now and each asked field's value to what the
+//   question showed as the person's, and a second google_changed asks again
 //   with the newer values; Cancel sends nothing;
 // - a 200's `kept` is said on the caller's toast (keptLine).
 //
@@ -54,14 +55,25 @@ export function overOf(occ, body, { remove = false } = {}) {
   return over;
 }
 
-/** `over` set to Google's values for each asked field: the same request, said to have seen them (Overwrite). */
-function overNow(over, fields) {
-  const next = { ...over };
+/**
+ * Overwrite: the same request again, for each asked field said to have
+ * seen what Google holds now (`over` from its `now`) and sending what the
+ * question showed as the person's (the body's keys from its `yours`; a
+ * time all three keys, whole). A delete's `yours` is null: its body stays.
+ * Everything else in the body (a scope, tags) is as it was.
+ */
+function overwriteOf(send, fields) {
+  const over = { ...(send.over || {}) };
+  const body = { ...send };
   for (const f of fields || []) {
     const keys = overKeys(f.field);
-    for (const k of keys) next[k] = keys.length > 1 ? (f.now || {})[k] : f.now;
+    const part = (v, k) => (keys.length > 1 ? (v || {})[k] : v);
+    for (const k of keys) {
+      over[k] = part(f.now, k);
+      if (f.yours != null) body[k] = part(f.yours, k);
+    }
   }
-  return next;
+  return { ...body, over };
 }
 
 const askedFields = (e) => (e && e.code === 'google_changed' && e.data && e.data.error && Array.isArray(e.data.error.fields) && e.data.error.fields.length
@@ -93,7 +105,7 @@ export async function sendEventChange(occ, path, method, body = {}, { remove = f
         refreshWindow();
         return CANCELLED;
       }
-      send = { ...send, over: overNow(send.over || {}, fields) };
+      send = overwriteOf(send, fields);
     }
   }
 }

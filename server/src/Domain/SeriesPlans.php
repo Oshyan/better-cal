@@ -144,9 +144,10 @@ trait SeriesPlans
             throw HttpError::badRequest('preview is for changes to all events, or this and following, of a repeating series', 'preview_unavailable');
         }
         // A preview asks Google exactly where its commit would refuse for access (patchLocked: a change to what Google
-        // holds, googleKeys), and nowhere else.
-        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id'], self::googleKeys($in) !== []) : null;
-        if ($event['source'] === 'feed' && $google === null) {
+        // holds, googleKeys), and nowhere else: what is held here alone (tags, people, reminders) is refused by neither.
+        $editKeys = self::googleKeys($in);
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id'], $editKeys !== []) : null;
+        if ($event['source'] === 'feed' && $editKeys !== [] && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
         }
         if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {

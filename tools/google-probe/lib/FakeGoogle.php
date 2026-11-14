@@ -55,7 +55,12 @@ final class FakeGoogle
     public string $owner = 'owner@example.com';
     /** The bearer token accepted; null accepts any. */
     public ?string $token = 'fake-token';
-    /** fn(array $master): list<\DateTimeImmutable>, the starts of a master's occurrences in its zone, 730 at most; null uses the built-in reading. */
+    /**
+     * fn(array $master, ?\DateTimeImmutable $through = null): list<\DateTimeImmutable>, the starts of a master's occurrences
+     * in its zone: 730 at most as a listing (no $through), or every one up to $through when it is given (whether a
+     * date is a day of the rule is not a matter of the listing's length). Null uses the built-in reading. A caller's
+     * function that takes no $through answers as a listing, and days past its end are then no days, as before.
+     */
     public ?\Closure $expand = null;
 
     /**
@@ -566,8 +571,12 @@ final class FakeGoogle
         // it was. With the length changed too, the ends follow the new length as before (no live case shows otherwise).
         $sameInstants = $zoneAlone && $newLen === $oldLen
             && (new \DateTimeImmutable((string) $old['start']['dateTime']))->getTimestamp() === (new \DateTimeImmutable((string) $new['start']['dateTime']))->getTimestamp();
+        // Whether a record's day is still a day of the master as changed is read from the rule through the latest
+        // record held, not from the listing: a listing stops at 730 occurrences (7.3), and a record past that of an
+        // unbounded rule is still a day of it (D1 says kept "while still a day of the master"; nothing seen ties that
+        // to the listing's length).
         $occ = [];
-        foreach ($this->occurrences($new) as $start) {
+        foreach ($this->occurrences($new, $this->latestRecord($id)) as $start) {
             $occ[self::keyOfStart($start, $allDay)] = $start;
         }
         foreach ($this->events as $rid => $r) {
@@ -944,11 +953,37 @@ final class FakeGoogle
         return $out;
     }
 
-    /** @return list<\DateTimeImmutable> starts in the master's zone */
-    private function occurrences(array $master): array
+    /** The latest original start among a series' records (live or cancelled), a day past it; null with none. */
+    private function latestRecord(string $id): ?\DateTimeImmutable
+    {
+        $latest = null;
+        foreach ($this->events as $r) {
+            if (($r['recurringEventId'] ?? '') !== $id || !isset($r['originalStartTime'])) {
+                continue;
+            }
+            $o = $r['originalStartTime'];
+            $at = isset($o['date']) ? new \DateTimeImmutable($o['date'] . ' 00:00:00', new \DateTimeZone('UTC')) : new \DateTimeImmutable((string) $o['dateTime']);
+            if ($latest === null || $at > $latest) {
+                $latest = $at;
+            }
+        }
+        return $latest?->modify('+1 day');
+    }
+
+    /**
+     * A master's occurrences: as a listing, 730 at most; with $through, those and every later one up to $through.
+     *
+     * @return list<\DateTimeImmutable> starts in the master's zone
+     */
+    private function occurrences(array $master, ?\DateTimeImmutable $through = null): array
     {
         if ($this->expand !== null) {
-            return array_slice(($this->expand)($master), 0, 730);
+            $listed = array_slice(($this->expand)($master), 0, 730);
+            if ($through === null || $listed === [] || end($listed) >= $through) {
+                return $listed;
+            }
+            $all = ($this->expand)($master, $through);
+            return count($all) > count($listed) ? $all : $listed;
         }
         $rule = null;
         foreach ($master['recurrence'] ?? [] as $line) {
@@ -964,7 +999,8 @@ final class FakeGoogle
         $start = $allDay ? new \DateTimeImmutable($master['start']['date'], $tz) : (new \DateTimeImmutable($master['start']['dateTime']))->setTimezone($tz);
         $unit = ['DAILY' => 'day', 'WEEKLY' => 'week', 'MONTHLY' => 'month', 'YEARLY' => 'year'][$rule['FREQ'] ?? 'DAILY'] ?? 'day';
         $interval = max(1, (int) ($rule['INTERVAL'] ?? 1));
-        $count = min(730, (int) ($rule['COUNT'] ?? 730));
+        // A listing's length, or with $through the rule's own count and every day up to $through.
+        $count = $through === null ? min(730, (int) ($rule['COUNT'] ?? 730)) : (int) ($rule['COUNT'] ?? PHP_INT_MAX);
         $until = null;
         if (isset($rule['UNTIL'])) {
             $u = (string) $rule['UNTIL'];
@@ -982,8 +1018,11 @@ final class FakeGoogle
             sort($days);
         }
         $out = [];
-        for ($i = 0; count($out) < $count && $i < 2000; $i++) {
+        for ($i = 0; count($out) < $count && ($through === null ? $i < 2000 : $i < 200000); $i++) {
             $period = $start->modify('+' . ($i * $interval) . ' ' . $unit);
+            if ($through !== null && count($out) >= 730 && $period > $through) {
+                break;
+            }
             $candidates = [$period];
             if ($days !== []) {
                 $weekStart = $period->modify('monday this week');

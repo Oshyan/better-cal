@@ -62,6 +62,46 @@ return static function (Db $db): void {
         });
     }
 
+    // What is held here alone, through the preview of a change to all events and of this and following (the access
+    // model, section 9, rule 1: previewPatch and patchLocked refuse "both when googleKeys is not empty; neither
+    // otherwise"). The calendar was writable and a poll then stored it view only, the way access detection lowers one.
+    scenario('access read 2, previews: on a Google calendar a poll lowered to view only, tags or a reminder for all events and from a day on are previewed and committed with no request to Google', function () use ($db): void {
+        $la = 'America/Los_Angeles';
+        $make = static function () use ($db, $la): object {
+            $s = PA::make($db);
+            $s->id = (int) $s->events->create($s->u, ['calendarId' => $s->calendarId, 'title' => 'Sample series', 'start' => '2027-03-01T10:00:00-08:00', 'end' => '2027-03-01T11:00:00-08:00', 'tzid' => $la, 'rrule' => 'FREQ=WEEKLY;COUNT=6'])['eventId'];
+            ($s->poll)();
+            $s->fake->role = 'reader';
+            ($s->poll)();
+            return $s;
+        };
+        $tagged = static fn(object $s): int => (int) $db->scalar('SELECT COUNT(*) FROM event_tags et JOIN events e ON e.id = et.event_id JOIN tags tg ON tg.id = et.tag_id WHERE e.calendar_id = ? AND e.deleted_at IS NULL AND tg.name = ?', [$s->calendarId, 'sample-tag']);
+        $reminded = static fn(object $s): int => (int) $db->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = ? AND deleted_at IS NULL AND reminders_json IS NOT NULL', [$s->calendarId]);
+        $edits = [
+            'tags' => [['tagNames' => ['sample-tag']], $tagged],
+            'a reminder' => [['reminders' => [['minutes' => 30]]], $reminded],
+        ];
+        $scopes = ['all events' => ['scope' => 'all'], 'from a day on' => ['scope' => 'following', 'instanceStart' => '2027-03-15T10:00:00-07:00']];
+        foreach ($edits as $what => [$edit, $held]) {
+            foreach ($scopes as $which => $scope) {
+                $s = $make();
+                checkEq("view only, $what for $which: the calendar is stored view only (the scenario's own step)", 'reader', PA::storedRole($db, $s->calendarId));
+                $from = count($s->fake->requests);
+                $e = PA::caught(fn() => $s->events->previewPatch($s->u, $s->id, $scope + $edit + ['plan' => ['choices' => []]]));
+                if ($e instanceof BetterCal\Http\HttpError && $e->errorCode === 'preview_unavailable') {
+                    $e = null; // a change with no plan to show is sent as it is
+                }
+                checkEq("view only, $what for $which, the preview: answered, no request to Google", [null, []], [PA::code($e) === null ? null : PA::code($e) . ': ' . $e->getMessage(), PA::sent($s->fake, $from)]);
+                $e = PA::caught(function () use ($s, $scope, $edit): void {
+                    planned($s->events, $s->u, $s->id, $scope + $edit);
+                    $s->events->throwDeferred();
+                });
+                checkEq("view only, $what for $which, the commit: goes through, no request, and something here holds it", [null, [], true],
+                    [PA::code($e) === null ? null : PA::code($e) . ': ' . $e->getMessage(), PA::sent($s->fake, $from), $held($s) > 0]);
+            }
+        }
+    });
+
     // What a preview of a change Google holds costs on a calendar stored view only, and what it leaves stored.
     scenario('access read 2, previews: on a calendar stored view only, each preview of a change Google holds costs one small list, changes no row, and leaves stored only what Google said', function () use ($db, $when): void {
         $la = 'America/Los_Angeles';

@@ -81,7 +81,7 @@ final class GoogleStand
         $fake->token = 'sample-access';
         // The calendar's own zone; GOOGLE_STAND_ZONE sets another for recording traces (tools/google-probe/record.php --zone).
         $fake->zone = getenv('GOOGLE_STAND_ZONE') ?: 'UTC';
-        $fake->expand = static fn(array $master): array => self::expand($master);
+        $fake->expand = static fn(array $master, ?\DateTimeImmutable $through = null): array => self::expand($master, $through);
         $auth = new GoogleAuth($db, $cfg, static fn(string $url, array $fields, ?float $deadline): array
             => ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])]);
         $feeds = new Feeds($db);
@@ -189,8 +189,14 @@ final class GoogleStand
         return new self($db, $fake, $calendarId, $writer, $sync, $events, $knobs);
     }
 
-    /** The stand-in's occurrences of a master: the harness's own evaluator over the resource read as a row, 730 at most. @return list<\DateTimeImmutable> */
-    public static function expand(array $master): array
+    /**
+     * The stand-in's occurrences of a master: the harness's own evaluator over the resource read as a row, 730 at most
+     * as a listing, or with $through every one up to it (the stand-in asks that way whether a record's date is still a
+     * day of the rule, which the listing's length does not decide).
+     *
+     * @return list<\DateTimeImmutable>
+     */
+    public static function expand(array $master, ?\DateTimeImmutable $through = null): array
     {
         $allDay = isset($master['start']['date']);
         $zone = $allDay ? 'UTC' : (string) ($master['start']['timeZone'] ?? 'UTC');
@@ -215,7 +221,7 @@ final class GoogleStand
         $ev = clone Rfc::ofRow($row);
         $keys = $ev->refused
             ? array_column(array_slice(Truth::expand($row)['occ'], 0, 730), 'key')
-            : array_map(static fn(array $o): string => gmdate('Y-m-d H:i:s', $o[0]), $ev->first(730));
+            : array_map(static fn(array $o): string => gmdate('Y-m-d H:i:s', $o[0]), $through === null ? $ev->first(730) : $ev->through($through->getTimestamp()));
         return array_map(static fn(string $key): \DateTimeImmutable => Clock::parse($key)->setTimezone(Clock::zone($zone)), $keys);
     }
 

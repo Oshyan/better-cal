@@ -196,11 +196,15 @@ final class Driver
         $spec = $this->spec;
         // A start moved alone acts on the first occurrence with no day named, and lands on a later occurrence that is no
         // exception's day (the driver's pick, by the case's seed and number); it needs a rule in the drag table and a first
-        // occurrence that is no exception, else the vector's flag is dropped and the case is an ordinary edit.
+        // occurrence that is no exception, else the vector's flag is dropped and the case is an ordinary edit. The
+        // occurrence is one within the days the case draws from (19 years on, under the product's editing horizon): the
+        // edits stacked after it act on the new first day, and a sparse rule's next six days can lie past that horizon
+        // (a leap day's span 24 years), where an edit that names a day is refused.
         if (!empty($spec['vector']['startOnly'])) {
             $exAt = array_fill_keys(array_column($spec['exceptions'] ?? [], 'at'), true);
             $base = self::shownFrom($st);
-            $later = array_values(array_filter(array_keys($st['raw']), static fn(int $i): bool => $i > $base && $i <= $base + 6 && !isset($exAt[$i])));
+            $horizon = Clock::db((new \DateTimeImmutable('now', Clock::utc()))->modify('+19 years'));
+            $later = array_values(array_filter(array_keys($st['raw']), static fn(int $i): bool => $i > $base && $i <= $base + 6 && !isset($exAt[$i]) && $st['raw'][$i]['key'] < $horizon));
             if ($st['shape']->supported() && !isset($exAt[0]) && $later !== []) {
                 $spec['acted'] = 0;
                 $spec['startTo'] = $later[crc32('start:' . ($spec['seed'] ?? 0) . ':' . ($spec['n'] ?? 0)) % count($later)];

@@ -635,7 +635,7 @@ final class ReplayTarget
             foreach (['Base', 'Shape', 'Rfc', 'Truth', 'GoogleStand'] as $f) {
                 require_once $root . "/tools/edit-harness/$f.php";
             }
-            $fake->expand = static fn(array $master): array => \BetterCal\EditHarness\GoogleStand::expand($master);
+            $fake->expand = static fn(array $master, ?\DateTimeImmutable $through = null): array => \BetterCal\EditHarness\GoogleStand::expand($master, $through);
         }
         return $fake;
     }

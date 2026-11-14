@@ -468,6 +468,32 @@ $moved = $fake->records('standin01')['20270315T170000Z'] ?? [];
 check('stand-in, 3.5: the start moved along the pattern moves the moved day\'s start onto its occurrence and leaves its end',
     $at($moved['start'] ?? []) === '2027-03-15 10:00' && $at($moved['end'] ?? []) === '2027-03-16 11:00', json_encode($moved));
 
+// ---- The stand-in against the probe of 2026-11-14 (3.67, 3.68) ----------------
+// 3.67: weekly 10:00 to 11:00 Los Angeles, occurrence 2 at its own 14:00 to 15:30, occurrence 3 renamed; the first day
+// moved a week later for all events. Google: occurrence 2 read 10:00 to 15:30 (start onto its occurrence, end left),
+// occurrence 3 kept its 10:00 to 11:00 and its title.
+$fake = new FakeGoogle(CAL);
+$fake->token = null;
+$fake->seed(['id' => 'drag0001', 'summary' => 'Sample drag', 'description' => '', 'start' => $la('2027-03-01 10:00'), 'end' => $la('2027-03-01 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']]);
+$call($fake, 'PATCH', 'drag0001_20270308T180000Z', ['start' => $la('2027-03-08 14:00'), 'end' => $la('2027-03-08 15:30')]);
+$call($fake, 'PATCH', 'drag0001_20270315T170000Z', ['summary' => 'Sample drag (one renamed)']);
+$call($fake, 'PATCH', 'drag0001', ['start' => $la('2027-03-08 10:00'), 'end' => $la('2027-03-08 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']]);
+$two = $fake->records('drag0001')['20270308T180000Z'] ?? [];
+$three = $fake->records('drag0001')['20270315T170000Z'] ?? [];
+check('stand-in, 3.67: the start along the pattern: the own-time day reads 10:00 to 15:30, the renamed day keeps 10:00 to 11:00 and its title',
+    [$at($two['start'] ?? []), $at($two['end'] ?? []), $at($three['start'] ?? []), $at($three['end'] ?? []), $three['summary'] ?? null]
+    === ['2027-03-08 10:00', '2027-03-08 15:30', '2027-03-15 10:00', '2027-03-15 11:00', 'Sample drag (one renamed)'], json_encode([$two, $three]));
+// 3.68: a series with no notes, a day with its own notes; a master PATCH with one private property and no recurrence
+// clears the notes; a title-only PATCH after leaves them absent and renames the day, which held the series' title.
+$fake = $notes(null);
+$call($fake, 'PATCH', 'notes001_20270308T180000Z', ['summary' => 'Sample notes']);
+$call($fake, 'PATCH', 'notes001', ['extendedProperties' => ['private' => ['sampleKey' => 'one']]]);
+$afterProperty = $day($fake);
+$call($fake, 'PATCH', 'notes001', ['summary' => 'Sample notes, renamed']);
+$afterTitle = $day($fake);
+check('stand-in, 3.68: a master PATCH with no recurrence clears a day\'s own notes on a series with none; a title-only PATCH after leaves them absent and renames the day',
+    !array_key_exists('description', $afterProperty) && !array_key_exists('description', $afterTitle) && ($afterTitle['summary'] ?? null) === 'Sample notes, renamed', json_encode([$afterProperty, $afterTitle]));
+
 // ---- Report scrubbing on its own ---------------------------------------------
 $r = new Report($tmp . '/scrub');
 $r->secret('someone@example.net', '{account}');

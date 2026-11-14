@@ -420,8 +420,9 @@ final class FakeGoogle
             $new['status'] = 'cancelled';
         }
         $fields = array_intersect_key($body, array_flip(['summary', 'description', 'location', 'status', 'source']));
-        // A series with no notes, written without them: every kept record's own notes are cleared (3.52 to 3.57; with
-        // notes of its own, or its empty notes sent, they stay: 3.58 to 3.61).
+        // A series with no notes, written without them: every kept record's own notes are cleared (3.52 to 3.57; and
+        // with no recurrence sent, 3.68, 2026-11-14; with notes of its own, or its empty notes sent, they stay: 3.58 to
+        // 3.61).
         $clearNotes = !array_key_exists('description', $body) && (string) ($old['description'] ?? '') === '';
         // Those empty notes sent to a series that has none change nothing and are written into no record (3.61).
         if (($fields['description'] ?? null) === '' && (string) ($old['description'] ?? '') === '') {
@@ -467,7 +468,8 @@ final class FakeGoogle
             // stays at its instant, in the series' zone. Seen for the zone alone at the same moments (3.17, replay round 2
             // D), for a start date moved along the pattern (3.5: no record's end reported changed) and for a zone and rule
             // change put back (replay round 5, google-an-untouched-edited-day-keeps-its-own-list-after-a-zone-and-rule-change
-            // request 16: a day with its own 12:30 to 14:00 read back 13:00 to 14:00 under a 13:00 to 14:30 series).
+            // request 16: a day with its own 12:30 to 14:00 read back 13:00 to 14:00 under a 13:00 to 14:30 series), and
+            // for the first day dragged a week later (3.67, 2026-11-14: a day at its own 14:00 to 15:30 read 10:00 to 15:30).
             if (($sameInstants || ($startChanged && $newLen === $oldLen && !$allDay)) && isset($r['end']['dateTime'])) {
                 $tz = (string) $new['start']['timeZone'];
                 [$r['start']] = $this->span($occ[$key], $newLen, $allDay, $tz);

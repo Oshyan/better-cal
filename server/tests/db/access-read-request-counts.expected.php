@@ -6,6 +6,10 @@ declare(strict_types=1);
 // (PROBE_ACCESS_DUMP), with the two differences the model states (docs/design/google-access-detect-and-inform.md, section 2):
 // the first read of an event in no series is "GET list" (by its iCalUID) where the fix branch sent "GET id"; and an undo
 // of a day delete reads the series once (the fix branch read the day by its id first: GET id, GET list, PATCH id, GET list).
+// Three sequences are the read-back build's, which sends fewer reads than the fix branch did (docs/design/google-series-read-back.md,
+// "Request Count": the read back is the last read where no day is sent after the series' write; Put back reuses its read):
+// both "following" cases (the fix branch sent 7 and 4 requests) and "half done: putBack" (8). None gains a request, and
+// none holds the small list an access refusal asks.
 
 return [
     'single: create' => ['POST list'],
@@ -28,9 +32,9 @@ return [
     'day: undo of the day drag' => ['GET list', 'PATCH id', 'GET list'],
     'all: the title' => ['GET list', 'PATCH id', 'GET list', 'PATCH id', 'GET list'],
     'all: an hour later' => ['GET list', 'PATCH id', 'GET list', 'PATCH id', 'GET list'],
-    'following: the title from the fourth day' => ['GET list', 'PATCH id', 'GET list', 'GET list', 'POST list', 'GET list', 'GET list'],
-    'following: delete from the third day' => ['GET list', 'PATCH id', 'GET list', 'GET list'],
+    'following: the title from the fourth day' => ['GET list', 'PATCH id', 'GET list', 'POST list', 'GET list'],
+    'following: delete from the third day' => ['GET list', 'PATCH id', 'GET list'],
     'all: delete' => ['GET list', 'DELETE id', 'GET list'],
     'half done: finish' => ['GET list', 'GET list', 'PATCH id', 'GET list'],
-    'half done: putBack' => ['GET list', 'GET list', 'GET list', 'GET list', 'PATCH id', 'GET list', 'PATCH id', 'GET list'],
+    'half done: putBack' => ['GET list', 'GET list', 'GET list', 'PATCH id', 'GET list', 'PATCH id', 'GET list'],
 ];

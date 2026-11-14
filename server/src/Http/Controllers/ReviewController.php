@@ -68,8 +68,8 @@ final class ReviewController
         $storedItems = $this->queue->listFor($userId, $openOnly, isset($req->query['before']) ? max(1, (int) $req->query['before']) : null);
         $mailSettings = $this->queue->mailSettings($userId);
         foreach ($storedItems as $c) {
-            if ($c['kind'] === 'subscription') {
-                continue; // a paused feed's notice row: listed below, from the feed's state now
+            if ($c['kind'] === 'subscription' || $c['kind'] === ReviewQueue::KIND_GOOGLE_HALF) {
+                continue; // a paused feed's or a half-done change's notice row: listed below, from its state now
             }
             $open = $c['status'] === 'open';
             if (in_array($c['kind'], [ReviewQueue::KIND_MAIL_LIMIT, ReviewQueue::KIND_MODEL_LIMIT, ReviewQueue::KIND_MAIL_ERROR, ReviewQueue::KIND_GOOGLE_DIFFERS, ReviewQueue::KIND_GOOGLE_EMPTY, ReviewQueue::KIND_GOOGLE_READ_ONLY, ReviewQueue::KIND_GOOGLE_NOT_SHOWN], true)) {
@@ -231,7 +231,14 @@ final class ReviewController
                 ] : [],
             ];
         }
-        foreach ($this->queue->googleHalfDone($userId) as $half) {
+        // Each half-done change is a state notice (ReviewQueue::halfDoneNotices): dismissed, it stays out of the list
+        // while the change stays half done, and comes back when a change refused because of it is attempted; the event
+        // itself says it is half done either way, with the way back here.
+        foreach ($this->queue->halfDoneNotices($userId) as $notice) {
+            if ($notice['status'] !== 'open') {
+                continue;
+            }
+            $half = $notice['half'];
             $items[] = [
                 'key' => 'google_half:' . $half['id'],
                 'kind' => 'google_half',
@@ -245,9 +252,11 @@ final class ReviewController
                 'eventId' => $half['eventId'],
                 'detail' => $half,
                 // The calendar no longer writes to Google (GoogleSeries::unrecoverable): neither can run, so neither is offered.
-                'actions' => $canDecide && $half['unrecoverable'] === null ? array_values(array_filter([
-                    $half['finishRefused'] === null ? self::action('finish', 'Finish', "/review/google-half/{$half['id']}/finish") : null,
-                    self::action('put_back', 'Put back', "/review/google-half/{$half['id']}/put-back"),
+                'actions' => $canDecide ? array_values(array_filter([
+                    $half['unrecoverable'] === null && $half['finishRefused'] === null ? self::action('finish', 'Finish', "/review/google-half/{$half['id']}/finish") : null,
+                    $half['unrecoverable'] === null ? self::action('put_back', 'Put back', "/review/google-half/{$half['id']}/put-back") : null,
+                    // Acknowledged, not decided: the change stays half done, and the event says so.
+                    self::action('dismiss', 'Dismiss', "/review/notices/{$notice['row']}/dismiss") + ['quiet' => true],
                 ])) : [],
             ];
         }
@@ -373,7 +382,7 @@ final class ReviewController
             'duplicate' => count($this->duplicates?->possible($userId) ?? []),
             'subscription' => count(array_filter($this->queue->subscriptionNotices($userId, $this->calendars->subscriptionsAwaitingReview($userId)), static fn(array $n): bool => $n['status'] === 'open')),
             'plugin' => count($this->plugins?->turnedOffByRevokedKey() ?? []),
-            'google_half' => count($this->queue->googleHalfDone($userId)),
+            'google_half' => count(array_filter($this->queue->halfDoneNotices($userId), static fn(array $n): bool => $n['status'] === 'open')),
             'google_differs' => $this->queue->openCount($userId, ReviewQueue::KIND_GOOGLE_DIFFERS),
             'google_empty' => $this->queue->openCount($userId, ReviewQueue::KIND_GOOGLE_EMPTY),
             'google_read_only' => $this->queue->openCount($userId, ReviewQueue::KIND_GOOGLE_READ_ONLY),
@@ -448,6 +457,13 @@ final class ReviewController
         return Response::json(['item' => $this->queue->dismissMailError((int) $req->user['id'], (int) $params['id'])]);
     }
 
+    /** POST /review/notices/:id/reopen: a dismissed notice open again, from the event's own line about it. */
+    public function reopenNotice(Request $req, array $params): Response
+    {
+        $req->requireSession('Review decisions');
+        return Response::json(['item' => $this->queue->reopenNotice((int) $req->user['id'], (int) $params['id'])]);
+    }
+
     /** POST /review/notices/:id/dismiss: any notice that reports a state or an event (ReviewQueue::NOTICE_KINDS). */
     public function dismissNotice(Request $req, array $params): Response
     {
@@ -467,6 +483,7 @@ final class ReviewController
         $req->requireSession('Review decisions');
         $out = $this->events->googleFinish((int) $req->user['id'], (int) $params['id'], \BetterCal\Domain\RequestAuthority::request($req));
         $this->events->throwDeferred();
+        $this->queue->halfDoneNotices((int) $req->user['id']); // the change complete: its notice ends
         return Response::json($out);
     }
 
@@ -476,6 +493,7 @@ final class ReviewController
         $req->requireSession('Review decisions');
         $out = $this->events->googlePutBack((int) $req->user['id'], (int) $params['id'], \BetterCal\Domain\RequestAuthority::request($req));
         $this->events->throwDeferred();
+        $this->queue->halfDoneNotices((int) $req->user['id']); // the change complete: its notice ends
         return Response::json($out);
     }
 

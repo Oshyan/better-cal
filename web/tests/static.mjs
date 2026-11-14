@@ -334,6 +334,29 @@ for (const file of files) {
   }
   check(review.includes("item.kind === 'subscription' && action.name === 'dismiss'") && review.includes('The feed stays paused'),
     'dismissing a paused feed\'s notice must say the feed stays paused (a dismiss decides nothing)');
+  // A half-done change: the event's details say so whether or not its Review item was dismissed, with the way back.
+  const sheet = readFileSync(join(root, 'app', 'EventSheetBody.js'), 'utf8');
+  const wordsSrc = (sheet.match(/export function halfDoneWords\(half, fmtDay\) \{[\s\S]*?\n\}/) || [''])[0];
+  const words = wordsSrc ? vm.runInNewContext(wordsSrc.replace('export function', 'function') + '\nhalfDoneWords') : null;
+  check(typeof words === 'function', 'EventSheetBody must compose the half-done line in halfDoneWords');
+  if (typeof words === 'function') {
+    const day = () => 'Thu 12 Mar';
+    const ok = words({ stoppedAt: '2027-03-12T10:00:00Z', unrecoverable: null, open: false }, day);
+    check(ok.includes('stopped part way on Thu 12 Mar') && ok.includes("isn't updating from Google") && ok.includes('finished or put back'),
+      'the half-done line says what stopped, that the event is not updating, and the way out: ' + ok);
+    const stuck = words({ stoppedAt: '2027-03-12T10:00:00Z', unrecoverable: 'Sample reason the item gives.', open: true }, day);
+    check(stuck.endsWith('Sample reason the item gives.'), "when neither Finish nor Put back can run, the line ends with the item's own sentence");
+    check(words(null, day) === null, 'no half-done change, no line');
+    check(!/pending|master|sync/i.test(ok), 'the half-done line has no jargon');
+  }
+  check(sheet.includes('${occ.halfDone && html`<${HalfDoneLine} half=${occ.halfDone} />`}'),
+    "the half-done line shows on the event's details whenever a change holds it, dismissed or not");
+  check(sheet.includes("'/review/notices/' + half.noticeId + '/reopen'") && sheet.includes("route: 'review'"),
+    "the half-done line's control reopens a dismissed item and goes to Review");
+  const css = readFileSync(join(root, '..', 'styles', 'app.css'), 'utf8');
+  check(['bc-es-half', 'bc-es-halfbtn'].every((c) => new RegExp('\\.' + c + '[\\s.{>]').test(css)) && sheet.includes('bc-es-half') && sheet.includes('bc-es-halfbtn'),
+    "the half-done line's classes have their rules, and the rules their elements");
+  check(review.includes("item.kind === 'google_half' && action.name === 'dismiss'"), 'dismissing a half-done change must say it stays half done');
   check(review.includes('The calendar stays read-only here until Google allows changes again.'),
     'dismissing an access notice must say the calendar stays read-only (a dismiss acknowledges, it changes nothing)');
   const settingsSrc = readFileSync(join(root, 'app', 'CalendarSettings.js'), 'utf8');

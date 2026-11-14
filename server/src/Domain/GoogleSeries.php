@@ -3031,6 +3031,28 @@ final class GoogleSeries
         return $out;
     }
 
+    /**
+     * The change half done at Google that holds this event (a series, one of
+     * its days, or an event of its own a change named), as halfDoneOf gives
+     * it, or null: what the event's own details say about it.
+     */
+    public static function halfDoneFor(Db $db, array $row): ?array
+    {
+        $pending = self::pendingNames($db, (int) $row['user_id'], (int) $row['calendar_id']);
+        foreach (self::namesOf($row) as $name) {
+            $series = GoogleWriter::instanceOf($name)['series'] ?? null;
+            $which = $pending[$name] ?? ($series !== null ? $pending[$series] ?? null : null);
+            if ($which !== null) {
+                foreach (self::halfDoneOf($db, (int) $row['user_id']) as $h) {
+                    if ((int) $h['id'] === (int) $which['id']) {
+                        return $h;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     /** The names a row goes by for pendingNames: its uid (its series' too, for an edited day) and its Google id. @return list<string> */
     public static function namesOf(array $row): array
     {
@@ -3056,6 +3078,8 @@ final class GoogleSeries
             $series = GoogleWriter::instanceOf((string) $name)['series'] ?? null;
             $which = $pending[(string) $name] ?? ($series !== null ? $pending[$series] ?? null : null);
             if ($which !== null) {
+                // Refused because of the half-done change: its Review notice, if dismissed, opens again.
+                ReviewQueue::reopenAfter($db, $userId, ReviewQueue::halfKey((int) $which['id']));
                 throw self::pendingRefusal($which);
             }
         }

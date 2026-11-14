@@ -4312,6 +4312,10 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-es-row { display: flex; align-items: flex-start; gap: 14px; min-height: 24px; }
 .bc-es-row > svg { flex: none; color: var(--fg-muted); margin-top: 1px; }
 .bc-es-row.is-pending { color: var(--fg-muted); font-style: italic; }
+/* A change to the event that stopped part way at Google: one small line, its control quiet and inline. */
+.bc-es-half { font-size: 13.5px; color: var(--fg-muted); }
+.bc-es-row.bc-es-half > svg { color: var(--warn); }
+.bc-es-halfbtn { font-size: inherit; padding: 0; white-space: nowrap; }
 .bc-es-rt { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.35; }
 .bc-es-rt small { display: block; font-size: 14px; color: var(--fg-muted); margin-top: 3px; }
 .bc-es-rowbtn {

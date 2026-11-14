@@ -2554,6 +2554,26 @@ final class Events
      * clients get when they ask for a specific event, and what a create
      * returns. It carries everything, uid included.
      */
+    /**
+     * What an event's details say while a change half done at Google holds it
+     * (GoogleSeries::halfDoneFor), whether or not its Review notice was
+     * dismissed, since the state is true either way: when it stopped, why
+     * neither Finish nor Put back can run (the Review item's own sentence),
+     * and the notice to reopen or go to. Null when no change holds it. The
+     * client composes the words.
+     *
+     * @return array{noticeId:?int, open:bool, stoppedAt:string, unrecoverable:?string}|null
+     */
+    public static function halfDoneLine(Db $db, Events $events, array $row): ?array
+    {
+        $half = GoogleSeries::halfDoneFor($db, $row);
+        if ($half === null) {
+            return null;
+        }
+        $notice = (new ReviewQueue($db, $events))->halfDoneNotices((int) $row['user_id'])[(int) $half['id']] ?? null;
+        return ['noticeId' => $notice['row'] ?? null, 'open' => ($notice['status'] ?? 'open') === 'open', 'stoppedAt' => (string) $half['createdAt'], 'unrecoverable' => $half['unrecoverable']];
+    }
+
     public function serializeSingle(array $row): array
     {
         $links = $this->labels->forEvents([(int) $row['id']]);

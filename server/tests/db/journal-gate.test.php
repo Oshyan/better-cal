@@ -396,7 +396,7 @@ return static function (Db $db): void {
                 $item = $i;
             }
         }
-        checkEq('Put back alone, the summary ending with why Finish can\'t complete it', [['Put back'], true],
+        checkEq('Put back alone (beside Dismiss, which every item has), the summary ending with why Finish can\'t complete it', [['Put back', 'Dismiss'], true],
             [array_column($item['actions'] ?? [], 'label'), str_ends_with((string) ($item['summary'] ?? ''), ' ' . $finishUndo)]);
         $db->run('UPDATE mutations SET format = 2 WHERE user_id = ?', [$s->u]);
         $item = null;
@@ -405,7 +405,7 @@ return static function (Db $db): void {
                 $item = $i;
             }
         }
-        checkEq('control: a pending undo of a current entry offers Finish and Put back', ['Finish', 'Put back'], array_column($item['actions'] ?? [], 'label'));
+        checkEq('control: a pending undo of a current entry offers Finish and Put back (and Dismiss)', ['Finish', 'Put back', 'Dismiss'], array_column($item['actions'] ?? [], 'label'));
     });
 
     scenario('journal gate: the open case: Finish refused by the format and Put back refused because Google changed since leave the series frozen, and every word said is true', function () use ($db, $setup, $pendingUndo, $masterId, $pendingRow, $finishUndo, $iso): void {
@@ -509,6 +509,7 @@ return static function (Db $db): void {
         'GoogleSeries::settle' => 'closes a pending row a run completed, after the run',
         'GoogleSeries::stepsDone' => 'records a run\'s steps, takes nothing back',
         'GoogleSeries::store' => 'stores what Google read back, takes nothing back',
+        'ReviewQueue::halfKey' => 'the key of a half-done change\'s Review notice, words only',
         'Proposals::undoRefusal' => 'whether to offer the undo, writes nothing',
         'Reminders::fireAt' => 'a reminder entry, not a journal entry',
     ];
@@ -636,8 +637,8 @@ return static function (Db $db): void {
             }
             $item = $reviewItem($s, 'google_half:' . $p);
             $s->t->calls = [];
-            checkEq("$how: listed with no action and the reason; Finish and Put back refuse with it, nothing sent", [[], true, [409, 'google_calendar_gone', $words], [409, 'google_calendar_gone', $words], []],
-                [$item['actions'] ?? null, str_ends_with((string) ($item['summary'] ?? ''), ' ' . $words),
+            checkEq("$how: listed with Dismiss its one action and the reason; Finish and Put back refuse with it, nothing sent", [['Dismiss'], true, [409, 'google_calendar_gone', $words], [409, 'google_calendar_gone', $words], []],
+                [array_column($item['actions'] ?? [], 'label'), str_ends_with((string) ($item['summary'] ?? ''), ' ' . $words),
                     $caught(fn() => $s->events->googleFinish($s->u, $p)), $caught(fn() => $s->events->googlePutBack($s->u, $p)), $s->t->calls]);
             checkEq("$how: kept as a copy, it goes through and the change is closed with the line", [null, 0, [], $closedLine($title, 'this calendar is kept as a copy here now.'), null, null],
                 array_merge([$caught(fn() => $s->calendars->adopt($s->u, $s->calendarId))], $closed($s)));
@@ -652,7 +653,7 @@ return static function (Db $db): void {
             'refresh_token_enc' => BetterCal\Infra\Secrets::seal('sample-refresh', 'sample-session-secret'), 'scopes' => GoogleAuth::SCOPES]);
         $s->undo->write($s->u, fn() => $s->calendars->reattachGoogle($s->u, $s->calendarId, $account, 'owner', 'owner@example.test'));
         $reattach = lastEntry($db, $s->u);
-        checkEq('re-attached: Finish and Put back offered again', ['Finish', 'Put back'], array_column($reviewItem($s, 'google_half:' . $p)['actions'] ?? [], 'label'));
+        checkEq('re-attached: Finish and Put back offered again', ['Finish', 'Put back', 'Dismiss'], array_column($reviewItem($s, 'google_half:' . $p)['actions'] ?? [], 'label'));
         checkEq('undoing the re-attach is refused (its entry keeps nothing to restore), and the calendar still writes to Google', [[400, 'not_undoable', 'This entry is log-only and cannot be undone (automated or older than the 7-day undo window)'], $account],
             [$caught(fn() => $s->undo->undoById($s->u, $reattach)), (int) $db->scalar('SELECT google_account_id FROM calendars WHERE id = ?', [$s->calendarId])]);
     });
@@ -664,7 +665,7 @@ return static function (Db $db): void {
         // What adopt wrote before it closed the row: the calendar a copy here, the pending row left.
         $db->run("UPDATE calendars SET kind = 'local', provider = 'ics', google_calendar_id = NULL, google_access_role = NULL, google_account_id = NULL WHERE id = ?", [$s->calendarId]);
         $item = $reviewItem($s, 'google_half:' . $p);
-        checkEq('kept as a copy: listed with no action and the reason', [[], true], [$item['actions'] ?? null, str_ends_with((string) ($item['summary'] ?? ''), ' ' . $keptAsCopy)]);
+        checkEq('kept as a copy: listed with Dismiss its one action and the reason', [['Dismiss'], true], [array_column($item['actions'] ?? [], 'label'), str_ends_with((string) ($item['summary'] ?? ''), ' ' . $keptAsCopy)]);
         $t = $setup();
         $halfChange($t);
         $titleT = (string) $pendingRow($t)['title'];

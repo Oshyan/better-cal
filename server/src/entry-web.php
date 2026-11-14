@@ -226,9 +226,9 @@ function bc_handle_api(Request $request, array $cfg): void
             return Response::json(['ok' => true, 'undone' => $undone]);
         });
         // Single-event occurrence, for activity jump-to-event.
-        $router->add('GET', "$base/events/:id/occurrence", function (Request $req, array $params) use ($events): Response {
+        $router->add('GET', "$base/events/:id/occurrence", function (Request $req, array $params) use ($events, $db): Response {
             $row = $events->get((int) $req->user['id'], (int) $params['id']);
-            return Response::json(['occurrence' => $events->serializeSingle($row)]);
+            return Response::json(['occurrence' => $events->serializeSingle($row) + ['halfDone' => Domain\Events::halfDoneLine($db, $events, $row)]]);
         });
 
         $router->add('GET', "$base/search", [$searchController, 'search']);
@@ -291,6 +291,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/review/model-limits/:id/dismiss", [$reviewController, 'dismissModelLimit']);
         $router->add('POST', "$base/review/google-differences/:id/dismiss", [$reviewController, 'dismissGoogleDifferences']);
         $router->add('POST', "$base/review/notices/:id/dismiss", [$reviewController, 'dismissNotice']);
+        $router->add('POST', "$base/review/notices/:id/reopen", [$reviewController, 'reopenNotice']);
         $router->add('POST', "$base/review/google-half/:id/finish", [$reviewController, 'finishGoogle']);
         $router->add('POST', "$base/review/google-half/:id/put-back", [$reviewController, 'putBackGoogle']);
         $router->add('POST', "$base/duplicates/:id", [$reviewController, 'decideDuplicate']);

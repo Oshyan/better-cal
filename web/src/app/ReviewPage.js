@@ -135,6 +135,9 @@ function ReviewCard({ item, onChanged }) {
       } else if (item.kind === 'google_read_only' || item.kind === 'google_not_shown') {
         // Dismissed, not resolved: the calendar stays read-only until Google says otherwise.
         toast('Notice dismissed. The calendar stays read-only here until Google allows changes again.');
+      } else if (item.kind === 'google_half' && action.name === 'dismiss') {
+        // Acknowledged, not decided: the change stays half done, and the event's own details say so.
+        toast('Notice dismissed. The change stays half done; the event says so and leads back here.');
       } else if (item.kind === 'google_half') {
         // Put back is all or nothing: a series changed at Google since
         // refuses it whole (409), and its words arrive through the catch.

@@ -267,6 +267,33 @@ function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, 
   </div>`;
 }
 
+// A change to this event that stopped part way at Google (occ.halfDone, sent with the event's details): said here
+// whether or not its Review item was dismissed, since it is true either way, with the way back to that item. One
+// line: what happened and what it means first, the control quiet after it. Words composed here, the date in the
+// person's format; when neither Finish nor Put back can run, the Review item's own sentence says why.
+export function halfDoneWords(half, fmtDay) {
+  if (!half) return null;
+  const when = half.stoppedAt ? ' on ' + fmtDay(half.stoppedAt) : '';
+  return 'A change to this event stopped part way' + when + '. '
+    + (half.unrecoverable || 'It isn\'t updating from Google and takes no other change until that change is finished or put back.');
+}
+
+function HalfDoneLine({ half }) {
+  const words = halfDoneWords(half, (iso) => fmtDateFull(parseISO(iso)));
+  if (!words) return null;
+  const toReview = async () => {
+    // Dismissed: open it again first, so Review shows it.
+    if (!half.open && half.noticeId) {
+      try { await api('/review/notices/' + half.noticeId + '/reopen', { method: 'POST', body: {} }); } catch (e) { toast(e.message, { error: true }); return; }
+    }
+    set({ popover: null, route: 'review' });
+  };
+  return html`<div class="bc-es-row bc-es-half" role="status">
+    <${Icon} name="warning" size=${20} />
+    <div class="bc-es-rt">${words} <button type="button" class="bc-link-btn bc-es-halfbtn" onClick=${toReview}>${half.open ? 'Go to Review' : 'Show in Review'}</button></div>
+  </div>`;
+}
+
 export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, bodyRef, copyOpen, setCopyOpen, timeScope, setTimeScope, deletePrompt, attendPrompt, s, e, backTo = null }) {
   const [moreOpen, setMoreOpen] = useState(false);
   useEffect(() => { setMoreOpen(false); }, [occ.instanceId]);
@@ -381,6 +408,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
           ${(occ.recurring || zoneNote(occ)) && html`<small>${[occ.recurring ? describeRrule(occ.rrule) : null, zoneNote(occ)].filter(Boolean).join(' · ')}</small>`}
         </div>
       </div>
+      ${occ.halfDone && html`<${HalfDoneLine} half=${occ.halfDone} />`}
 
       ${/* An invitation's reply is the thing to do: right under when. */ ''}
       ${occ.invite && html`<${InviteBlock} occ=${occ} />`}

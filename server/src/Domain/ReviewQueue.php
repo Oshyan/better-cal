@@ -1533,6 +1533,57 @@ final class ReviewQueue
     }
 
     /**
+     * The series changes half done at Google, each held as a state notice
+     * (its state is its pending row: one notice per change, open until
+     * dismissed, ended when Finish or Put back completes it or it is closed
+     * otherwise), returned with each one's notice row. The notice is only
+     * the Review item: the pending row and the series are untouched by it.
+     *
+     * @return array<int, array{row:int, status:string, half:array}> pending id => its notice and its halfDoneOf entry
+     */
+    public function halfDoneNotices(int $userId): array
+    {
+        $half = GoogleSeries::halfDoneOf($this->db, $userId);
+        return RequestAuthority::checkedTx($this->db, function () use ($userId, $half): array {
+            $byKey = [];
+            foreach ($half as $h) {
+                $key = self::halfKey((int) $h['id']);
+                $byKey[$key] = $h;
+                self::holdState($this->db, $userId, self::KIND_GOOGLE_HALF, $key, 'half', [
+                    'title' => (string) $h['title'], 'summary' => (string) $h['summary'], 'payload' => ['pendingId' => (int) $h['id'], 'calendarId' => (int) $h['calendarId']],
+                ]);
+            }
+            $out = [];
+            foreach ($this->db->all("SELECT id, source_key, status FROM review_items WHERE user_id = ? AND kind = ? AND status IN ('open', 'dismissed')", [$userId, self::KIND_GOOGLE_HALF]) as $r) {
+                $h = $byKey[(string) $r['source_key']] ?? null;
+                if ($h === null) {
+                    self::endState($this->db, $userId, (string) $r['source_key']);
+                    continue;
+                }
+                $out[(int) $h['id']] = ['row' => (int) $r['id'], 'status' => (string) $r['status'], 'half' => $h];
+            }
+            return $out;
+        });
+    }
+
+    /** The source key of a half-done change's notice. */
+    public static function halfKey(int $pendingId): string
+    {
+        return 'google-half:' . $pendingId;
+    }
+
+    /** Open a dismissed notice again, at the person's asking (the event's own line about it). */
+    public function reopenNotice(int $userId, int $id): array
+    {
+        $row = $this->db->one('SELECT * FROM review_items WHERE id = ? AND user_id = ?', [$id, $userId]);
+        if ($row === null || !in_array((string) $row['kind'], self::NOTICE_KINDS, true)) {
+            throw HttpError::notFound('No such notice');
+        }
+        RequestAuthority::checkedTx($this->db, fn() => self::reopenState($this->db, $userId, (string) $row['source_key']));
+        return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
+    }
+
+    /**
      * Dismiss a notice: the one dismissal of every stored notice kind
      * ($kinds: the kinds the caller's route takes). Only the item changes.
      */
@@ -1546,7 +1597,7 @@ final class ReviewQueue
 
     /** The stored kinds a dismiss only acknowledges (a decision's kinds, invite_new and invite_change, have their own). */
     public const NOTICE_KINDS = [self::KIND_MAIL_LIMIT, self::KIND_MODEL_LIMIT, self::KIND_MAIL_ERROR, self::KIND_GOOGLE_DIFFERS, self::KIND_GOOGLE_EMPTY,
-        self::KIND_GOOGLE_READ_ONLY, self::KIND_GOOGLE_NOT_SHOWN, 'subscription'];
+        self::KIND_GOOGLE_READ_ONLY, self::KIND_GOOGLE_NOT_SHOWN, 'subscription', self::KIND_GOOGLE_HALF];
 
     public function dismissGoogleDifferences(int $userId, int $id): array
     {

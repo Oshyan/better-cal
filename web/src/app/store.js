@@ -718,6 +718,9 @@ export function toast(text, opts = {}) {
       // dismiss control; each dismisses the toast, then runs.
       actions: Array.isArray(opts.actions) ? opts.actions : null,
       dismissLabel: opts.dismissLabel || null,
+      // A line under the text: what else changed in Google Calendar and
+      // stayed (googlechange.js keptLine). Null: the toast as always.
+      kept: opts.kept || null,
     }],
   });
   setTimeout(() => {

@@ -6,6 +6,7 @@ import './drafts.mjs';
 import './credentials.mjs';
 import './mail.mjs';
 import './resources.mjs';
+import './google-changed.mjs';
 // The series panel never guesses a clock's zone: under test a clock with none throws.
 import { setStrictClocks } from '../src/lib/planwords.js';
 setStrictClocks(true);

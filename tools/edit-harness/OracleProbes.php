@@ -244,11 +244,13 @@ final class OracleProbes
                     }
                     return [$out, $s0, $s1];
                 }],
-            ['check' => 'x-readback', 'what' => 'a day renamed at Google during the write is put back to the series without a word', 'case' => 'a-day-renamed-at-google-during-a-series-write-is-kept', 'step' => 1,
+            ['check' => 'x-readback', 'what' => 'a day renamed at Google during the write keeps that title with nothing said', 'case' => 'a-day-renamed-at-google-during-a-series-write-is-the-changes-again', 'step' => 1,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     if ($this->raced !== null) {
-                        [$g, $k] = $this->raced;
-                        unset($s1['g']['digest'][$g]['records'][$k]);
+                        [$g, $k, $title] = $this->raced;
+                        $rec = $s1['g']['digest'][$g]['records'][$k] ?? [null];
+                        $rec[0] = $title;
+                        $s1['g']['digest'][$g]['records'][$k] = $rec;
                         $s1['differs'] = $s0['differs'];
                     }
                     return [$out, $s0, $s1];
@@ -290,16 +292,10 @@ final class OracleProbes
                     unset($s1['rows'][$row($s1, $owns('tags'))]);
                     return [$out, $s0, $this->reshape($s1)];
                 }],
-            // A4 by the stand-in's state when Finish runs: a remote title no later step superseded is still kept.
-            ['check' => 'x-finish', 'what' => 'Finish drops a title given at Google since that no later step superseded', 'case' => 'a-split-stopped-then-a-day-given-an-exception-at-google-then-finished-keeps-it', 'step' => 3,
+            // A4 by the stand-in's state when Finish runs: a remote title Finish replaces is said, with what Google held.
+            ['check' => 'x-finish', 'what' => 'Finish replaces a title given at Google since with nothing said', 'case' => 'a-split-stopped-then-a-day-given-an-exception-at-google-then-finished-is-replaced-and-named', 'step' => 3,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
-                    foreach ($s1['g']['digest'] as $g => $d) {
-                        foreach ((array) ($d['records'] ?? []) as $k => $rec) {
-                            if (str_contains((string) $rec[0], 'remote')) {
-                                unset($s1['g']['digest'][$g]['records'][$k]);
-                            }
-                        }
-                    }
+                    $out['answer']['differences'] = [];
                     return [$out, $s0, $s1];
                 }],
             // Changed since counts from the failure: a change at Google after it still refuses Put back.

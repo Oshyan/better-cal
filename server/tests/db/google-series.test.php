@@ -274,7 +274,7 @@ return static function (Db $db): void {
         checkEq('Mondays and Wednesdays: the exceptions kept with their keys, the skip still a cancelled record', [
             'RRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=20', ['20270315T170000Z', '20270322T170000Z', '20270329T170000Z'], ['20270405T170000Z'],
         ], [$h['rule'], array_keys($h['records']), $h['cancelled']]);
-        checkEq('the master alone is written: the series read, the master, its read-back, the final read-back (3.43)', ['GET', 'PATCH', 'GET', 'GET'], array_column($s->t->calls, 0));
+        checkEq('the master alone is written: the series read, the master, and its read-back, which is the last read since no day is sent after it (3.43)', ['GET', 'PATCH', 'GET'], array_column($s->t->calls, 0));
         checkEq('the rows here hold what the stand-in holds', $h, $stored($s, 'smpl1weekly'));
         [$before, $after] = $secondSync($s);
         checkEq('a second sync changes nothing', $before, $after);
@@ -428,13 +428,15 @@ return static function (Db $db): void {
         $notice = $db->one("SELECT title, payload_json FROM review_items WHERE user_id = ? AND kind = 'google_differs'", [$s->u]);
         $lines = json_decode((string) ($notice['payload_json'] ?? '{}'), true)['lines'] ?? [];
         $day = BetterCal\Domain\Series\Words::date(BetterCal\Domain\Series\Cal::dn(2027, 3, 29), (int) gmdate('Y'));
-        checkEq('the Activity entry and the notice say what Google kept, in words naming the day', [true, 'Sample weekly', ["Google kept 'Sample weekly, renamed' on $day; this change had 'Sample weekly, special'."]],
+        checkEq('the Activity entry and the notice say what Google holds on the day and what the change asked for, with both values', [true, 'Sample weekly', ["On $day Google Calendar holds the title 'Sample weekly, renamed'; this change asked for the title 'Sample weekly, special'."]],
             [str_contains((string) ($entry['summary'] ?? ''), 'Google kept something else'), $notice['title'] ?? null, $lines]);
         // Google holds the day at the series' own values, so here it is an ordinary occurrence again: no row, not the plan's.
         checkEq('the rows here show what Google stores, not the plan: the day has no row of its own', null, $db->scalar('SELECT title FROM events WHERE calendar_id = ? AND google_event_id = ?', [$s->calendarId, 'smpl1weekly_20270329T170000Z']));
     });
 
-    scenario('google series: a day holding only a tag, renamed at Google during a series rename, keeps the tag as its own, and a later clock change at Google keeps the day and its tag', function () use ($setup, $masterId, $db, $iso, $calendar): void {
+    // Last write wins while the change is sent: the day's title set by another client between the series' write and the
+    // read after it is set as the change has it (the series' new title), and the tag, which lives only here, stays the day's.
+    scenario('google series: a day holding only a tag, renamed at Google during a series rename, has the series\' new title and keeps the tag as its own, and a later clock change at Google keeps the day and its tag', function () use ($setup, $masterId, $db, $iso, $calendar): void {
         $s = $setup();
         $id = $masterId($s);
         $s->events->patch($s->u, $id, ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'tagNames' => ['sample-tag']]);
@@ -456,8 +458,8 @@ return static function (Db $db): void {
         $s->t->afterPatch = static fn() => $other('PATCH', $url($dayId), ['summary' => 'Sample remote day'], ['Authorization: Bearer sample-access']);
         planned($s->events, $s->u, $id, ['scope' => 'all', 'title' => 'Sample weekly, renamed']);
         $r = $row();
-        checkEq('right after the read-back: the remote title is the day\'s own, and its tag is still its own, with the tag on it', [['tags', 'title'], 'Sample remote day', ['sample-tag']],
-            [$own($r), $r['title'] ?? null, $r !== null ? $tags((int) $r['id']) : null]);
+        checkEq('after the change: the day has the series\' new title, at Google too, and its tag is still its own, with the tag on it', [['tags'], 'Sample weekly, renamed', ['sample-tag'], 'Sample weekly, renamed'],
+            [$own($r), $r['title'] ?? null, $r !== null ? $tags((int) $r['id']) : null, $s->fake->events[$dayId]['summary'] ?? null]);
         // A clock change at Google drops the day's record; a delta poll reads it.
         $m = $s->fake->events['smpl1weekly'];
         $shift = static fn(array $w): array => ['dateTime' => (new DateTimeImmutable($w['dateTime']))->modify('+1 hour')->format('Y-m-d\\TH:i:sP'), 'timeZone' => $w['timeZone']];

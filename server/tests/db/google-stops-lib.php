@@ -20,8 +20,15 @@ final class PF
      * Finish must leave what the uninterrupted change leaves; Put back must leave the calendar as it was, or be refused
      * and leave the change in Review with Finish completing it. A refused Put back with nothing changed at Google is
      * counted (it tells the person "changed at Google since" when nothing did).
+     *
+     * $expect: what the change should leave, by date (H::hereView's lines, tags included), worked out by the caller
+     * from what was asked. With it, the uninterrupted change is held to it and so is every Finish; without it, a
+     * Finish is compared with what the uninterrupted change left, which shares the product's answer and can't see a
+     * fault the two have in common.
+     *
+     * @param ?list<string> $expect
      */
-    public static function stops(string $name, callable $build, callable $act, string $zone, string $from, string $to, array $modes = ['down', 'lost']): void
+    public static function stops(string $name, callable $build, callable $act, string $zone, string $from, string $to, array $modes = ['down', 'lost'], ?array $expect = null): void
     {
         $t = $build();
         $before = H::hereView($t, $zone, $from, $to, true);
@@ -37,6 +44,12 @@ final class PF
         $total = count($t->s->fake->requests) - $base;
         $log = array_map(static fn(array $r): string => $r['method'] . ' ' . rawurldecode(basename($r['path'])), array_slice($t->s->fake->requests, $base));
         $want = H::settled($t, $name, $zone, $from, $to);
+        if ($expect !== null) {
+            sort($expect);
+            check("$name: the uninterrupted change leaves the calendar as asked, by date", $want === $expect,
+                "\n   missing: " . implode("\n            ", array_diff($expect, $want)) . "\n   extra:   " . implode("\n            ", array_diff($want, $expect)));
+            $want = $expect;
+        }
         echo "  [$name] requests of the uninterrupted change: $total (" . count(array_filter($log, static fn(string $l): bool => !str_starts_with($l, 'GET'))) . " writes)\n";
         H::done($t);
         if ($error !== null) {

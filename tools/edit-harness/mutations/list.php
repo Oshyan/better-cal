@@ -614,7 +614,7 @@ return [
     [
         'id' => 'google-rebase-carries-by-key-across-forms', 'file' => 'server/src/Domain/GoogleSeries.php', 'dbtest' => 'google-series-form-finish',
         'what' => 'a change made at Google while a change between timed and all-day waits for its master write is carried by its key instead of named as not kept',
-        'patch' => [["        \$why = \$found ? self::rekeyed(\$now['master'], \$master) : null;", "        \$why = null;"]],
+        'patch' => [["        \$why = self::rekeyed(\$now['master'], \$master);", "        \$why = null;"]],
         'checks' => [
             'daily 20:00 New York made all-day, a day renamed at Google: Finish names the change made at Google once, by the day\'s own date, as not kept',
             'daily 20:00 New York made all-day, a day renamed at Google: Finish writes the master and the plan\'s edited day under its new id, nothing to an old id or to a day the series does not have',
@@ -659,7 +659,7 @@ return [
     [
         'id' => 'google-rebase-rekey-guard-form-only', 'file' => 'server/src/Domain/GoogleSeries.php', 'dbtest' => 'google-finish-first-write',
         'what' => 'the guard that names a change made at Google as not kept reads a change of form only, so a new clock time carries by key again',
-        'patch' => [["        \$why = \$found ? self::rekeyed(\$now['master'], \$master) : null;", "        \$why = \$found && (int) \$now['master']['all_day'] !== (int) \$master['all_day'] ? self::rekeyed(\$now['master'], \$master) : null;"]],
+        'patch' => [["        \$why = self::rekeyed(\$now['master'], \$master);", "        \$why = (int) \$now['master']['all_day'] !== (int) \$master['all_day'] ? self::rekeyed(\$now['master'], \$master) : null;"]],
         'checks' => [
             'F2 (master write sent and not taken (the network down); Fri 8 Jan deleted at Google): the change made at Google is named once, by its date, as not kept',
             'F2 (master write sent and not taken (the network down); Fri 8 Jan renamed at Google): the change made at Google is named once, by its date, as not kept',

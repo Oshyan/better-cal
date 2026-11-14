@@ -528,6 +528,9 @@ return static function (Db $db): void {
                 $said = $review($t);
                 $entry = $db->one("SELECT summary, details_json FROM mutations WHERE user_id = ? AND summary LIKE '%Sample series%' ORDER BY id DESC LIMIT 1", [$t->u]);
                 $said = array_merge($said, [(string) ($entry['summary'] ?? '')], (array) (json_decode((string) ($entry['details_json'] ?? ''), true)['google']['kept'] ?? []));
+                if (getenv('READBACK_SAID') === '1') {
+                    echo "  [$name]\n    " . implode("\n    ", $said) . "\n";
+                }
                 checkEq("$name: nothing said claims a cause (who changed what, or when)", [], array_values(array_filter($said,
                     static fn(string $line): bool => preg_match('/was \w+( \w+){0,3} in Google Calendar|while this change was|[Ss]omeone|another (app|client|person)/', $line) === 1)));
                 if (!isset($end['2027-03-15'])) {

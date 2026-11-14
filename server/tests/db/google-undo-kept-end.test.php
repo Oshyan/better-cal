@@ -10,8 +10,10 @@ declare(strict_types=1);
 // undo puts the series back. Every day must then be as before the change, start and end, here and at Google.
 // Expectations by date, from the series as it was before the change. Invented data.
 //
-// Known to fail (a product finding, not fixed in the run that wrote it): after the undo the day the change wrote
-// keeps Google's 13:00 to 14:00, here as a day with its own length, where the series is 13:00 to 14:30.
+// A regression test since 1.5.6. It failed until the series' write was followed by a read back with every day that is
+// not as planned sent (decisions.md, "After the series' write, the days are set from what Google holds"): after the
+// undo the day the change wrote kept Google's 13:00 to 14:00, here as a day with its own length, where the series is
+// 13:00 to 14:30.
 
 use BetterCal\EditHarness\GoogleStand;
 use BetterCal\Infra\Db;

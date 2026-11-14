@@ -631,11 +631,20 @@ final class GoogleUndo
                 if ($was === null) {
                     throw HttpError::badRequest('Google no longer lists this account as a guest of the event', 'not_undoable');
                 }
-                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['attendees' => array_values($attendees)], $beforeSend, $current));
-                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $row, $googleId, $userId, $summary, $was, $current, $g, $mutation): void {
+                // A write to the series when the answer was for all events: read back, and every day not as it was sent
+                // (GoogleSeries::writeBesideDays), as the answer itself is.
+                $series = new GoogleSeries($this->db, $writer, new Feeds($this->db));
+                $sent = self::refusingConflict(fn() => $series->writeBesideDays($calendar, $googleId, ['attendees' => array_values($attendees)], $beforeSend, $current));
+                $resp = $sent['resource'];
+                $this->commit($mutation, $calendar, $authority, function () use ($writer, $series, $sent, $calendar, $resp, $row, $googleId, $userId, $summary, $was, $current, $g, $mutation): void {
                     $attendance = $row['attendance'] ?? null;
-                    // The guest list alone was sent back: the answer says nothing of the series' skipped days.
-                    $writer->apply($calendar, [$resp], false);
+                    if ($sent['readback'] !== null) {
+                        // The series as read after the write: the rows here are what Google holds.
+                        $series->store($calendar, [(string) $sent['uid'] => $sent['readback']], [$sent['plan']]);
+                    } else {
+                        // The guest list alone was sent back: the answer says nothing of the series' skipped days.
+                        $writer->apply($calendar, [$resp], false);
+                    }
                     if (is_string($g['attendance'] ?? null)) {
                         $this->db->run('UPDATE events SET attendance = ? WHERE id = ?', [$g['attendance'], (int) $row['id']]);
                     }
@@ -644,6 +653,7 @@ final class GoogleUndo
                             ['responseStatus' => $was, 'attendance' => is_string($attendance) ? $attendance : null, 'undoes' => (int) $mutation['id']]),
                         array_map(static fn(string $col) => [Undo::keyOf('events', ['id' => (int) $row['id']]), $col], ['invite_json', 'status', 'attendance']));
                 });
+                ReviewQueue::holdGoogleAnswerLines($this->db, $userId, (int) $row['id'], (string) $row['title'], (string) $calendar['name'], $sent['lines'], true);
                 return ['entity' => 'event', 'op' => 'update'];
         }
         throw HttpError::badRequest('This entry has nothing to send back to Google', 'not_undoable');

@@ -1398,6 +1398,28 @@ final class ReviewQueue
     }
 
     /**
+     * An answer to a repeating invitation (or its undo) after which Google holds a day of the event otherwise than
+     * before it, and would not take the day back as it was (GoogleSeries::writeBesideDays): the same notice, saying
+     * that. $lines are GoogleSeries::outcomeWords', each from what Google holds; none, no notice.
+     *
+     * @param list<string> $lines
+     */
+    public static function holdGoogleAnswerLines(Db $db, int $userId, ?int $eventId, string $title, string $calendarName, array $lines, bool $takenBack = false): void
+    {
+        if ($lines === []) {
+            return;
+        }
+        (new Undo($db))->write($userId, static function () use ($db, $userId, $eventId, $title, $calendarName, $lines, $takenBack): void {
+            $db->insert('review_items', [
+                'user_id' => $userId, 'kind' => self::KIND_GOOGLE_DIFFERS, 'source_key' => 'google:' . ($eventId ?? 0) . ':' . bin2hex(random_bytes(4)), 'event_id' => $eventId,
+                'title' => mb_substr($title, 0, 300),
+                'summary' => mb_substr("Your answer to '" . $title . "' on calendar '" . $calendarName . "' was " . ($takenBack ? 'taken back' : 'saved') . '. Google Calendar holds some days of the event otherwise than before. The calendar shows what Google holds.', 0, 1000),
+                'payload_json' => json_encode(['lines' => array_values(array_map(static fn(string $l): string => mb_substr($l, 0, 500), $lines)), 'calendarName' => $calendarName], JSON_INVALID_UTF8_SUBSTITUTE),
+            ]);
+        });
+    }
+
+    /**
      * A Google calendar whose whole read listed nothing while it holds rows
      * here (GoogleSync, "an empty listing never deletes"): one open notice
      * per calendar, closed when a whole read lists its events again.

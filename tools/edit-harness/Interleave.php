@@ -87,6 +87,8 @@ final class Interleave
     private ?array $raced = null;
     /** The instance id a w-race step renamed a day of, for an undo step given "race": "day" (fixed cases) to rename it again. */
     private ?array $lastRace = null;
+    /** The sentence Finish's answer opens its list of replaced days with, as the docs give it (google-calendar.md, "What Writes Send"). */
+    private const REPLACED_LEAD = 'This change had stopped part way, and Google Calendar no longer held the event as it was left.';
     /** The race run during the step being checked, as $raced (its title there is x-readback's to judge), or null. */
     private ?array $racedNow = null;
     /** What a p-overlap step wrote here while the poll fetched: [row key, tag], or null. */
@@ -1692,15 +1694,20 @@ final class Interleave
             $this->ran('x-pending', 'poll while half done');
             $this->expect('x-pending', $was == $now, "step {$this->step} ($do): a poll while a series has changes not yet at Google left that series' rows as they were", $context + ['diff' => self::diff($was, $now)]);
         }
-        // x-readback: a change made at Google between the app's master write and its read-back is kept or named.
+        // x-readback: while a change is being sent the last write wins. A day renamed at Google between the app's series
+        // write and its read back is the change's again, or the change says what Google holds there; the series renamed
+        // there after that write keeps its title (the series is written once), and the change says so.
         $this->racedNow = $this->raced;
         if ($this->raced !== null) {
             [$rg, $rkey, $rtitle] = $this->raced;
             $this->raced = null;
             $rec = $rkey === null ? [$s1['g']['digest'][$rg]['title'] ?? null] : ($s1['g']['digest'][$rg]['records'][$rkey] ?? null);
             $this->ran('x-readback', $rkey === null ? 'race on the series' : 'race');
-            $this->expect('x-readback', ($rec !== null && $rec[0] === $rtitle) || $s1['differs'] > $s0['differs'] || !$out['ok'],
-                "step {$this->step} ($do): " . ($rkey === null ? 'a series' : 'a day') . " renamed at Google between the write's master write and its read-back keeps its title there, or the change names it", $context + ['key' => $rkey, 'record' => $rec]);
+            $said = $s1['differs'] > $s0['differs'];
+            $this->expect('x-readback', !$out['ok'] || ($rkey === null ? ($rec[0] ?? null) === $rtitle && $said : $rec === null || $rec[0] !== $rtitle || $said),
+                "step {$this->step} ($do): " . ($rkey === null
+                    ? "a series renamed at Google right after the write's master write keeps its title there, and the change says so"
+                    : "a day renamed at Google between the write's master write and its read-back is the change's again, or the change says what Google holds there"), $context + ['key' => $rkey, 'record' => $rec]);
         }
 
         // x-sync-silent: a poll sends Google nothing.
@@ -2033,7 +2040,10 @@ final class Interleave
                 $this->expect('x-finish', $master['tags'] === $want, "step {$this->step}: after Finish the series has the change's tags (its part here, review R3)", $context + ['want' => $want, 'here' => $master['tags']]);
             }
         }
-        // A4: a change at Google since, to a day or field the change didn't touch, is kept. What Finish keeps is the
+        // A4: a change at Google since, to a day the change didn't touch, is kept; or, where Finish can't tell what the
+        // change's own write to the series did to the days from a change made there since, the day is the change's again
+        // and Finish's answer says what it replaced, under its lead sentence, with what Google held (decisions.md, "Finish
+        // sets the plan's days where it can't tell its own change from another"). What Finish keeps is the
         // stand-in's state when Finish runs (series-model.md, Recovery: "Finish runs the same targets from Google's state"),
         // so a later remote step on the same day supersedes an earlier one: a day edited then cancelled at Google is
         // skipped after Finish, one cancelled then edited holds what the stand-in holds. Each such day is judged against
@@ -2060,8 +2070,11 @@ final class Interleave
                 $kept = $kept && ($rec1[$i] ?? null) === ($rec0[$i] ?? null);
             }
             $this->ran('x-finish', 'A4 ' . ($skip0 ? 'a day cancelled at Google' : ($rec0 === null ? 'a day put back at Google' : 'a day edited at Google')));
-            $this->expect('x-finish', $kept,
-                "step {$this->step}: Finish keeps a change made at Google since to a day the change didn't touch (A4)", $context + ['key' => $key, 'before' => ['record' => $rec0, 'skipped' => $skip0], 'after' => ['record' => $rec1, 'skipped' => $skip1]]);
+            $text = implode(' ', array_map('strval', $differences));
+            $held = $skip0 ? 'was deleted in Google Calendar; Finish put it back' : ($rec0 === null ? '' : (string) $rec0[isset($fields['title']) ? 0 : 5]);
+            $said = in_array(self::REPLACED_LEAD, $differences, true) && ($held === '' || str_contains($text, $held));
+            $this->expect('x-finish', $kept || $said,
+                "step {$this->step}: Finish keeps a change made at Google since to a day the change didn't touch, or says what it replaced there, with what Google held (A4)", $context + ['key' => $key, 'before' => ['record' => $rec0, 'skipped' => $skip0], 'after' => ['record' => $rec1, 'skipped' => $skip1]]);
         }
         $this->settled($p);
     }

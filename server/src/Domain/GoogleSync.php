@@ -313,7 +313,7 @@ final class GoogleSync
     /**
      * @return array{0:list<array>,1:string,2:?string} parsed changes, the next sync token, and the level the answers gave
      * @throws GoneException when Google says the sync token is stale (410)
-     * @throws NotShownException when Google no longer shows the calendar (a list answered 404, or 410 with no token)
+     * @throws NotShownException when Google no longer shows the calendar (a list answered 404: unshared or deleted alike)
      */
     private function listEvents(
         array $account,
@@ -381,7 +381,7 @@ final class GoogleSync
                 throw new GoneException();
             }
             // Every list answer states the account's level (GoogleWriter::roleOfList); the last one is kept.
-            $said = GoogleWriter::roleOfList((int) $r['status'], (string) $r['body'], $syncToken !== null);
+            $said = GoogleWriter::roleOfList((int) $r['status'], (string) $r['body']);
             if ($said === 'none') {
                 throw new NotShownException();
             }

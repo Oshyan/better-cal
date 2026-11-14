@@ -252,6 +252,9 @@ final class FakeGoogle
         $rest = str_starts_with($path, $prefix) ? substr($path, strlen($prefix)) : null;
         $notFound = self::googleError(404, 'notFound', 'Not Found');
         $forbidden = self::googleError(403, 'forbidden', 'Forbidden');
+        // 'none' answers a calendar no longer shared and one deleted alike: the second round's stage deleted (2026-11-14)
+        // answered every list (the delta from an earlier token too: 404, not 410), the calendar, every read, an insert and
+        // every PATCH 404, but the account's own single event's PATCH with If-Match 412, as at not shared.
         if ($this->role === 'none') {
             // UNPROVEN, and contradicted: the first round read the account's own single event 200 and its PATCH 412 (rows
             // 6a, 6d); the second (2026-11-14) read that event 404 with its PATCH still 412, and the series 200. Kept as the

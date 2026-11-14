@@ -132,9 +132,11 @@ final class GoogleWriter
      * it says neither (busy, a failure, no role, a role Google doesn't
      * document). Pure.
      */
-    public static function roleOfList(int $status, string $body, bool $syncToken = false): ?string
+    public static function roleOfList(int $status, string $body): ?string
     {
-        if ($status === 404 || ($status === 410 && !$syncToken)) {
+        // A 410 to a list sent with no sync token has no live row (a deleted calendar answered 404 like an unshared
+        // one, 2026-11-14, stage deleted): nothing depends on it; it says no level.
+        if ($status === 404) {
             return 'none';
         }
         if ($status < 200 || $status >= 300) {
@@ -981,6 +983,10 @@ final class GoogleWriter
             }
             if ($role === 'none' && isset($calendar['id'])) {
                 throw $this->refused($calendar, 'none');
+            }
+            // Any other refusal of a list says nothing of an event: never read as one deleted (gone).
+            if ($role === null && (int) $r['status'] >= 400 && self::refusal((int) $r['status'], (string) $r['body']) === 'deleted') {
+                throw new HttpError('google_write_failed', 'Google gave an answer Better-Cal does not read for this calendar\'s list; nothing was changed. Try again in a minute.', 502, ['googleStatus' => 0]);
             }
         }
         // A write refused for what may be the account's access (a 403 not about a rate, a 404, a 410, a

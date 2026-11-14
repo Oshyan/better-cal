@@ -227,14 +227,15 @@ return static function (Db $db): void {
             [$error?->errorCode, $error?->status, str_starts_with((string) $error?->getMessage(), 'Google refused this change; nothing was changed.'), $s->t->slept]);
     });
 
-    scenario('google refusals: the read before a write is a list: a 404 or 410 on it is the calendar no longer shown, never "deleted at Google", and nothing is sent; a busy read is retried and the write lands', function () use ($setup, $busy, $db): void {
-        // The write's first read is a list by the event's iCalUID; a list answered 404 (or 410, sent with no sync
-        // token) is the calendar no longer shown to this account (the access probe, stage unshared, rows 3 to 4d).
-        foreach ([404, 410] as $status) {
+    scenario('google refusals: the read before a write is a list: a 404 on it is the calendar no longer shown, a 410 (never seen there) a failure, never "deleted at Google", and nothing is sent; a busy read is retried and the write lands', function () use ($setup, $busy, $db): void {
+        // The write's first read is a list by the event's iCalUID; a list answered 404 is the calendar no longer shown
+        // to this account, unshared or deleted alike (the access probe, stages unshared and deleted). A 410 to a list
+        // sent with no token was never seen, so nothing reads it as anything: a failure.
+        foreach ([404 => 'google_not_shown', 410 => 'google_write_failed'] as $status => $expected) {
             $s = $setup();
             $s->t->script = [['GET', $status, json_encode(['error' => ['code' => $status, 'message' => 'Gone', 'errors' => [['domain' => 'global', 'reason' => 'deleted']]]])]];
             $code = refusal(fn() => $s->events->patch($s->u, $s->pizzaId, ['title' => 'Pizza night, later']));
-            checkEq("a $status on the read: google_not_shown, no PATCH sent, no pause, the title as it was", ['google_not_shown', [], [], 'Pizza night'],
+            checkEq("a $status on the read: $expected, no PATCH sent, no pause, the title as it was", [$expected, [], [], 'Pizza night'],
                 [$code, array_values(array_filter($s->t->sent, static fn(string $m): bool => $m !== 'GET')), $s->t->slept, $db->scalar('SELECT title FROM events WHERE id = ?', [$s->pizzaId])]);
         }
         $s = $setup();

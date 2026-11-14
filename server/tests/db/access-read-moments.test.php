@@ -122,6 +122,55 @@ return static function (Db $db): void {
         });
     }
 
+    // Rule B of the read, the record a stopped change keeps: access drops to busy times only as the change's first write
+    // goes out and its answer never comes (so Put back must judge by what the change recorded Google would hold). The
+    // read the stop makes then is at busy times only and is never kept, neither over the rows nor as that record; given
+    // back, Put back reads Google as it is (the write never landed) and goes through, the series as it was.
+    scenario('access read, access drops to busy times only as a change\'s write goes unanswered: nothing read at that level is kept, and given back, Put back goes through', function () use ($db, $make, $weekly): void {
+        $s = $make($weekly);
+        $s->hook = static function (int $n, string $method, string $url) use ($s): void {
+            if ($method === 'PATCH') {
+                $s->hook = null;
+                $s->fake->role = 'freeBusyReader';
+                throw new \RuntimeException('HTTP error for the stand-in: the connection dropped as the write went out');
+            }
+        };
+        $e = PA::caught(function () use ($s): void {
+            $s->events->patch($s->u, $s->id, ['scope' => 'all', 'title' => 'Sample series, renamed'] + []);
+            $s->events->throwDeferred();
+        });
+        $half = BetterCal\Domain\GoogleSeries::halfDoneOf($db, $s->u);
+        check('the change stopped half done', $e !== null && count($half) === 1, PA::code($e) . ' ' . count($half));
+        // What the change recorded Google would hold is what it records when its stop can read nothing at all (the
+        // network down from the write on): a read at busy times only adds nothing to it.
+        $steps = static fn(object $x): array => array_map(static fn(array $st): array => array_diff_key($st, ['at' => 1]),
+            json_decode((string) BetterCal\Domain\RequestAuthority::asServer(fn() => $db->journal()->scalar('SELECT steps_json FROM google_pending WHERE user_id = ? ORDER BY id DESC LIMIT 1', [$x->u])), true) ?: []);
+        $down = $make($weekly);
+        $down->hook = (static function () use ($down): \Closure {
+            $off = false;
+            return static function (int $n, string $method, string $url) use (&$off): void {
+                if ($off || $method === 'PATCH') {
+                    $off = true;
+                    throw new \RuntimeException('HTTP error for the stand-in: network down');
+                }
+            };
+        })();
+        PA::caught(function () use ($down): void {
+            $down->events->patch($down->u, $down->id, ['scope' => 'all', 'title' => 'Sample series, renamed']);
+            $down->events->throwDeferred();
+        });
+        checkEq('the stop\'s record is the one a stop that read nothing keeps', $steps($down), $steps($s));
+        checkEq('nothing read at busy times only was stored over the series', 'Sample series', $db->scalar('SELECT title FROM events WHERE id = ?', [$s->id]));
+        $s->fake->role = 'writer';
+        $r = PA::caught(function () use ($s, $half): void {
+            $s->events->googlePutBack($s->u, (int) ($half[0]['id'] ?? 0));
+            $s->events->throwDeferred();
+        });
+        checkEq('given back: Put back goes through, the series here and at Google as it was', [null, 'Sample series', 'Sample series', 0],
+            [$r === null ? null : PA::code($r) . ': ' . $r->getMessage(), $db->scalar('SELECT title FROM events WHERE id = ?', [$s->id]),
+                $s->fake->events[(string) $db->scalar('SELECT google_event_id FROM events WHERE id = ?', [$s->id])]['summary'] ?? null, count(BetterCal\Domain\GoogleSeries::halfDoneOf($db, $s->u))]);
+    });
+
     // ---- After a change's write: its trailing list learns the level ----------------------------------------------------
 
     scenario('access read, access lowered right after a day\'s edit was taken: the edit stands here and at Google, and the level its trailing list gave is stored and said once', function () use ($db, $make, $weekly): void {

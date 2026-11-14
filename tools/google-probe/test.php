@@ -550,6 +550,14 @@ check('stand-in, round 2, rows 4 and U2: a busy-only list carries only times and
     array_diff($fields, ['end', 'etag', 'htmlLink', 'iCalUID', 'id', 'kind', 'start', 'status', 'updated', 'visibility']) === [] && count($bs['items'] ?? []) === 4
         && !isset($bw['nextSyncToken']) && array_filter($bw['items'] ?? [], static fn(array $e): bool => isset($e['recurrence'])) === [], json_encode([$fields, count($bs['items'] ?? []), isset($bw['nextSyncToken'])]));
 
+// Stage deleted (round 2, 2026-11-14): a calendar deleted by its owner answers as one no longer shared, the delta from an
+// earlier token included: 404, not 410.
+$fake = $access();
+[, $whole] = $listOf($fake, ['showDeleted' => 'true', 'singleEvents' => 'false']);
+$fake->role = 'none';
+[$dst] = $listOf($fake, ['syncToken' => (string) $whole['nextSyncToken']]);
+check('stand-in, stage deleted: the delta from an earlier token answers 404, as every list does', $dst === 404, (string) $dst);
+
 // Access given back (stage restored, second run): everything answers as a writer again.
 $fake->role = 'writer';
 [$rs] = $call($fake, 'PATCH', 'series0001', ['summary' => 'Sample series (restored)']);

@@ -363,8 +363,12 @@ return static function (Db $db): void {
             $t->s->poll();
             $t->s->fake->role = 'reader';
             $account = (int) $db->scalar('SELECT google_account_id FROM calendars WHERE id = ?', [$t->s->calendarId]);
+            // The reset lands as the fetch's last page is answered (after the 410 the change of level gave, and the whole read).
             $sync = $syncWith($t, static function (array $answer) use ($db, $account): array {
-                $db->run('UPDATE google_accounts SET reauth_required_at = ? WHERE id = ?', [\BetterCal\Support\Time::nowDb(), $account]);
+                $page = json_decode((string) $answer['body'], true);
+                if ((int) $answer['status'] === 200 && !isset($page['nextPageToken'])) {
+                    $db->run('UPDATE google_accounts SET reauth_required_at = ? WHERE id = ?', [\BetterCal\Support\Time::nowDb(), $account]);
+                }
                 return $answer;
             });
             try {
@@ -377,7 +381,7 @@ return static function (Db $db): void {
         }
     });
 
-    scenario('google access, a list answered 410 with no sync token sent is the calendar no longer shown (the model, section 1)', function () use ($db, $single, $stored, $items, $syncWith): void {
+    scenario('google access, a list answered 410 with no sync token sent has no live row, so nothing depends on it: no level stored, no item, the poll fails', function () use ($db, $single, $stored, $items, $syncWith): void {
         $t = H::make($db, $single);
         try {
             $db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$t->s->calendarId]);
@@ -389,7 +393,7 @@ return static function (Db $db): void {
             } catch (\RuntimeException $e) {
                 $error = $e->getMessage();
             }
-            checkEq('stored none, the not-shown item, and the poll says so', ['none', ['google_not_shown'], true], [$stored($t), $items($t), str_contains((string) $error, 'show')]);
+            checkEq('the level as stored before, no item, and the poll fails', ['owner', [], true], [$stored($t), $items($t), $error !== null]);
         } finally {
             H::done($t);
         }
@@ -448,6 +452,24 @@ return static function (Db $db): void {
             $id = (int) $db->scalar("SELECT id FROM review_items WHERE user_id = ? AND status = 'open' AND kind = 'google_not_shown'", [$t->u]);
             (new ReviewQueue($db, $t->e))->dismissNotice($t->u, $id);
             checkEq('open: alerts as before; dismissed: acknowledged, no alert', [false, true], [$before, $health->acknowledged($row)]);
+        } finally {
+            H::done($t);
+        }
+    });
+
+    // Rule D(1) of the read: whether anything was changed is known from what the change sent. A write Google refuses
+    // (403, the small list saying writer: the seconds after access is given back, round 2) after the change's first write
+    // was taken: the sentence and Review say part of it reached Google, never that nothing was changed.
+    scenario('google access, a write refused part way through a change to all events: neither the sentence nor Review says nothing was changed', function () use ($db, $weekly): void {
+        $t = H::make($db, $weekly);
+        try {
+            H::this($t, '2027-03-08T10:00:00-08:00', ['title' => 'Sample series (own)']);
+            $t->s->knobs->beforeAt = $t->s->knobs->writes + 2; // the change's second write, after its first was taken
+            [, $error] = H::tryChange($t, ['scope' => 'all', 'instanceStart' => '2027-03-01T10:00:00-08:00', 'start' => '2027-03-01T11:00:00-08:00', 'end' => '2027-03-01T12:00:00-08:00']);
+            $half = (new ReviewQueue($db, $t->e))->googleHalfDone($t->u);
+            checkEq('part of it reached Google, said so; "nothing was changed" said nowhere', [true, false, 1, false],
+                [str_contains((string) $error, 'Part of this change reached Google'), str_contains((string) $error, 'nothing was changed'),
+                    count($half), str_contains((string) ($half[0]['error'] ?? ''), 'nothing was changed')]);
         } finally {
             H::done($t);
         }

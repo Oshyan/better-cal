@@ -324,6 +324,21 @@ final class Events
         return $role;
     }
 
+    /**
+     * The keys of an edit that change what Google holds, as against what is
+     * held here alone (OwnFields::feedEditKeys: tags, people, reminders, an
+     * answer or attendance mark, ...) and the request's own words (scope,
+     * the day, a plan, a preview). The one reading of "this change can be
+     * refused for access": a commit asks Google first exactly when it has
+     * such keys, and its preview exactly when the commit would (SeriesPlans). Pure.
+     *
+     * @return list<string>
+     */
+    private static function googleKeys(array $in): array
+    {
+        return array_values(array_diff(array_keys($in), ['scope', 'instanceStart', 'plan', 'preview', ...\BetterCal\Domain\Series\OwnFields::feedEditKeys()]));
+    }
+
     /** Levels a recheck found writer in this request, by calendar, until the store after its transaction catches up. @var array<int,string> */
     private array $rechecked = [];
 
@@ -1750,7 +1765,7 @@ final class Events
         // Reminders are user-local metadata (like tags), so feed events accept
         // them even though their feed-derived content is read-only.
         // What a feed's day may be given is what is held here alone (OwnFields::feedEditKeys, read from the one list).
-        $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', ...\BetterCal\Domain\Series\OwnFields::feedEditKeys()]);
+        $editKeys = self::googleKeys($in);
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id'], $editKeys !== [], $authority) : null;
         if ($event['source'] === 'feed' && $editKeys !== [] && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags, reminders and a place\'s coordinates');

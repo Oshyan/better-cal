@@ -19,7 +19,7 @@ A live probe of real Google (2026-11-13, a calendar shared from a second account
 - A single event's GET carries no level.
 
 **Who reads it, and where it is stored:**
-- **The poll** stores the level of its own list answers, in its own transaction, where it stores a role today (`GoogleSync.php:178`). Today's read of the whole calendar list (`GoogleSync.php:71-79`) goes.
+- **The poll** stores the level of its own list answers, in its own transaction, after the account's check and only while nothing moved since its fetch began (§1, ordering). The read of the whole calendar list is gone. At busy times only it reads one page and applies nothing (§8, round 2).
 - **Every change** reads it from its own first request, a list (§2).
 - **A list answered 404** means `none`: no longer visible. (Amended 2026-11-14: a calendar deleted by its owner answers every list 404, its delta too, exactly as one no longer shared (stage deleted), so the two can't be told apart and "no longer shown" is the true sentence for both; a 410 to a list sent with no sync token has never been seen, so nothing depends on it: such an answer stores no level and is a failure.)
 - **A listing below reader is not applied** (the owner, 2026-11-13, after the first build found a poll at busy times only erasing titles here). What is compared: the level a list answer states, against reader. At `reader`, `writer` and `owner` a listing shows what Google holds, and is applied as before. At `freeBusyReader` it shows only times: Google leaves out at least the title of a read (access probe, stage freebusy, rows 6a, 6c, 6g) and the description and private properties of a list's items (row 4), so applying it would replace what Better-Cal holds with blanks. What is stored: the level (as for any list answer), and the poll's new sync position. What is not applied: anything the listing says of events; every row here stays exactly as it was, held and Google fields alike, until a listing at reader or above comes. When access returns, any change of access has made the stored sync token invalid (row 4d, stage restored: 410 `fullSyncRequired`), so the next poll reads the calendar whole and catches up. One rule, at each place a list answer is applied to stored events (the poll, and a change's read-backs stored after its write): `GoogleWriter::shows`. A list answered 404 (`none`) has nothing to apply, as before.
@@ -41,7 +41,8 @@ What each kind of write sends first today, and what it becomes:
 | An undo or redo of one event or one day | `GoogleUndo` GETs (`GoogleUndo.php:491`, `:497`, `:541`, `:622`), then `patch` or `delete` → `condition` | no | the first request becomes the iCalUID list of the event or its series. Instance-id GETs follow it | 0 |
 | An undo of a change to a whole series | `apply` (`GoogleUndo.php:724`) → `condition` | yes | unchanged | 0 |
 | Finish and Put back | `GoogleSeries::refresh` reads every series by list (`:3975`) | yes | unchanged | 0 |
-| Any change or undo on a calendar stored below writer | none: refused here before Google (`Events.php:1315`, `:1699`, `:2210`; `GoogleUndo.php:451`, `:693`) | not a request | one small list first (`maxResults=1`). If it says writer, the change goes on as normal | 1, only on such a calendar |
+| Any change, undo, Finish or Put back on a calendar stored below writer, and the preview of a change that would be refused for access | none: refused here before Google | not a request | one small list first (`maxResults=1`). If it says writer, the change goes on as normal (§8, rule A; previews: rule 1 of §9) | 1, only on such a calendar |
+| A write Google refuses 403 (not a rate limit), 404, 410 or 412 | read as refused, deleted or changed at Google | not a request | one small list first; below writer refused as read-only; the list unreadable: refused as unconfirmed, nothing changed (§8 rule D, §9 rule 2) | 1, only on such a refusal |
 
 **What a list by iCalUID changes against a GET by id:** a list item is the same event resource a GET returns. Proven on real Google (stage listread, `access-61fb838522.md`):
 - A list by iCalUID returns the same resource as a GET by id, field by field, with the same etag, for a timed single event (L1), an all-day one (L2) and one imported with our own iCalUID (L3), with showDeleted true and false alike. The list's etag after a PATCH equals the PATCH answer's, and a PATCH with If-Match on the list's etag is taken (L6).
@@ -78,7 +79,7 @@ The owner's wording is the base. `'Team'` stands for the calendar's name.
 - Activity, once: "Your permissions for 'Team' at Google are now read-only. If you have access, restore full editing there. Until then 'Team' works read-only here: changes, and undoing past changes, are unavailable."
 - A Review item, the same sentence. There is one per calendar while its level stays below writer; its one action is Dismiss, and it closes by itself when the level returns.
 - The calendar shows as read-only, as any calendar that can't be edited does: `editable` comes from `GoogleWriter::writable` (`Calendars.php:692`, `GoogleWriter.php:68`).
-- A change attempted here asks Google first (§2). While Google still says read-only, the change is refused and nothing is sent: "'Team' is read-only: your permissions for it at Google no longer allow changes. If you have access, restore full editing there."
+- A change attempted here asks Google first (§2). While Google still says read-only, the change is refused and nothing is sent: "'Team' is read-only: your permissions for it at Google no longer allow changes. If you have access, restore full editing there." That sentence is for a calendar stored editable until that refusal; one already stored read-only says what it is: "'Team' is view only at Google, so it can't be changed here." (§8, rule D).
 - An undo is handled the same way, with: "This can't be undone while 'Team' is read-only: your permissions for it at Google no longer allow changes. If you have access, restore full editing there."
 - A change half done at that moment stays in Review with no action, and its event takes no other change (`GoogleSeries::unrecoverable`, `GoogleSeries.php:3107`; actions at `ReviewController.php:232`): "This change stopped part way, and your permissions for 'Team' at Google are now read-only, so it can't be finished or put back. It stays here, and the event takes no other change, until full editing is restored at Google or you remove the calendar."
 
@@ -194,7 +195,7 @@ Four rules, each applied wherever its case arises, from the read's findings (its
 
 **B. A read made below reader is never kept**, whichever read it is: the poll's listing, a change's read-backs stored over the rows (`GoogleSeries::store`) and the read a stopped change records as what Google held for Put back to compare with (`$settled` in `run`), each asking `GoogleWriter::shows` of the level its list gave.
 
-**C. The store says every tier it learns, and unknown is not view only.** A level learned when none was stored (a calendar added before levels were kept, or paused by the compromise reset) is a move like any other: its Activity line and its Review item, or the item closed, in words that say nothing about before ("'Team' is view only at Google, so it can't be changed here."; "Google doesn't show 'Team' to this account ..."; "Your permissions for 'Team' at Google allow changes."). The settings line for a calendar whose level is not known says so and that it is read at the next check.
+**C. The store says every tier it learns, and unknown is not view only.** (Narrowed by §9.) A level learned when none was stored (a calendar added before levels were kept, or paused by the compromise reset) closes any stale item and writes its Activity line, in words that say nothing about before ("'Team' is view only at Google, so it can't be changed here."; "Google doesn't show 'Team' to this account ..."; "Your permissions for 'Team' at Google allow changes."). The settings line for a calendar whose level is not known says so and that it is read at the next check.
 
 **D. A sentence is derived from the state, never from the path.**
 - Whether anything was changed is known from what the change sent: each refusal carries its reason without "nothing was changed" (`said`), and a change that had sent part of itself says that reason, then that part of it reached Google; Google's own reason text rides along on a permission refusal.
@@ -212,6 +213,29 @@ Four rules, each applied wherever its case arises, from the read's findings (its
 **Known, not built: mixed answers in the seconds after access is given back.** Round 2, stage restored: a PATCH was taken 1.1 seconds in, but seconds later an insert answered 403 requiredAccessLevel and one list by iCalUID answered 404 while five others answered 200. For a 403 on an insert whose small list then says writer, the sentence stays right: "Google refused this change; nothing was changed. If you just got edit access back, try again in a moment." For two list answers in one request, the store takes the last: a 404 that comes after a writer answer stores not shown, says so once, and refuses the change as not shown; the next poll or attempt (seconds later) stores writer again and says so. Deciding between the answers (the highest level of the request, say) would be new mechanism for a window seconds wide; not built.
 
 **Known, not built: a change's older read stored after a newer poll's (the read's N5).** A change's level is stored when its transaction ends; a poll that fetched later but committed first is overwritten by the change's older word. Two connections, seconds wide, and the next poll or attempt corrects it. Not worth a mechanism.
+
+## 9. Amended after the second independent read (2026-11-14), the branch's last fix round
+
+**1. A preview asks Google exactly where its commit would refuse for access, and nowhere else** (replaces "every preview asks", which refused marks from a day on on any view-only calendar). One reading of "can be refused for access": an edit with a key Google holds (`Events::googleKeys`: not tags, people, reminders, an answer or attendance mark, nor the request's own scope, day, plan or preview). Pairs:
+
+| Preview | Its commit | Asks / can refuse |
+|---|---|---|
+| `previewPatch` (all events, this and following) | `patchLocked` | both when `googleKeys` is not empty; neither otherwise |
+| `previewDelete` (this and following) | `deleteEventLocked` | both |
+| `previewAttendance` (an answer or mark from a day on) | the attendance commit | neither: held here alone |
+| a split's preview of an edit (`previewSplit`, edit) | `patchLocked` | both when `googleKeys` is not empty |
+
+**2. A refusal built after the small list is a refusal.** Google answered the write with a 4xx and took nothing, so the step is not journaled as sent, the change is not listed half done, and the sentence does not say part of it reached Google (`GoogleSeries::refused` counts the access rule's refusals and the unconfirmed one). When the small list itself cannot be read, the refused write is read as nothing: refused as unconfirmed with the words `admit` uses ("Google did not say what this account may do with this calendar, so nothing was changed. Try again in a minute."), never a DELETE's 404 as "already removed".
+
+**3. A dismiss acknowledges one state and holds nothing else.** Health mail is held only for the failure the dismissed notice reports, while that state holds: a poll at not shown or busy times only records its own sentence, a calendar listing nothing its own, a paused feed its reason; any other failure of the calendar, and the calendar in another state, alert as before. View only: its polls succeed, so its notice holds nothing.
+
+**4. What a dismiss hides stays reachable while its state holds.** Review's history (status all) lists every dismissed notice whose state still holds, with "Show again", one rule for every notice kind, `subscription` and `google_half` included (a half-done delete of a whole series leaves no event to carry the line).
+
+**C, narrowed.** A level learned when none was stored closes any stale item and writes the Activity line; it opens a Review item only below what the calendar was last known to allow. Nothing about before survives the compromise reset (it clears the level), so after a reset no item opens; the Activity line and the settings line carry it.
+
+**Wording.** Check again says "still" only when the level did not move ("Google now shows this account only busy times, so its events here stay as they were and don't update."); the busy-only settings line has no "now"; the event's line says "stopped part way" once when the item's own sentence is joined to it.
+
+**Known, open doubt (N2).** In the seconds after access is given back, a change whose write Google took and whose last list answers 404 stores "not shown" until the next poll or Check again (§8). The one live 404 of this kind was a list by one series' iCalUID (round 2, stage restored); it could not be run again, the scratch calendar no longer exists. The live case that would settle it: give access back, then within ten seconds list one series by its iCalUID and the calendar plainly, several times each, and see whether the 404 is per series or per calendar.
 
 ## 7. Dependence on the fix branch
 

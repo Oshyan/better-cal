@@ -202,6 +202,17 @@ final class GoogleWriter
         return self::readOnly($calendar, $role, $undo);
     }
 
+    /**
+     * The refusal when Google's word on the level could not be read: before a
+     * change's first write (admit), or after a write Google refused (call).
+     * Nothing was changed; `refused` says Google took nothing, so a change
+     * under way does not count it as a step sent (GoogleSeries::refused).
+     */
+    public static function unconfirmed(): HttpError
+    {
+        return new HttpError('google_write_failed', 'Google did not say what this account may do with this calendar, so nothing was changed. Try again in a minute.', 502, ['refused' => true]);
+    }
+
     /** Whether a refusal is the access rule's (readOnly). Pure. */
     public static function isReadOnly(HttpError $e): bool
     {
@@ -252,7 +263,7 @@ final class GoogleWriter
         }
         $role = $this->listedSince($calendar, $since) ?? $this->accessNow($calendar, $beforeSend);
         if ($role === null) {
-            throw new HttpError('google_write_failed', 'Google did not say what this account may do with this calendar, so nothing was sent. Try again in a minute.', 502);
+            throw self::unconfirmed();
         }
         if (!self::writes($role)) {
             throw $this->refused($calendar, $role);
@@ -376,6 +387,13 @@ final class GoogleWriter
             'edit' => $was === null ? "Your permissions for $name at Google allow changes. Changes and undo work here." : "Your permissions for $name at Google allow changes now. Changes and undo work here.",
             default => $was !== null && self::tier($was) === 'none' ? "Google shows $name to this account again. " . $words : $words,
         });
+        // A level learned when none was stored closes any stale item, but opens one only below what the calendar was
+        // last known to allow; nothing is known after the compromise reset (it clears the level), so then no item opens
+        // and the Activity line and the settings line carry it.
+        if ($was === null) {
+            ReviewQueue::closeGoogleAccess($db, (int) $now['user_id'], (int) $now['id']);
+            return;
+        }
         ReviewQueue::holdGoogleAccess($db, (int) $now['user_id'], ['google_access_role' => $role] + $now, self::tier($role), $words);
     }
 
@@ -1000,7 +1018,11 @@ final class GoogleWriter
         if ($method !== 'GET' && $path !== '/import' && isset($calendar['id'])
             && ($r['status'] === 412 || in_array($refusedAs, ['permission', 'deleted'], true))) {
             $role = $this->accessNow($calendar, $beforeSend);
-            if ($role !== null && !self::writes($role)) {
+            if ($role === null) {
+                // The level could not be read: the refused write is read as nothing (never a 404 as "already removed").
+                throw self::unconfirmed();
+            }
+            if (!self::writes($role)) {
                 throw $this->refused($calendar, $role);
             }
         }

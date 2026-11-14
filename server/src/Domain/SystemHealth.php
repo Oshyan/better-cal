@@ -247,14 +247,40 @@ final class SystemHealth
      * the notice stays dismissed; a new state is a new notice, open, and
      * alerts as before.
      */
+    /** @return list<string> the failures a poll at $role records, whatever level was stored before it */
+    private static function accessFailures(array $calendar, string $role): array
+    {
+        return array_values(array_unique(array_map(static fn(?string $was): string => GoogleWriter::accessWords($calendar, $role, $was), [...GoogleWriter::ROLES, null])));
+    }
+
     public function acknowledged(array $row): bool
     {
         if (preg_match('/^feed:(\d+)$/', (string) $row['subject'], $m) !== 1 || empty($row['user_id'])) {
             return false;
         }
-        $id = (int) $m[1];
-        return $this->db->scalar("SELECT id FROM review_items WHERE user_id = ? AND status = 'dismissed' AND source_key IN (?, ?, ?) LIMIT 1",
-            [(int) $row['user_id'], ReviewQueue::accessKey($id), 'google-empty:' . $id, 'subscription:' . $id]) !== null;
+        $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $m[1], (int) $row['user_id']]);
+        if ($calendar === null) {
+            return false;
+        }
+        // Held only for the failure the dismissed notice reports, while that same state holds: the failure a poll in
+        // that state records (its words, made by the same function the poll uses), never any other failure.
+        foreach ($this->db->all("SELECT kind FROM review_items WHERE user_id = ? AND status = 'dismissed' AND source_key IN (?, ?, ?)",
+            [(int) $row['user_id'], ReviewQueue::accessKey((int) $calendar['id']), 'google-empty:' . (int) $calendar['id'], 'subscription:' . (int) $calendar['id']]) as $n) {
+            $role = (string) ($calendar['google_access_role'] ?? '');
+            $failure = match ((string) $n['kind']) {
+                // A poll in that state says it from the level stored before it (the first poll after a move, or a later one).
+                ReviewQueue::KIND_GOOGLE_NOT_SHOWN => $role === 'none' ? self::accessFailures($calendar, 'none') : [],
+                // View only: polls succeed, nothing to hold. Busy times only: its poll's own failure.
+                ReviewQueue::KIND_GOOGLE_READ_ONLY => $role === 'freeBusyReader' ? self::accessFailures($calendar, 'freeBusyReader') : [],
+                ReviewQueue::KIND_GOOGLE_EMPTY => [GoogleSync::EMPTY_MESSAGE],
+                'subscription' => (SubscriptionAuthority::describe($this->db, $calendar)['status'] ?? null) === 'paused' ? [(string) SubscriptionAuthority::describe($this->db, $calendar)['reason']] : [],
+                default => [],
+            };
+            if (in_array((string) ($row['last_error'] ?? ''), array_map(static fn(string $f): string => mb_substr($f, 0, 2000), $failure), true)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -106,6 +106,13 @@ function ReviewCard({ item, onChanged }) {
       if (!res) return;
       if (res.settings) adoptSettings(res.settings);
       const accepted = action.name !== 'dismiss';
+      if (action.name === 'reopen') {
+        // Show again: a dismissed notice back among the open ones; nothing else changes.
+        toast('Shown again in Review.');
+        loadReviewCount();
+        invalidateRecords();
+        return;
+      }
       if (item.kind === 'rsvp' && action.name === 'dismiss') {
         toast('Dismissed without answering. You can still answer from the event.');
         loadReviewCount();
@@ -135,7 +142,7 @@ function ReviewCard({ item, onChanged }) {
         toast('Notice dismissed. Nothing was removed.');
       } else if ((item.kind === 'google_read_only' || item.kind === 'google_not_shown') && action.name === 'check') {
         // Check again: the level Google gave just now, said plainly; the calendars and Review follow it.
-        toast(accessCheckWords(res && res.googleAccessRole));
+        toast(accessCheckWords(res && res.googleAccessRole, d && d.access));
         await loadCalendars().catch(() => {});
         loadReviewCount();
       } else if (item.kind === 'google_read_only' || item.kind === 'google_not_shown') {

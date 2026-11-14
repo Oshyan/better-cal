@@ -347,6 +347,8 @@ for (const file of files) {
     const stuck = words({ stoppedAt: '2027-03-12T10:00:00Z', unrecoverable: 'Sample reason the item gives.', open: true }, day);
     check(stuck.endsWith('Sample reason the item gives.'), "when neither Finish nor Put back can run, the line ends with the item's own sentence");
     check(words(null, day) === null, 'no half-done change, no line');
+    const joined = words({ stoppedAt: '2027-03-12T10:00:00Z', unrecoverable: "This change stopped part way, and Google no longer shows 'Sample' to this account, so it can't be finished or put back.", open: true }, day);
+    check(joined.split('stopped part way').length === 2 && joined.includes('on Thu 12 Mar, and Google no longer shows'), 'the line says "stopped part way" once when the item\'s sentence is joined to it: ' + joined);
     check(!/pending|master|sync/i.test(ok), 'the half-done line has no jargon');
   }
   check(sheet.includes('${occ.halfDone && html`<${HalfDoneLine} half=${occ.halfDone} />`}'),
@@ -374,13 +376,14 @@ for (const file of files) {
     check(line(null).includes("hasn't said yet") && line(null).includes('next check'), 'a level not known yet is said as that, not as view only');
   }
   // Check again: the person can always ask Google (rule A of the access read).
-  const checkSrc = (settingsSrc.match(/export function accessCheckWords\(role\) \{[\s\S]*?\n\}/) || [''])[0];
+  const checkSrc = (settingsSrc.match(/export function accessCheckWords\(role, was\) \{[\s\S]*?\n\}/) || [''])[0];
   const said = checkSrc ? vm.runInNewContext(checkSrc.replace('export function', 'function') + '\naccessCheckWords') : null;
-  check(typeof said === 'function' && said('writer').includes('changes work here') && said('reader').startsWith('Still view only') && said('freeBusyReader').includes('only busy times') && said('none').includes("doesn't show"),
-    'Check again says what Google answered in plain words');
+  check(typeof said === 'function' && said('writer', 'reader').includes('changes work here') && said('reader', 'reader').startsWith('Still view only') && said('freeBusyReader', 'freeBusyReader').includes('still shows')
+      && said('freeBusyReader', 'reader').includes('now shows') && !said('freeBusyReader', 'reader').includes('still') && said('none', 'none').includes("doesn't show"),
+    'Check again says what Google answered in plain words, "still" only when the level did not move');
   check(settingsSrc.includes("'/calendars/' + calendarId + '/check-access'") && settingsSrc.includes('bc-calset-check') && /\.bc-calset-check[\s{]/.test(css),
     'the settings line of a Google calendar it can\'t change offers Check again, with its rule');
-  check(review.includes("action.name === 'check'") && review.includes('accessCheckWords(res && res.googleAccessRole)'),
+  check(review.includes("action.name === 'check'") && review.includes('accessCheckWords(res && res.googleAccessRole, d && d.access)'),
     'Check again on the Review notice says what Google answered');
 }
 

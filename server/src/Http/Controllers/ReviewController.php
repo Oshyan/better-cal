@@ -88,12 +88,16 @@ final class ReviewController
                     'createdAt' => $c['createdAt'],
                     'eventId' => $c['kind'] === ReviewQueue::KIND_GOOGLE_DIFFERS ? $c['eventId'] : null,
                     'detail' => $c['detail'],
-                    'actions' => $open && $canDecide ? [
+                    // A dismissed notice is listed in the history while its state holds (an ended one is gone), with the
+                    // way to show it again: what a dismiss hides stays reachable (one rule for every notice kind).
+                    'actions' => !$open && $canDecide && $c['status'] === 'dismissed' && in_array($c['kind'], ReviewQueue::NOTICE_KINDS, true)
+                        ? [self::action('reopen', 'Show again', "/review/notices/{$c['id']}/reopen") + ['quiet' => true]]
+                        : ($open && $canDecide ? [
                         // A calendar read-only at Google: ask Google again now (the person can always ask).
                         ...(in_array($c['kind'], [ReviewQueue::KIND_GOOGLE_READ_ONLY, ReviewQueue::KIND_GOOGLE_NOT_SHOWN], true) && isset($c['detail']['calendarId'])
                             ? [self::action('check', 'Check again', "/calendars/{$c['detail']['calendarId']}/check-access") + ['quiet' => true]] : []),
                         self::action('dismiss', 'Dismiss', $dismissPath),
-                    ] : [],
+                    ] : []),
                 ];
                 continue;
             }
@@ -209,7 +213,14 @@ final class ReviewController
         $notices = $this->queue->subscriptionNotices($userId, $paused);
         foreach ($paused as $calendar) {
             $notice = $notices[(int) $calendar['id']] ?? null;
-            if ($notice === null || $notice['status'] !== 'open') {
+            if ($notice === null || ($notice['status'] !== 'open' && $openOnly)) {
+                continue;
+            }
+            if ($notice['status'] !== 'open') {
+                // In the history, dismissed while its state holds: listed with the way to show it again.
+                $items[] = ['key' => 'subscription:' . $calendar['id'], 'kind' => 'subscription', 'status' => 'dismissed', 'title' => $calendar['name'],
+                    'summary' => $calendar['subscriptionAuthorization']['reason'], 'createdAt' => null, 'eventId' => null, 'detail' => ['calendarId' => $calendar['id']],
+                    'actions' => $canDecide ? [self::action('reopen', 'Show again', "/review/notices/{$notice['row']}/reopen") + ['quiet' => true]] : []];
                 continue;
             }
             $authorization = $calendar['subscriptionAuthorization'];
@@ -238,10 +249,17 @@ final class ReviewController
         // while the change stays half done, and comes back when a change refused because of it is attempted; the event
         // itself says it is half done either way, with the way back here.
         foreach ($this->queue->halfDoneNotices($userId) as $notice) {
+            $half = $notice['half'];
             if ($notice['status'] !== 'open') {
+                if (!$openOnly) {
+                    // In the history, dismissed while the change is still half done: the way to show it again, also
+                    // where no event here carries the line (a whole-series delete whose answer was lost).
+                    $items[] = ['key' => 'google_half:' . $half['id'], 'kind' => 'google_half', 'status' => 'dismissed', 'title' => $half['title'],
+                        'summary' => 'Half done at Google: ' . $half['summary'], 'createdAt' => $half['createdAt'], 'eventId' => $half['eventId'], 'detail' => $half,
+                        'actions' => $canDecide ? [self::action('reopen', 'Show again', "/review/notices/{$notice['row']}/reopen") + ['quiet' => true]] : []];
+                }
                 continue;
             }
-            $half = $notice['half'];
             $items[] = [
                 'key' => 'google_half:' . $half['id'],
                 'kind' => 'google_half',

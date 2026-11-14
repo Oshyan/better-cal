@@ -129,7 +129,9 @@ return static function (Db $db): void {
             $db->run('UPDATE calendars SET google_access_role = NULL WHERE id = ?', [$s->calendarId]);
             $s->fake->role = 'reader';
             $how === 'a poll' ? ($s->poll)() : $edit($s);
-            checkEq("editable, paused, then view only, learned by $how: stored reader, and exactly one Review item is open for the calendar below writer", ['reader', ['google_read_only']], [$role($s), $items($s)]);
+            // Rule C, narrowed by the second read's brief: nothing about before survives the reset (it clears the level), so
+            // a level learned then opens no Review item; the Activity line and the settings line carry it.
+            checkEq("editable, paused, then view only, learned by $how: stored reader, no Review item, one Activity line", ['reader', [], 1], [$role($s), $items($s), count($lines($s))]);
             // View only with its item open before the pause, editable after it.
             $s = $make('reader');
             $db->run('UPDATE calendars SET google_access_role = NULL WHERE id = ?', [$s->calendarId]);

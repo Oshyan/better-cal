@@ -558,10 +558,14 @@ final class GoogleSeries
         });
     }
 
-    /** A Google answer that refused the write: it changed nothing there (any 4xx, the 412 of a conflict among them). */
+    /**
+     * A Google answer that refused the write: it changed nothing there (any 4xx, the 412 of a conflict among them),
+     * the refusals built after the small list included (the access rule's, and one whose level could not be read):
+     * whether anything was changed is known from what Google answered, not from how the refusal was worded.
+     */
     private static function refused(HttpError $e): bool
     {
-        if ($e->errorCode === 'google_conflict') {
+        if ($e->errorCode === 'google_conflict' || GoogleWriter::isReadOnly($e) || !empty($e->extra['refused'])) {
             return true;
         }
         $status = (int) ($e->extra['googleStatus'] ?? 0);

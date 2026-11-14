@@ -442,16 +442,24 @@ return static function (Db $db): void {
         $t = H::make($db, $single);
         try {
             $t->s->fake->role = 'none';
-            try {
-                $t->s->poll();
-            } catch (\RuntimeException) {
+            $failure = '';
+            foreach ([1, 2] as $n) {
+                try {
+                    $t->s->poll();
+                } catch (\RuntimeException $e) {
+                    $failure = $e->getMessage(); // what the feed's health records for that poll
+                }
             }
-            $row = ['subject' => 'feed:' . $t->s->calendarId, 'user_id' => $t->u];
             $health = new BetterCal\Domain\SystemHealth($db);
-            $before = $health->acknowledged($row);
+            $row = static function (string $error) use ($db, $t, $health): array {
+                $health->recordFailure('feed:' . $t->s->calendarId, 'feed', $t->u, 'Feed: sample', $error);
+                return $db->one('SELECT * FROM system_health WHERE subject = ?', ['feed:' . $t->s->calendarId]);
+            };
+            $before = $health->acknowledged($row($failure));
             $id = (int) $db->scalar("SELECT id FROM review_items WHERE user_id = ? AND status = 'open' AND kind = 'google_not_shown'", [$t->u]);
             (new ReviewQueue($db, $t->e))->dismissNotice($t->u, $id);
-            checkEq('open: alerts as before; dismissed: acknowledged, no alert', [false, true], [$before, $health->acknowledged($row)]);
+            checkEq('open: alerts as before; dismissed: its own failure held, any other failure alerts', [false, true, false],
+                [$before, $health->acknowledged($row($failure)), $health->acknowledged($row('Google could not be reached: connection timed out'))]);
         } finally {
             H::done($t);
         }

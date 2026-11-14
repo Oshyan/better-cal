@@ -25,6 +25,9 @@ use BetterCal\Support\Time;
  */
 final class GoogleSync
 {
+    /** What a poll says when a whole read listed nothing for a calendar holding rows (the failure its google_empty notice reports). */
+    public const EMPTY_MESSAGE = 'Google listed no events for this calendar while it has events here; nothing was removed, and the next poll reads it again.';
+
     private const EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/%s/events';
     private const PAGE_SIZE = 2500;
 
@@ -225,7 +228,7 @@ final class GoogleSync
             throw new \RuntimeException(GoogleWriter::accessWords($calendar, (string) $role));
         }
         if ($emptyRefused) {
-            $message = 'Google listed no events for this calendar while it has events here; nothing was removed, and the next poll reads it again.';
+            $message = self::EMPTY_MESSAGE;
             error_log('google sync: calendar ' . $calendarId . ': a whole read listed nothing; not applied');
             (new Undo($this->db))->write((int) $calendar['user_id'], fn() => ReviewQueue::holdGoogleEmpty($this->db, (int) $calendar['user_id'], $calendar));
             throw new \RuntimeException($message);

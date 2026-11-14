@@ -274,8 +274,11 @@ function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, 
 export function halfDoneWords(half, fmtDay) {
   if (!half) return null;
   const when = half.stoppedAt ? ' on ' + fmtDay(half.stoppedAt) : '';
-  return 'A change to this event stopped part way' + when + '. '
-    + (half.unrecoverable || 'It isn\'t updating from Google and takes no other change until that change is finished or put back.');
+  const lead = 'A change to this event stopped part way' + when;
+  // The item's own sentence when neither action can run, joined so the line says "stopped part way" once.
+  const stuck = half.unrecoverable && half.unrecoverable.startsWith('This change stopped part way, and ');
+  if (stuck) return lead + ', and ' + half.unrecoverable.slice('This change stopped part way, and '.length);
+  return lead + '. ' + (half.unrecoverable || 'It isn\'t updating from Google and takes no other change until that change is finished or put back.');
 }
 
 function HalfDoneLine({ half }) {

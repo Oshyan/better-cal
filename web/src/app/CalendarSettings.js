@@ -49,23 +49,25 @@ export function googleReadOnlyLine(role) {
   if (role == null) return 'Google hasn\'t said yet what this account may do with it, so it can\'t be changed here for now; it is read at the next check.';
   if (role === 'none') return 'Google no longer shows it to this account, so it is read-only here and no longer updates. If it is shared with you again, it updates again; otherwise remove it, or keep it as a calendar of your own.';
   // Busy times only: Google lists no details, so nothing it lists is applied and the events here don't update.
-  if (role === 'freeBusyReader') return 'Google now shows this account only busy times, so its events here stay as they were and don\'t update, and it can\'t be changed here. Once Google shows full details again, it catches up at the next check.';
+  if (role === 'freeBusyReader') return 'Google shows this account only busy times, so its events here stay as they were and don\'t update, and it can\'t be changed here. Once Google shows full details again, it catches up at the next check.';
   return 'View only at Google: it can\'t be changed here, and past changes can\'t be undone. Once Google lets this account make changes, it can be changed here; changes made there come in at each check below.';
 }
 
 // What Check again found (the level Google gave just now), in plain words for its toast.
-export function accessCheckWords(role) {
+// "Still" only when the level is the one stored before (was); a move between two read-only states is said as the new one.
+export function accessCheckWords(role, was) {
   if (role === 'writer' || role === 'owner') return 'Google lets this account make changes now; changes work here.';
-  if (role === 'freeBusyReader') return 'Google still shows this account only busy times, so nothing changed here.';
-  if (role === 'none') return 'Google still doesn\'t show this calendar to this account.';
-  return 'Still view only at Google, so nothing changed here.';
+  const still = role === was;
+  if (role === 'freeBusyReader') return still ? 'Google still shows this account only busy times, so nothing changed here.' : 'Google now shows this account only busy times, so its events here stay as they were and don\'t update.';
+  if (role === 'none') return still ? 'Google still doesn\'t show this calendar to this account.' : 'Google doesn\'t show this calendar to this account now.';
+  return still ? 'Still view only at Google, so nothing changed here.' : 'View only at Google now: it can\'t be changed here.';
 }
 
 // Check again: ask Google now (one small request); the level it gives is stored, and the calendars and Review follow.
-export async function checkGoogleAccess(calendarId) {
+export async function checkGoogleAccess(calendarId, was) {
   try {
     const res = await api('/calendars/' + calendarId + '/check-access', { method: 'POST', body: {} });
-    toast(accessCheckWords(res && res.googleAccessRole));
+    toast(accessCheckWords(res && res.googleAccessRole, was));
   } catch (e) {
     toast(e.message, { error: true });
   }
@@ -299,7 +301,7 @@ export function CalendarSettings({ cal, folders, onClose, full = false }) {
                 ? 'Its Google account was disconnected, so it no longer updates and can\'t be edited here. Connect the account again in Settings, Connections, and choose Re-attach to pick up where it left off.'
                 : cal.editable ? 'Edits here go to Google, and changes made there come in at each check below.'
                 : googleReadOnlyLine(cal.googleAccessRole))}
-            ${cal.googleAccountEmail && !cal.editable && html` <button type="button" class="bc-link-btn bc-calset-check" onClick=${() => checkGoogleAccess(cal.id)}>Check again</button>`}
+            ${cal.googleAccountEmail && !cal.editable && html` <button type="button" class="bc-link-btn bc-calset-check" onClick=${() => checkGoogleAccess(cal.id, cal.googleAccessRole)}>Check again</button>`}
           </span></span>`
         : html`<span class="bc-calset-source"><${Icon} name="link" size=${13} /><span>
             <strong>Subscribed from a web address</strong>${', view only. It refreshes at each check below.'}

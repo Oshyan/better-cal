@@ -379,7 +379,7 @@ Preferences are stored per user. The server stores and validates them; the clien
 | `welcomeSteps` | list of `subscribe`\|`import`\|`google`\|`install`\|`reminders`\|`plugins` | `[]` | the welcome's "where to start" items taken so far |
 | `workerOffAt` | database time or `null` | `null` | when the worker was turned off on purpose (set through `POST /system/worker-off`); tokens can't set it |
 | `mailSenderMigrationDone` | read-only | `false` | internal marker |
-| `google_series_undo` | read-only | `false` | operator or test switch: undo and redo of a whole-series change on a Google calendar (off in 1.5.5, on in 1.5.6) |
+| `google_series_undo` | read-only | `false` | operator or test switch: undo and redo of a whole-series change on a Google calendar (off since 1.5.5; it comes back with the rebuild of a change to all events, [#274](https://github.com/Oshyan/better-cal/issues/274)) |
 
 ## Saved Views
 

@@ -130,16 +130,16 @@ So the common answer to Google's behavior is to accept it: send the one change, 
 
 ## Where Better-Cal Still Falls Short
 
-> **Work in progress,** as above: these are 1.5.5's limits. Some will be fixed, and some may become things Better-Cal says plainly it doesn't do, depending on [#243](https://github.com/Oshyan/better-cal/issues/243).
+> **Work in progress,** as above: these are 1.5.5's limits, each marked with what 1.5.6 (2026-11-14) did about it. The section is rewritten once [#243](https://github.com/Oshyan/better-cal/issues/243) settles what is promised.
 
 Carrying days across is several requests where Google's way is one, and most of what's listed here comes from that.
 
-- **Undo of a change to all events on a Google calendar is off** until 1.5.6 ([#235](https://github.com/Oshyan/better-cal/issues/235)). Whether it comes back at all is one of the questions for #243.
-- **A change to all events that wrote more than one day could stop half done** (a switch between timed and all-day, a clock time changed and back), with Finish completing it ([#256](https://github.com/Oshyan/better-cal/issues/256)). Fixed after 1.5.5: each day's write now carries that day's own version tag.
-- **A half-done change that can be neither finished nor put back** has no "leave it as Google has it" yet ([#244](https://github.com/Oshyan/better-cal/issues/244)).
-- **Better-Cal doesn't notice when your access to a calendar is taken away at Google** ([#245](https://github.com/Oshyan/better-cal/issues/245)).
+- **Undo of a change to all events on a Google calendar is off** ([#235](https://github.com/Oshyan/better-cal/issues/235)). Still off in 1.5.6: it comes back with the rebuild of a change to all events on stored state ([#274](https://github.com/Oshyan/better-cal/issues/274)).
+- **A change to all events that wrote more than one day could stop half done** (a switch between timed and all-day, a clock time changed and back), with Finish completing it ([#256](https://github.com/Oshyan/better-cal/issues/256)). Fixed in 1.5.6: the cause was a condition on each day's write that Google refuses after the event's own write, and a day's write now goes with none.
+- **A half-done change that can be neither finished nor put back** had no "leave it as Google has it" ([#244](https://github.com/Oshyan/better-cal/issues/244)). Dropped: since 1.5.6 it can be dismissed, like every Review notice.
+- **Better-Cal didn't notice when your access to a calendar was taken away at Google** ([#245](https://github.com/Oshyan/better-cal/issues/245)). Since 1.5.6 it reads the level from Google, says when it changes and works read-only until editing is given back.
 - **A change made in Google Calendar while one of ours is half done** is kept only when ours leaves every day where it was. Otherwise it's dropped, and named.
-- **A repeating event that starts in the hour a spring clock change skips** gains an extra first day when a field changes for all events ([#252](https://github.com/Oshyan/better-cal/issues/252)). That one is Better-Cal's bug, not Google's.
+- **A repeating event that starts in the hour a spring clock change skips** gained an extra first day when a field changed for all events ([#252](https://github.com/Oshyan/better-cal/issues/252)). That one was Better-Cal's bug, not Google's, and is fixed in 1.5.6: the change carries the days Google holds as deleted on the event.
 
 The [changelog](../CHANGELOG.md) has each release's known limits in full.
 

@@ -115,6 +115,14 @@ final class Settings
         return is_array($settings) && ($settings['google_series_undo'] ?? false) === true;
     }
 
+    /** Whether a change to one Google event asks over a change made at Google since it was shown (DEFAULTS google_conflict_choice). */
+    public static function googleConflictChoice(Db $db, int $userId): bool
+    {
+        $raw = $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+        $settings = is_string($raw) ? json_decode($raw, true) : null;
+        return is_array($settings) && ($settings['google_conflict_choice'] ?? false) === true;
+    }
+
     /** Store the default calendar (setup, a calendar made or deleted, migration 058). */
     public static function setDefaultCalendar(Db $db, int $userId, ?int $calendarId): void
     {
@@ -263,6 +271,12 @@ final class Settings
         // client-writable and not in the Settings page: off in 1.5.5, on in
         // the test suites and the edit harness (tests/db/lib.php freshUser).
         'google_series_undo' => false,
+        // A change to one Google event read against what Google holds first,
+        // asking only where the same field changed there (GoogleConflict;
+        // docs/design/google-conflict-choice.md). An operator or test switch,
+        // never client-writable and not in the Settings page: off as 1.5.7
+        // ships, on in the test suites (tests/db/lib.php freshUser).
+        'google_conflict_choice' => false,
     ];
     public const WELCOME_STEPS = ['subscribe', 'import', 'google', 'install', 'reminders', 'plugins'];
     // Every view the app has (web/src/app/actions.js VIEWS). It listed a

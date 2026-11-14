@@ -349,7 +349,17 @@ function freshUser(Db $db): int
     // (Settings google_series_undo); the suite and the edit harness measure
     // it on, as it will ship in 1.5.6. One scenario in google-series-undo.test.php turns it off.
     seriesUndo($db, $u, true);
+    // A change to one Google event reads Google first and asks only over the
+    // same field (Settings google_conflict_choice): off as 1.5.7 ships, on in the suite.
+    conflictChoice($db, $u, true);
     return $u;
+}
+
+/** Turn the google_conflict_choice switch on or off for an account (Settings::DEFAULTS). */
+function conflictChoice(Db $db, int $userId, bool $on): void
+{
+    $settings = json_decode((string) $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]), true) ?: [];
+    $db->update('users', ['settings_json' => json_encode(['google_conflict_choice' => $on] + $settings)], 'id = ?', [$userId]);
 }
 
 /** Turn the google_series_undo switch on or off for an account (Settings::DEFAULTS). */

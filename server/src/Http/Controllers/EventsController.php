@@ -149,7 +149,7 @@ final class EventsController
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
-        return Response::json(['ok' => true] + self::split($this->events));
+        return Response::json(['ok' => true] + self::split($this->events) + ['kept' => $this->events->kept()]);
     }
 
     public function delete(Request $req, array $params): Response
@@ -161,7 +161,7 @@ final class EventsController
             return Response::json(['plan' => $this->events->previewDelete((int) $req->user['id'], (int) $params['id'], $scope, $instance, self::choices($req))]);
         }
         try {
-            $this->events->deleteEvent((int) $req->user['id'], (int) $params['id'], $scope, $instance, RequestAuthority::request($req), self::plan($req));
+            $this->events->deleteEvent((int) $req->user['id'], (int) $params['id'], $scope, $instance, RequestAuthority::request($req), self::plan($req), self::over($req));
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
@@ -204,6 +204,12 @@ final class EventsController
         return is_array($req->body['plan'] ?? null) ? $req->body['plan'] : null;
     }
 
+    /** The fields as the person was shown them (`over`, by served key), or null: the base of a change to one Google event. */
+    private static function over(Request $req): ?array
+    {
+        return is_array($req->body['over'] ?? null) ? $req->body['over'] : null;
+    }
+
     /** The choices a preview names. */
     private static function choices(Request $req): array
     {
@@ -216,7 +222,12 @@ final class EventsController
         if ($this->rsvp === null) {
             throw HttpError::notFound('RSVP unavailable');
         }
-        return Response::json($this->rsvp->answer((int) $req->user['id'], (int) $params['id'], (string) ($req->str('answer') ?? ''), $req->cookies[\BetterCal\Domain\Auth::COOKIE] ?? null, ($req->body['retryUncertain'] ?? false) === true));
+        $userId = (int) $req->user['id'];
+        $out = $this->rsvp->answer($userId, (int) $params['id'], (string) ($req->str('answer') ?? ''), $req->cookies[\BetterCal\Domain\Auth::COOKIE] ?? null, ($req->body['retryUncertain'] ?? false) === true);
+        // What Google changed that the answer left as it is, each with its value as served.
+        $keptFields = $out['keptFields'] ?? [];
+        unset($out['keptFields']);
+        return Response::json($out + ['kept' => $keptFields === [] ? [] : $this->events->keptOf($this->events->get($userId, (int) $params['id']), $keptFields)]);
     }
 
     /** POST /events/:id/relationship {relationship, scope?, instanceStart?} -> {ok:true} */
@@ -236,9 +247,10 @@ final class EventsController
             $scope,
             $this->instanceOnRowClock($req, (int) $params['id']),
             RequestAuthority::request($req),
-            self::plan($req)
+            self::plan($req),
+            self::over($req)
         );
-        return Response::json(['ok' => true] + self::split($this->events));
+        return Response::json(['ok' => true] + self::split($this->events) + ['kept' => $this->events->kept()]);
     }
 
     public function attendance(Request $req, array $params): Response

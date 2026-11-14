@@ -1646,7 +1646,7 @@ final class GoogleSeries
      * (extrasOf). The guest list the sync
      * reads (into invite_json) is among those, as Google holds it.
      */
-    private static function fieldsOf(array $r, bool $extras = false): array
+    public static function fieldsOf(array $r, bool $extras = false): array
     {
         $title = trim((string) ($r['title'] ?? ''));
         $allDay = (int) ($r['all_day'] ?? 0);

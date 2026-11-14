@@ -825,7 +825,7 @@ final class GoogleSeries
                 // Google would hide days with is refused").
                 $h = self::held($reads[$i], (string) $t['googleId']);
                 if ($h['master'] !== null) {
-                    $hidden = self::hiddenRefusal($h['master'], $t['master'], array_merge(array_keys($h['records']), array_keys($h['cancelled'])), array_keys($h['cancelled']), $thisYear);
+                    $hidden = self::hiddenRefusal($h['master'], $t['master'], array_merge(array_keys($h['records']), array_keys($h['cancelled'])), array_keys($h['cancelled']), $thisYear, $made ? 'new' : ($back ? 'putBack' : 'finish'));
                     if ($hidden !== null) {
                         throw new HttpError('google_hidden_days', $hidden['words'], 409, array_diff_key($hidden, ['words' => true]));
                     }
@@ -1748,9 +1748,10 @@ final class GoogleSeries
      *
      * @param list<string> $keys every day Google holds a record for
      * @param list<string> $deletedKeys those of them it holds cancelled
+     * @param string $from what is being sent: 'new' (a change), 'finish' or 'putBack' (of a half-done one), for the advice
      * @return array{days:list<string>, deleted:list<string>, toAllDay:bool, clock:?string, words:string}|null
      */
-    public static function hiddenRefusal(array $old, array $new, array $keys, array $deletedKeys, int $thisYear): ?array
+    public static function hiddenRefusal(array $old, array $new, array $keys, array $deletedKeys, int $thisYear, string $from = 'new'): ?array
     {
         $hidden = self::hiddenBySwitch($old, $new, $keys);
         if ($hidden === []) {
@@ -1778,7 +1779,7 @@ final class GoogleSeries
         $deleted = array_keys($deleted);
         $toAllDay = (int) $new['all_day'] === 1;
         $clock = $toAllDay ? null : Time::fromDb((string) $new['start_utc'])->setTimezone(Time::zone((string) $new['tzid']))->format('H:i');
-        return ['days' => $days, 'deleted' => $deleted, 'toAllDay' => $toAllDay, 'clock' => $clock, 'words' => self::hiddenWords($days, $deleted, $toAllDay, $clock, $thisYear)];
+        return ['days' => $days, 'deleted' => $deleted, 'toAllDay' => $toAllDay, 'clock' => $clock, 'words' => self::hiddenWords($days, $deleted, $toAllDay, $clock, $thisYear, $from)];
     }
 
     /**
@@ -1793,7 +1794,7 @@ final class GoogleSeries
      * @param list<string> $days dates (Y-m-d)
      * @param list<string> $deleted those of $days deleted here
      */
-    public static function hiddenWords(array $days, array $deleted, bool $toAllDay, ?string $clock, int $thisYear): string
+    public static function hiddenWords(array $days, array $deleted, bool $toAllDay, ?string $clock, int $thisYear, string $from = 'new'): string
     {
         $named = static function (array $dates) use ($thisYear): string {
             $words = array_map(static fn(string $d): string => Words::date(Cal::dnOf(Time::fromDb($d . ' 00:00:00')), $thisYear), $dates);
@@ -1806,6 +1807,14 @@ final class GoogleSeries
             ? 'Google would stop showing ' . (count($live) === 1 ? 'one of its days' : 'some of its days') . ' (' . $named($live) . '), though nothing deleted ' . (count($live) === 1 ? 'it' : 'them')
             : 'Google would lose track of ' . (count($gone) === 1 ? 'a day' : 'days') . ' deleted from it (' . $named($gone) . '), so Better-Cal could no longer tell ' . (count($gone) === 1 ? 'it was' : 'they were') . ' deleted';
         $way = $toAllDay ? 'Move the event to another time first, then make it all-day.' : "Make it timed at another time first, then change the time to $clock.";
+        // The advice is something the person can do where they are (the second independent read, F5): a half-done change
+        // takes no other change until it is finished or put back, so from Finish or Put back the way goes through the
+        // other one first. Only one of them can switch the form, so the other is never refused for hidden days.
+        $way = match ($from) {
+            'finish' => 'Put the change back instead; afterwards, ' . lcfirst($way),
+            'putBack' => 'Finish the change instead; afterwards, ' . lcfirst($way),
+            default => $way,
+        };
         return "Google Calendar has a fault here: $when, $what. $way";
     }
 

@@ -157,6 +157,18 @@ $made = array_keys(array_filter($fake->events, static fn(array $e) => Probe::isM
 check('cleanup: every event the run made is deleted', $made !== [] && array_filter($made, static fn(string $id) => $fake->events[$id]['status'] !== 'cancelled') === []);
 check('cleanup: the report says nothing marked is live', ($json['run']['markedLive'] ?? -1) === 0, (string) json_encode($json['run']['cleanup'] ?? null));
 
+// ---- Group 11 alone: the list by iCalUID right after a write ----------------------
+$fake = new FakeGoogle(CAL);
+[$report, $error] = probeRun($fake, $tmp . '/g11', ['only' => ['11']], $sleep);
+$json = json_decode((string) file_get_contents($report->jsonPath), true);
+$g11 = array_column($json['cases'] ?? [], null, 'id');
+check('group 11: runs alone, its four cases with no error', $error === null && array_keys($g11) === ['11.1', '11.2', '11.3', '11.4'] && array_filter($g11, static fn(array $c) => ($c['error'] ?? null) !== null) === [], $error?->getMessage() ?? json_encode(array_keys($g11)));
+check('group 11: on the stand-in every write is listed and agrees at once (30, 30, 30, 10)',
+    str_contains($g11['11.1']['finding'] ?? '', 'at once for 30 of 30') && str_contains($g11['11.2']['finding'] ?? '', 'at once for 30 of 30')
+    && str_contains($g11['11.3']['finding'] ?? '', 'at once for 30 of 30') && str_contains($g11['11.4']['finding'] ?? '', 'at once for 10 of 10'), json_encode(array_column($g11, 'finding')));
+check('group 11: every event it made is deleted', liveMarked($fake) === [], implode(', ', liveMarked($fake)));
+check('group 11: no write carries attendees', array_filter(writes($fake), static fn(array $r) => isset($r['body']['attendees'])) === []);
+
 // ---- The mail case, with --guest -------------------------------------------
 $fake = new FakeGoogle(CAL);
 [$report, $error] = probeRun($fake, $tmp . '/mail', ['only' => ['8']], $sleep, GUEST);

@@ -12,7 +12,7 @@
 
 import {
   fmtDayMedium, fmtDateFull, fmtDateShort, fmtDateShortYear, fmtTimeIn, fmtTimeInZone,
-  dateOfDayKey, tzCity, untilDayKey, fmtRange, parseISO,
+  dateOfDayKey, tzCity, untilDayKey, fmtRange, parseISO, otherYear,
 } from './dates.js';
 import { stripToText } from './richtext.js';
 import { describeRepeat, ruleParts } from './repeat.js';
@@ -962,10 +962,22 @@ export const SAVING_WORDS = 'Saving…';
 // composed here from those fields and values; nothing reads the 409's
 // message, which is for callers with no dialog.
 
+// How a sentence names a field, from its noun (fieldNoun: title, time,
+// location, notes, link). Planned or Maybe is never called a status: its
+// value says it ("it is now a Maybe"), so the sentence's subject is the
+// event itself ("it"), and a line names it "Planned or Maybe".
 const PLURAL_NOUNS = new Set(['notes', 'tags', 'people', 'reminders']);
-const isAre = (noun) => (PLURAL_NOUNS.has(noun) ? 'are' : 'is');
-const wasWere = (noun) => (PLURAL_NOUNS.has(noun) ? 'were' : 'was');
-const itThem = (noun) => (PLURAL_NOUNS.has(noun) ? 'them' : 'it');
+const STATE_FIELDS = new Set(['status']);
+const nounOf = (field) => (STATE_FIELDS.has(field) ? null : fieldNoun(field));
+const isPlural = (field) => PLURAL_NOUNS.has(nounOf(field));
+const isAre = (field) => (isPlural(field) ? 'are' : 'is');
+const wasWere = (field) => (isPlural(field) ? 'were' : 'was');
+const pronoun = (field) => (isPlural(field) ? 'they' : 'it');
+const objectPronoun = (field) => (isPlural(field) ? 'them' : 'it');
+/** "its location", "its notes"; for Planned or Maybe the event itself, "it". */
+const subjectOf = (field) => (nounOf(field) ? 'its ' + nounOf(field) : 'it');
+/** A line's label: "Location", "Notes", "Planned or Maybe". */
+const labelOf = (field) => (nounOf(field) ? upperFirst(nounOf(field)) : 'Planned or Maybe');
 // Text this long, or on several lines, is shortened where two values are
 // set side by side, and not repeated at all in a toast.
 const TEXT_MAX = 80;
@@ -980,17 +992,45 @@ function plainOf(field, v) {
 
 const isEmptyValue = (field, v) => (field === 'time' ? !v : plainOf(field, v) === '');
 
+// Dates read as wall dates: an all-day value's from its date part, never
+// through the local zone.
+const timeDates = (t) => {
+  const at = (iso) => (t.allDay ? dateOfDayKey(String(iso).slice(0, 10)) : parseISO(iso));
+  return [at(t.start), at(t.end)];
+};
+// A reference day whose year no date has: fmtRange then says every year.
+const ANY_YEAR = new Date(1900, 0, 1);
+
+/**
+ * The reference day for the time values shown together in one question or
+ * one toast: `now` when all of them are in its year (no year is said),
+ * else one that makes every one of them say its year, so two values in a
+ * sentence show the year both or neither.
+ */
+function yearRef(values, now) {
+  const times = values.filter((t) => t && t.start && t.end);
+  return times.some((t) => otherYear(...timeDates(t), !!t.allDay, now)) ? ANY_YEAR : now;
+}
+
 /**
  * A time value, {start, end, allDay} in the served form, in the person's
  * formats, as the popover says a range: "Tue, Nov 17, 10:00 AM to 11:00
- * AM", "Wed, Nov 18, 2026, all day" (the year when it isn't `now`'s).
+ * AM", "all day on Wed, Nov 18, 2026" (the year when it isn't `now`'s).
  */
 export function timeValueWords(t, now = new Date()) {
   if (!t || !t.start || !t.end) return '';
-  const at = (iso) => (t.allDay ? dateOfDayKey(String(iso).slice(0, 10)) : parseISO(iso));
+  const [s, e] = timeDates(t);
+  // One all-day date says its year as a timed day does, only when asked
+  // (the popover's own form for it always does).
+  const oneDay = t.allDay && s.toDateString() === new Date(e.getTime() - 1).toDateString();
+  const range = oneDay ? (otherYear(s, e, true, now) ? fmtDateFull(s) : fmtDayMedium(s)) : fmtRange(s, e, !!t.allDay, now);
   // A sentence's spaces are plain: Intl puts a narrow one before AM and PM.
-  return fmtRange(at(t.start), at(t.end), !!t.allDay, now).replace(/[\u00a0\u202f]/g, ' ') + (t.allDay ? ', all day' : '');
+  const plainSpaces = range.replace(/[\u00a0\u202f]/g, ' ');
+  return t.allDay ? 'all day on ' + plainSpaces : plainSpaces;
 }
+
+/** A sentence's full stop, left out after a quoted value that already ends one: "'Bring the agenda.'". */
+const stop = (s) => (/[.!?]'$/.test(s) ? s : s + '.');
 
 /**
  * Two texts said side by side, each cut to about 80 characters from a
@@ -1018,10 +1058,15 @@ function cutPair(a, b) {
   return [cut(a), b != null ? cut(b) : null];
 }
 
-/** A non-empty value as a sentence says it; `other` (the value it is set beside) decides where long text is cut. */
-function valueWords(field, v, other = undefined, now = new Date()) {
-  if (field === 'time') return timeValueWords(v, now);
-  if (field === 'status') return v === 'tentative' ? 'Maybe' : 'Planned';
+/**
+ * A non-empty value as a sentence says it: a time in the person's formats,
+ * Planned or Maybe as "Planned" or "a Maybe", text quoted; `other` (the
+ * value it is set beside) decides where long text is cut; `ref` is the
+ * reference day for the year (yearRef).
+ */
+function valueWords(field, v, other, ref) {
+  if (field === 'time') return timeValueWords(v, ref);
+  if (field === 'status') return v === 'tentative' ? 'a Maybe' : 'Planned';
   const s = plainOf(field, v);
   const o = other === undefined || isEmptyValue(field, other) ? null : plainOf(field, other);
   return quoted(cutPair(s, o)[0]);
@@ -1033,12 +1078,14 @@ function valueWords(field, v, other = undefined, now = new Date()) {
  * confirmLabel, danger} for the app's confirm dialog. `fields` from the
  * 409; `name`, the event's title as it was shown; `remove`, a delete;
  * `back`, whether Cancel returns the person to a form holding their change.
- * One field is said in a sentence; several get a line each, their values
- * apart by semicolons (a time's own words hold commas).
+ * One field is said in sentences; several get a line each. Two values are
+ * never joined by "to" (a time's own range has one): each is its own
+ * clause, apart by a semicolon.
  */
 export function googleChangedAsk({ name, fields, remove = false, back = false, now = new Date() }) {
   const list = (fields || []).filter((f) => f && f.field);
-  const said = (f, v, other) => valueWords(f.field, v, other, now);
+  const ref = yearRef(list.filter((f) => f.field === 'time').flatMap((f) => [f.was, f.now, f.yours]), now);
+  const said = (f, v, other) => valueWords(f.field, v, other, ref);
   // A value in a line: the value, or "no link" for an empty one.
   const side = (f, v, other) => (isEmptyValue(f.field, v) ? 'no ' + fieldNoun(f.field) : said(f, v, other));
   const since = 'Since ' + quoted(name || 'Untitled event') + ' was last shown to you, ';
@@ -1046,24 +1093,27 @@ export function googleChangedAsk({ name, fields, remove = false, back = false, n
   let body;
   let lines = [];
   if (one) {
-    const noun = fieldNoun(one.field);
-    const its = 'its ' + noun + ' ' + wasWere(noun) + ' ';
-    const there = isEmptyValue(one.field, one.now) ? its + 'removed in Google Calendar'
-      : remove && isEmptyValue(one.field, one.was) ? its + 'set in Google Calendar to ' + said(one, one.now)
-      : remove ? its + 'changed in Google Calendar from ' + said(one, one.was, one.now) + ' to ' + said(one, one.now, one.was)
-      : its + 'changed in Google Calendar to ' + said(one, one.now, one.yours);
-    const yours = remove ? ''
-      : isEmptyValue(one.field, one.yours) ? ' Your change removes the ' + noun + '.'
-      : ' Your change makes ' + itThem(noun) + ' ' + said(one, one.yours, one.now) + '.';
-    body = since + there + '.' + yours;
+    const f = one.field;
+    const changed = (how) => subjectOf(f) + ' ' + wasWere(f) + ' ' + how + ' in Google Calendar';
+    const It = upperFirst(pronoun(f));
+    if (remove) {
+      body = since + stop(isEmptyValue(f, one.now) ? changed('removed') + '; ' + pronoun(f) + ' ' + wasWere(f) + ' ' + said(one, one.was)
+        : isEmptyValue(f, one.was) ? changed('added') + '; ' + pronoun(f) + ' ' + isAre(f) + ' now ' + said(one, one.now)
+        : changed('changed') + '. ' + It + ' ' + wasWere(f) + ' ' + said(one, one.was, one.now) + '; ' + pronoun(f) + ' ' + isAre(f) + ' now ' + said(one, one.now, one.was));
+    } else {
+      const yours = isEmptyValue(f, one.yours) ? 'your change removes ' + objectPronoun(f)
+        : 'your change makes ' + objectPronoun(f) + ' ' + said(one, one.yours, one.now);
+      body = since + stop(isEmptyValue(f, one.now) ? changed('removed') + '; ' + yours
+        : changed('changed') + '. ' + It + ' ' + isAre(f) + ' now ' + said(one, one.now, one.yours) + ' there; ' + yours);
+    }
   } else {
     body = since + 'these were changed in Google Calendar:';
-    lines = list.map((f) => upperFirst(fieldNoun(f.field)) + ': ' + (remove
-      ? 'was ' + side(f, f.was, f.now) + '; now ' + side(f, f.now, f.was) + '.'
+    lines = list.map((f) => labelOf(f.field) + ': ' + (remove
+      ? stop('was ' + side(f, f.was, f.now) + '; now ' + side(f, f.now, f.was))
       : side(f, f.now, f.yours) + ' in Google Calendar; ' + side(f, f.yours, f.now) + ' in your change.'));
   }
   const title = remove ? 'Delete it anyway?'
-    : one ? 'The ' + fieldNoun(one.field) + ' ' + wasWere(fieldNoun(one.field)) + ' changed in Google Calendar'
+    : one && nounOf(one.field) ? 'The ' + nounOf(one.field) + ' ' + wasWere(one.field) + ' changed in Google Calendar'
     : 'Changed in Google Calendar';
   const foot = remove
     ? 'Delete deletes it here and in Google Calendar. Cancel keeps it, as it is in Google Calendar now.'
@@ -1082,11 +1132,13 @@ export function googleChangedAsk({ name, fields, remove = false, back = false, n
 export function keptWords(kept, now = new Date()) {
   const list = (kept || []).filter((k) => k && k.field);
   if (!list.length) return null;
+  const ref = yearRef(list.filter((k) => k.field === 'time').map((k) => k.now), now);
   const clause = (k) => {
-    const noun = fieldNoun(k.field);
-    if (isEmptyValue(k.field, k.now)) return 'the ' + noun + ' ' + wasWere(noun) + ' removed';
-    const long = k.field !== 'time' && k.field !== 'status' && plainOf(k.field, k.now).length > TOAST_MAX;
-    return long ? 'the ' + noun + ' ' + wasWere(noun) + ' changed' : 'the ' + noun + ' ' + isAre(noun) + ' now ' + valueWords(k.field, k.now, undefined, now);
+    const f = k.field;
+    const the = nounOf(f) ? 'the ' + nounOf(f) : 'it';
+    if (isEmptyValue(f, k.now)) return the + ' ' + wasWere(f) + ' removed';
+    const long = f !== 'time' && f !== 'status' && plainOf(f, k.now).length > TOAST_MAX;
+    return long ? the + ' ' + wasWere(f) + ' changed' : the + ' ' + isAre(f) + ' now ' + valueWords(f, k.now, undefined, ref);
   };
   const clauses = list.map(clause);
   const joined = clauses.some((c) => c.includes(',')) && clauses.length > 1

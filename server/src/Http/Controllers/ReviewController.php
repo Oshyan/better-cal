@@ -89,6 +89,9 @@ final class ReviewController
                     'eventId' => $c['kind'] === ReviewQueue::KIND_GOOGLE_DIFFERS ? $c['eventId'] : null,
                     'detail' => $c['detail'],
                     'actions' => $open && $canDecide ? [
+                        // A calendar read-only at Google: ask Google again now (the person can always ask).
+                        ...(in_array($c['kind'], [ReviewQueue::KIND_GOOGLE_READ_ONLY, ReviewQueue::KIND_GOOGLE_NOT_SHOWN], true) && isset($c['detail']['calendarId'])
+                            ? [self::action('check', 'Check again', "/calendars/{$c['detail']['calendarId']}/check-access") + ['quiet' => true]] : []),
                         self::action('dismiss', 'Dismiss', $dismissPath),
                     ] : [],
                 ];

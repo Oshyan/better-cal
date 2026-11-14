@@ -634,12 +634,18 @@ return static function (Db $db): void {
             } else {
                 // The reset clears the role until a poll after reconnecting; a role that can't write is stored as such.
                 $db->run('UPDATE calendars SET google_access_role = ? WHERE id = ?', [$how === 'paused' ? null : 'reader', $s->calendarId]);
+                if ($how === 'reader') {
+                    $s->fake->role = 'reader'; // and Google says so: Finish and Put back ask it first (rule A of the access read)
+                }
             }
             $item = $reviewItem($s, 'google_half:' . $p);
             $s->t->calls = [];
-            checkEq("$how: listed with Dismiss its one action and the reason; Finish and Put back refuse with it, nothing sent", [['Dismiss'], true, [409, 'google_calendar_gone', $words], [409, 'google_calendar_gone', $words], []],
+            // A role that can't write asks Google first, one small list each (rule A of the access read); the others ask nothing.
+            checkEq("$how: listed with Dismiss its one action and the reason; Finish and Put back refuse with it, nothing written", [['Dismiss'], true, [409, 'google_calendar_gone', $words], [409, 'google_calendar_gone', $words],
+                $how === 'reader' ? [['GET', 'events'], ['GET', 'events']] : []],
                 [array_column($item['actions'] ?? [], 'label'), str_ends_with((string) ($item['summary'] ?? ''), ' ' . $words),
                     $caught(fn() => $s->events->googleFinish($s->u, $p)), $caught(fn() => $s->events->googlePutBack($s->u, $p)), $s->t->calls]);
+            $s->t->calls = [];
             checkEq("$how: kept as a copy, it goes through and the change is closed with the line", [null, 0, [], $closedLine($title, 'this calendar is kept as a copy here now.'), null, null],
                 array_merge([$caught(fn() => $s->calendars->adopt($s->u, $s->calendarId))], $closed($s)));
         }

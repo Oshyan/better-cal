@@ -152,7 +152,8 @@ foreach ([['writer', 'writer'], ['reader', 'reader'], ['freebusy', 'freebusy'], 
         check('reader: nothing new is made', count(AccessProbe::loadState($probe->statePath)['inserted']) === 1);
     }
     if ($key === 'unshared') {
-        check('unshared: the token saved before is still the one from freebusy', (AccessProbe::loadState($probe->statePath)['sync']['stage'] ?? null) === 'freebusy');
+        // Google gives no sync token at busy times only (the second live round, 2026-11-14, stage freebusy, row 4), so the one saved is reader's.
+        check('unshared: the token saved before is still the one from reader (busy times only gave none)', (AccessProbe::loadState($probe->statePath)['sync']['stage'] ?? null) === 'reader');
     }
     if ($key === 'writer-2') {
         // No change of access since stage restored saved its token: the delta answers (row 4d, the second run of restored).

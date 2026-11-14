@@ -832,7 +832,12 @@ final class GoogleSeries
         // changes is being sent"): what Google held when this run read the series at its end or where it stopped. That
         // read replaces the expectation of the series' last step this side journaled; the prediction a step carries until
         // then is used only when the read never happened (the process died between a write and the read).
-        $settled = function (int $i, array $items, string $googleId) use (&$steps, $save, $back): void {
+        $settled = function (int $i, array $items, string $googleId) use (&$steps, $save, $back, $calendar): void {
+            // A read made below reader (access dropped to busy times only during the change) shows no titles: it is never
+            // kept, neither stored over the rows (store) nor recorded as what Google held (GoogleWriter::shows).
+            if (!$this->writer->listShows($calendar)) {
+                return;
+            }
             for ($n = count($steps) - 1; $n >= 0; $n--) {
                 if (!empty($steps[$n]['back']) !== $back) {
                     return;
@@ -1100,7 +1105,10 @@ final class GoogleSeries
             // Half done, in the journal before anything else is tried: a
             // failure of any kind, whatever the transaction here does next.
             $snapshot = $targets;
-            $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($e->getMessage(), 0, 2000),
+            // What stopped it, said of a change that had sent part of itself: the refusal's reason without its
+            // "nothing was changed", which was true of the one request and not of the change (`said`).
+            $said = $e instanceof HttpError && is_string($e->extra['said'] ?? null) ? (string) $e->extra['said'] : $e->getMessage();
+            $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($said, 0, 2000),
                 'targets_json' => json_encode($snapshot), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
             if (!$e instanceof HttpError && !$e instanceof \RuntimeException) {
                 $this->endUnlessTx($pendingId, false);
@@ -1125,7 +1133,7 @@ final class GoogleSeries
             $this->endUnlessTx($pendingId, true);
             $code = $e instanceof HttpError ? $e->errorCode : 'google_write_failed';
             $status = $e instanceof HttpError ? $e->status : 502;
-            $message = $e instanceof HttpError ? $e->getMessage() : 'Google could not be reached: ' . $e->getMessage();
+            $message = $e instanceof HttpError ? $said : 'Google could not be reached: ' . $e->getMessage();
             throw new HttpError($code, rtrim($message, '.') . '. ' . self::HALF_WORDS, $status, ['pending' => $pendingId]);
         }
         return ['pending' => $pendingId, 'readbacks' => $readbacks, 'differences' => $differences, 'inserted' => $inserted, 'targets' => $targets];

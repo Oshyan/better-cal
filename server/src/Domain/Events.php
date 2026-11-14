@@ -304,6 +304,26 @@ final class Events
         return GoogleWriter::writable($calendar) ? $calendar : null;
     }
 
+    /**
+     * Check again: ask Google what this account may do with a Google
+     * calendar now, at the person's asking (the Review item about its access,
+     * its settings line), through the one small list (GoogleWriter::accessNow,
+     * which recheck asks too); the level is stored through settleAccess, so a
+     * move gets its line and its item. Returns the level Google gave.
+     */
+    public function checkGoogleAccess(int $userId, int $calendarId, ?RequestAuthority $authority = null): string
+    {
+        $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]);
+        if ($calendar === null || !GoogleWriter::bound($calendar)) {
+            throw HttpError::notFound('No such Google calendar');
+        }
+        $role = $this->google()->accessNow($calendar, $this->googleBeforeSend($authority));
+        if ($role === null) {
+            throw new HttpError('google_write_failed', 'Google could not be asked just now. Try again in a minute.', 502);
+        }
+        return $role;
+    }
+
     /** Levels a recheck found writer in this request, by calendar, until the store after its transaction catches up. @var array<int,string> */
     private array $rechecked = [];
 

@@ -38,6 +38,8 @@ final class GoogleWriter
     /** Pages refreshEtags reads for one series at most (2,500 rows each). */
     private const ETAG_PAGES = 4;
     public const CONFLICT_MESSAGE = 'This event changed at Google since you last saw it. Refresh and try again.';
+    /** The conflict's reason alone, for a change that had already sent part of itself. */
+    public const CONFLICT_SAID = 'This event changed at Google since this change read it.';
     public const BUSY_MESSAGE = 'Google is busy and refused the change for now; nothing was changed. Try again in a minute.';
     public const DELETED_MESSAGE = 'This event was deleted at Google; nothing was changed. Refresh to see the calendar as Google has it.';
     public const REFUSED_MESSAGE = 'Google refused this change; nothing was changed. If you just got edit access back, try again in a moment.';
@@ -157,10 +159,20 @@ final class GoogleWriter
     public static function readOnlyWords(array $calendar, string $role, bool $undo = false): string
     {
         $name = self::named($calendar);
-        $why = $role === 'none'
-            ? 'Google no longer shows it to this account. If it is shared with you again, changes work here again.'
-            : 'your permissions for it at Google no longer allow changes. If you have access, restore full editing there.';
-        return ($undo ? "This can't be undone while $name is read-only: " : "$name is read-only: ") . $why;
+        // Derived from the level stored before this refusal ($calendar's): "no longer" and "restore" are true only
+        // of a calendar that could be changed here until now; one that couldn't is said as what it is.
+        if (self::writes($calendar['google_access_role'] ?? null)) {
+            $why = $role === 'none'
+                ? 'Google no longer shows it to this account. If it is shared with you again, changes work here again.'
+                : 'your permissions for it at Google no longer allow changes. If you have access, restore full editing there.';
+            return ($undo ? "This can't be undone while $name is read-only: " : "$name is read-only: ") . $why;
+        }
+        $state = match (self::tier($role)) {
+            'none' => "Google doesn't show $name to this account",
+            'busy' => "Google shows this account only busy times for $name",
+            default => "$name is view only at Google",
+        };
+        return $undo ? "This can't be undone: $state." : "$state, so it can't be changed here.";
     }
 
     /**
@@ -171,7 +183,7 @@ final class GoogleWriter
     public static function readOnly(array $calendar, string $role, bool $undo = false): HttpError
     {
         return new HttpError($role === 'none' ? 'google_not_shown' : 'google_read_only', self::readOnlyWords($calendar, $role, $undo), 403,
-            ['access' => $role, 'calendarId' => isset($calendar['id']) ? (int) $calendar['id'] : null]);
+            ['access' => $role, 'was' => $calendar['google_access_role'] ?? null, 'calendarId' => isset($calendar['id']) ? (int) $calendar['id'] : null]);
     }
 
     /**
@@ -351,26 +363,37 @@ final class GoogleWriter
             return;
         }
         $db->update('calendars', ['google_access_role' => $role], 'id = ?', [(int) $now['id']]);
-        if ($was === null || self::tier($was) === self::tier($role)) {
+        // A level learned from unknown (none stored: added before levels were kept, or paused by the compromise reset)
+        // is a move like any other: its line and its item, in words that claim nothing about before.
+        if ($was !== null && self::tier($was) === self::tier($role)) {
             return;
         }
         $name = self::named($now);
-        $words = self::accessWords($now, $role);
+        $words = self::accessWords($now, $role, $was);
         $undo->record((int) $now['user_id'], 'calendar', (int) $now['id'], 'update', null, null, match (self::tier($role)) {
-            'edit' => "Your permissions for $name at Google allow changes now. Changes and undo work here.",
-            default => self::tier($was) === 'none' ? "Google shows $name to this account again. " . $words : $words,
+            'edit' => $was === null ? "Your permissions for $name at Google allow changes. Changes and undo work here." : "Your permissions for $name at Google allow changes now. Changes and undo work here.",
+            default => $was !== null && self::tier($was) === 'none' ? "Google shows $name to this account again. " . $words : $words,
         });
         ReviewQueue::holdGoogleAccess($db, (int) $now['user_id'], ['google_access_role' => $role] + $now, self::tier($role), $words);
     }
 
     /** What a calendar below writer is, in the person's words: the Activity line and the Review item say it. Pure. */
-    public static function accessWords(array $calendar, string $role): string
+    public static function accessWords(array $calendar, string $role, ?string $was = null): string
     {
         $name = self::named($calendar);
+        $was = func_num_args() >= 3 ? $was : ($calendar['google_access_role'] ?? null);
+        // Derived from the level before ($was): "no longer", "now" and "restore" only where something was known before.
+        $editable = self::writes($was);
         return match (self::tier($role)) {
-            'none' => "Google no longer shows $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and no longer update. If it is shared with you again, it updates again; otherwise remove it, or keep it as a calendar of your own.",
-            'busy' => "Google now shows this account only busy times for $name, so its events here stay as they were and don't update, and changes and undo are unavailable. If you have access, restore full details and editing at Google.",
-            default => "Your permissions for $name at Google are now read-only. If you have access, restore full editing there. Until then $name works read-only here: changes, and undoing past changes, are unavailable.",
+            'none' => $was !== null && $was !== 'none'
+                ? "Google no longer shows $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and no longer update. If it is shared with you again, it updates again; otherwise remove it, or keep it as a calendar of your own."
+                : "Google doesn't show $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and don't update. If it is shared with you, it updates; otherwise remove it, or keep it as a calendar of your own.",
+            'busy' => $editable
+                ? "Google now shows this account only busy times for $name, so its events here stay as they were and don't update, and changes and undo are unavailable. If you have access, restore full details and editing at Google."
+                : "Google shows this account only busy times for $name, so its events here stay as they were and don't update, and it can't be changed here.",
+            default => $editable
+                ? "Your permissions for $name at Google are now read-only. If you have access, restore full editing there. Until then $name works read-only here: changes, and undoing past changes, are unavailable."
+                : "$name is view only at Google, so it can't be changed here.",
         };
     }
 
@@ -960,17 +983,23 @@ final class GoogleWriter
                 throw $this->refused($calendar, 'none');
             }
         }
-        // An insert is the one write whose first request is the write itself: refused (view only
-        // answers 403 requiredAccessLevel, not shown 404: the access probe, row 5), one small list
-        // says why, so the person gets the true reason and the level is stored.
-        if ($method === 'POST' && $path === '' && isset($calendar['id']) && in_array(self::refusal((int) $r['status'], (string) $r['body']), ['permission', 'deleted'], true)) {
+        // A write refused for what may be the account's access (a 403 not about a rate, a 404, a 410, a
+        // 412) is read only after one small list says the level now: access lowered or sharing removed
+        // between a change's list and its write answers each of these (the access probe: an insert 403
+        // requiredAccessLevel or 404, row 5; a PATCH 403 forbidden, 404, or 412 for the account's own
+        // single event once unshared, rows 6d to 6h; a DELETE there was not probed). Below writer, the
+        // write is refused as read-only, never as a change or a deletion at Google. Its cost, one list,
+        // is paid only on such a refusal. A write to a calendar not yet a calendar here (a move) is out.
+        $refusedAs = self::refusal((int) $r['status'], (string) $r['body']);
+        if ($method !== 'GET' && $path !== '/import' && isset($calendar['id'])
+            && ($r['status'] === 412 || in_array($refusedAs, ['permission', 'deleted'], true))) {
             $role = $this->accessNow($calendar, $beforeSend);
             if ($role !== null && !self::writes($role)) {
                 throw $this->refused($calendar, $role);
             }
         }
         if ($r['status'] === 412) {
-            throw new HttpError('google_conflict', self::CONFLICT_MESSAGE, 409);
+            throw new HttpError('google_conflict', self::CONFLICT_MESSAGE, 409, ['said' => self::CONFLICT_SAID]);
         }
         if ($r['status'] === 204 || ($method === 'DELETE' && $r['status'] === 410)) {
             return []; // deleted, or already gone
@@ -985,12 +1014,16 @@ final class GoogleWriter
             // Classified by Google's reason, not its status alone: busy
             // (a rate or quota limit, still so after the retries above),
             // the target deleted at Google, a permission refusal, the rest.
-            throw match (self::refusal((int) $r['status'], (string) $r['body'])) {
-                'busy' => new HttpError('google_busy', self::BUSY_MESSAGE, 503, $extra),
+            // Each refusal's message says nothing was changed, true of the one request; `said` is the same
+            // reason without that claim, for a caller whose change had already sent part of itself
+            // (GoogleSeries::run says what reached Google from what it sent).
+            $google = $why !== '' ? " Google said: \"$why\"." : '';
+            throw match ($refusedAs) {
+                'busy' => new HttpError('google_busy', self::BUSY_MESSAGE, 503, $extra + ['said' => 'Google is busy and refused the change for now.']),
                 'deleted' => self::deleted((int) $r['status']),
-                // The level its list gave was writer (admit), so this is not the calendar read-only: the
+                // The level a small list gave just now was writer, so this is not the calendar read-only: the
                 // probe saw Google refuse a write for a few seconds after edit access was given back (row 6e).
-                'permission' => new HttpError('google_write_failed', self::REFUSED_MESSAGE, 403, $extra),
+                'permission' => new HttpError('google_write_failed', self::REFUSED_MESSAGE . $google, 403, $extra + ['said' => 'Google refused this part of the change.' . $google]),
                 default => new HttpError('google_write_failed', 'Google rejected the change: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : ''), 502, $extra),
             };
         }
@@ -1004,7 +1037,7 @@ final class GoogleWriter
      */
     public static function deleted(int $googleStatus = 404): HttpError
     {
-        return new HttpError('google_deleted', self::DELETED_MESSAGE, 409, ['googleStatus' => $googleStatus]);
+        return new HttpError('google_deleted', self::DELETED_MESSAGE, 409, ['googleStatus' => $googleStatus, 'said' => 'This event was deleted at Google.']);
     }
 
     /**

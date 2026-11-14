@@ -38,6 +38,7 @@ import { usePasswordStepUp } from './PasswordStepUp.js';
 import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
 import { askConfirm } from './ConfirmDialog.js';
+import { accessCheckWords } from './CalendarSettings.js';
 
 const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused', plugin: 'Plugin turned off', google_half: 'Half done at Google', google_differs: 'Google kept something else', google_empty: 'Google listed nothing', google_read_only: 'Read-only at Google', google_not_shown: 'No longer shown by Google' };
 const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar', plugin: 'warning', google_half: 'warning', google_differs: 'calendar', google_empty: 'warning', google_read_only: 'warning', google_not_shown: 'warning' };
@@ -132,6 +133,11 @@ function ReviewCard({ item, onChanged }) {
         toast('Notice dismissed. The calendar shows what Google stores.');
       } else if (item.kind === 'google_empty') {
         toast('Notice dismissed. Nothing was removed.');
+      } else if ((item.kind === 'google_read_only' || item.kind === 'google_not_shown') && action.name === 'check') {
+        // Check again: the level Google gave just now, said plainly; the calendars and Review follow it.
+        toast(accessCheckWords(res && res.googleAccessRole));
+        await loadCalendars().catch(() => {});
+        loadReviewCount();
       } else if (item.kind === 'google_read_only' || item.kind === 'google_not_shown') {
         // Dismissed, not resolved: the calendar stays read-only until Google says otherwise.
         toast('Notice dismissed. The calendar stays read-only here until Google allows changes again.');

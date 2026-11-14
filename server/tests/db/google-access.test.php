@@ -39,7 +39,7 @@ return static function (Db $db): void {
         [$t->u, 'google-access:' . $t->s->calendarId, $status]), 'kind');
     // Activity's lines about the calendar's access (a poll's own entries stand on the calendar too).
     $lines = static fn(object $t): array => array_values(array_filter(array_column($db->all("SELECT summary FROM mutations WHERE user_id = ? AND entity = 'calendar' AND entity_id = ? ORDER BY id",
-        [$t->u, $t->s->calendarId]), 'summary'), static fn(?string $l): bool => preg_match('/^(Your permissions for|Google no longer shows|Google shows|Google now shows)/', (string) $l) === 1));
+        [$t->u, $t->s->calendarId]), 'summary'), static fn(?string $l): bool => preg_match("/^(Your permissions for|Google no longer shows|Google doesn't show|Google shows|Google now shows|'[^']*' is view only at Google)/", (string) $l) === 1));
     $row = static fn(object $t): ?array => $db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$t->id]);
     $tags = static fn(object $t): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$t->id]), 'name');
     $caught = static function (callable $fn): ?HttpError {
@@ -74,8 +74,12 @@ return static function (Db $db): void {
                     $got = $sent($t, $from);
                     checkEq("$level, $what: refused with the access refusal, its first request a list, nothing written", [$code, 403, 'GET list', []],
                         [$e?->errorCode, $e?->status, $got[0] ?? null, $writes($got)]);
-                    check("$level, $what: the sentence says the calendar is read-only and why", str_contains((string) $e?->getMessage(), $words)
-                        && ($what !== 'an undo' || str_starts_with((string) $e?->getMessage(), "This can't be undone while")), (string) $e?->getMessage());
+                    // The first attempt meets the calendar stored editable, so it says access was lowered; the later ones meet
+                    // it stored at the level the first learned, so they say what it is (rule D(2) of the read).
+                    $plain = ['reader' => "is view only at Google", 'freeBusyReader' => 'only busy times', 'none' => "doesn't show"][$level];
+                    check("$level, $what: the sentence says the calendar is read-only and why", $what === 'an edit'
+                        ? str_contains((string) $e?->getMessage(), $words)
+                        : str_contains((string) $e?->getMessage(), $plain) && ($what !== 'an undo' || str_starts_with((string) $e?->getMessage(), "This can't be undone")), (string) $e?->getMessage());
                 }
                 checkEq("$level: the event is here as it was, its tag kept (a delete was not taken for already deleted)", [$before, ['sample-tag']], [$row($t), $tags($t)]);
                 checkEq("$level: the stored level is the one the stand-in's last list gave; one Review item; one Activity line", [$said, [$code], 1],
@@ -341,6 +345,114 @@ return static function (Db $db): void {
         }
     });
 
+    // ---- The poll's own checks, Check again, and a stopped change's record (the independent read) -------------------
+
+    // A poll that fetched while the compromise reset landed stores nothing of what it fetched, its level included.
+    $syncWith = static function (object $t, \Closure $after) use ($db): GoogleSync {
+        $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
+        $auth = new GoogleAuth($db, $cfg, static fn(string $url, array $fields, ?float $deadline): array
+            => ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])]);
+        $list = $t->s->fake->syncTransport();
+        return new GoogleSync($db, $auth, new Feeds($db), static function (string $url, array $headers) use ($list, $after): array {
+            return $after($list($url, $headers), $url);
+        });
+    };
+    scenario('google access, the poll\'s account check comes before its store: a reset landing during the fetch stores no level', function () use ($db, $single, $stored, $syncWith): void {
+        $t = H::make($db, $single);
+        try {
+            $t->s->poll();
+            $t->s->fake->role = 'reader';
+            $account = (int) $db->scalar('SELECT google_account_id FROM calendars WHERE id = ?', [$t->s->calendarId]);
+            $sync = $syncWith($t, static function (array $answer) use ($db, $account): array {
+                $db->run('UPDATE google_accounts SET reauth_required_at = ? WHERE id = ?', [\BetterCal\Support\Time::nowDb(), $account]);
+                return $answer;
+            });
+            try {
+                $sync->poll($t->s->calendar());
+            } catch (\Throwable) {
+            }
+            checkEq('the level stays the one stored before the reset', 'owner', $stored($t));
+        } finally {
+            H::done($t);
+        }
+    });
+
+    scenario('google access, a list answered 410 with no sync token sent is the calendar no longer shown (the model, section 1)', function () use ($db, $single, $stored, $items, $syncWith): void {
+        $t = H::make($db, $single);
+        try {
+            $db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$t->s->calendarId]);
+            $sync = $syncWith($t, static fn(array $answer, string $url): array => str_contains($url, 'syncToken=') ? $answer
+                : ['status' => 410, 'body' => json_encode(['error' => ['code' => 410, 'message' => 'Gone', 'errors' => [['domain' => 'global', 'reason' => 'deleted']]]])]);
+            $error = null;
+            try {
+                $sync->poll($t->s->calendar());
+            } catch (\RuntimeException $e) {
+                $error = $e->getMessage();
+            }
+            checkEq('stored none, the not-shown item, and the poll says so', ['none', ['google_not_shown'], true], [$stored($t), $items($t), str_contains((string) $error, 'show')]);
+        } finally {
+            H::done($t);
+        }
+    });
+
+    scenario('google access, Check again: one small list; given back it stores writer and closes the item, still view only it says so and changes nothing else', function () use ($db, $single, $stored, $items, $sent): void {
+        $t = H::make($db, $single);
+        try {
+            $t->s->fake->role = 'reader';
+            $t->s->poll();
+            $from = count($t->s->fake->requests);
+            $still = $t->e->checkGoogleAccess($t->u, $t->s->calendarId);
+            checkEq('still view only: one small list, reader, the item still open', [['GET list'], 'reader', 'reader', ['google_read_only']], [$sent($t, $from), $still, $stored($t), $items($t)]);
+            $t->s->fake->role = 'writer';
+            $from = count($t->s->fake->requests);
+            $back = $t->e->checkGoogleAccess($t->u, $t->s->calendarId);
+            checkEq('given back: one small list, writer stored, no item open', [['GET list'], 'writer', 'writer', []], [$sent($t, $from), $back, $stored($t), $items($t)]);
+        } finally {
+            H::done($t);
+        }
+    });
+
+    scenario('google access, a change stopped at busy times only keeps no read made at that level as what Google held: given back, Put back goes through', function () use ($db, $weekly, $stored, $caught): void {
+        $t = H::make($db, $weekly);
+        try {
+            H::this($t, '2027-03-08T10:00:00-08:00', ['title' => 'Sample series (own)']);
+            $t->s->knobs->race = static function () use ($t): void {
+                $t->s->fake->role = 'freeBusyReader';
+            };
+            H::tryChange($t, ['scope' => 'all', 'instanceStart' => '2027-03-01T10:00:00-08:00', 'start' => '2027-03-01T11:00:00-08:00', 'end' => '2027-03-01T12:00:00-08:00']);
+            $half = (new ReviewQueue($db, $t->e))->googleHalfDone($t->u);
+            check('stopped half done', count($half) === 1, json_encode($half));
+            $t->s->fake->role = 'writer';
+            $e = $caught(function () use ($t, $half): void {
+                $t->e->googlePutBack($t->u, (int) $half[0]['id']);
+                $t->e->throwDeferred();
+            });
+            checkEq('given back (asked first), Put back goes through: nothing changed at Google since but its own steps', [null, 'Sample series'],
+                [$e === null ? null : $e->errorCode . ': ' . $e->getMessage(), $db->scalar('SELECT title FROM events WHERE id = ?', [$t->id])]);
+        } finally {
+            H::done($t);
+        }
+    });
+
+    scenario('google access, health mail: a feed\'s failing polls send no alert while the person has dismissed the notice of that state', function () use ($db, $single): void {
+        $t = H::make($db, $single);
+        try {
+            $t->s->fake->role = 'none';
+            try {
+                $t->s->poll();
+            } catch (\RuntimeException) {
+            }
+            $row = ['subject' => 'feed:' . $t->s->calendarId, 'user_id' => $t->u];
+            $health = new BetterCal\Domain\SystemHealth($db);
+            $before = $health->acknowledged($row);
+            $id = (int) $db->scalar("SELECT id FROM review_items WHERE user_id = ? AND status = 'open' AND kind = 'google_not_shown'", [$t->u]);
+            (new ReviewQueue($db, $t->e))->dismissNotice($t->u, $id);
+            checkEq('open: alerts as before; dismissed: acknowledged, no alert', [false, true], [$before, $health->acknowledged($row)]);
+        } finally {
+            H::done($t);
+        }
+    });
+
     // ---- A change half done when access was lost ---------------------------------------------------------------------
 
     scenario('google access, a change to all events half done when access was lost: listed in Review with its sentence and no action, and the event takes no other change', function () use ($db, $weekly, $caught): void {
@@ -361,8 +473,9 @@ return static function (Db $db): void {
             check('the event takes no other change while it is listed', $e !== null, '');
             $from = count($t->s->fake->requests);
             $e = $caught(fn() => $t->e->googleFinish($t->u, (int) $half[0]['id']));
-            checkEq('Finish is refused with the same sentence and sends nothing', [true, []],
-                [str_contains((string) $e?->getMessage(), 'are now read-only, so it can\'t be finished or put back'), array_slice($t->s->fake->requests, $from)]);
+            // Rule A of the read: one small list asks Google first; still view only, refused with the same sentence.
+            checkEq('Finish asks Google with one small list, is refused with the same sentence, and writes nothing', [true, ['GET']],
+                [str_contains((string) $e?->getMessage(), 'are now read-only, so it can\'t be finished or put back'), array_column(array_slice($t->s->fake->requests, $from), 'method')]);
         } finally {
             H::done($t);
         }

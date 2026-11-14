@@ -189,7 +189,8 @@ trait SeriesPlans
      */
     private function previewSplit(int $userId, array $event, array $in, string $mode): array
     {
-        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+        // A preview starts a change, as previewPatch's does: a calendar stored read-only asks Google first.
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id'], true) : null;
         $choices = is_array($in['plan']['choices'] ?? null) ? $in['plan']['choices'] : [];
         unset($in['plan'], $in['preview']);
         [$master, $rows, $edit, $opts] = $this->seriesInput($userId, $event, $in, false, $google !== null);
@@ -1298,6 +1299,18 @@ trait SeriesPlans
                 throw HttpError::notFound('No such half-done Google change');
             }
             $calendar = CalendarMoveGuard::lockCalendar($this->db, (int) $row['calendar_id']);
+            // A refusal for access stored below writer is preceded by asking Google (GoogleWriter::recheck): access
+            // given back lets Finish and Put back run at once; still below, the refusal says the level Google gave.
+            if ($calendar !== null && GoogleWriter::bound($calendar) && !GoogleWriter::writable($calendar) && ($calendar['google_access_role'] ?? null) !== null) {
+                try {
+                    $calendar = $this->google()->recheck($calendar, $this->googleBeforeSend($authority));
+                } catch (HttpError $e) {
+                    if (!GoogleWriter::isReadOnly($e)) {
+                        throw $e;
+                    }
+                    $calendar = ['google_access_role' => (string) $e->extra['access']] + $calendar;
+                }
+            }
             if (($why = GoogleSeries::unrecoverable($calendar)) !== null) {
                 throw HttpError::conflict('google_calendar_gone', $why);
             }

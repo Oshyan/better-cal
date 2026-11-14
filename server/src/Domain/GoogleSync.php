@@ -182,8 +182,9 @@ final class GoogleSync
                 $current['google_access_role'] = $role;
             }
             // A listing below reader shows only times, never what Google holds: nothing of it is applied, every row
-            // here stays as it was. The new sync position is kept (deltas stay cheap; any change of access makes it
-            // answer 410, so the poll after access returns reads the calendar whole and catches up).
+            // here stays as it was. Google gives such a listing no sync token (round 2, stage freebusy), so none is
+            // kept: each poll at that level reads one page whole, and the first after access returns reads the
+            // calendar whole and catches up.
             if (!GoogleWriter::shows($role)) {
                 $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
                 $busyOnly = true;
@@ -386,6 +387,12 @@ final class GoogleSync
             }
             if ($said !== null) {
                 $role = $said;
+            }
+            // A listing below reader is another shape (the second live round, 2026-11-14, stage freebusy: items with
+            // only times and ids, a series as its occurrences with no rule, no sync token at its end) and is never
+            // applied (GoogleWriter::shows): its first page has said the level, so no further page is read.
+            if ($said !== null && !GoogleWriter::shows($said)) {
+                return [[], null, $said];
             }
             $data = json_decode($r['body'], true);
             if ($r['status'] < 200 || $r['status'] >= 300 || !is_array($data)) {

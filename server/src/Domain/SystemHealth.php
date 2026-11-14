@@ -240,6 +240,24 @@ final class SystemHealth
     // ---- Alerting -----------------------------------------------------
 
     /**
+     * Whether the person has acknowledged the state a feed's failing polls
+     * report: its Review notice of that state is dismissed (a calendar Google
+     * no longer shows, shows only busy times, lists nothing, or a feed whose
+     * updates are paused). Then no email goes for it, first or again, while
+     * the notice stays dismissed; a new state is a new notice, open, and
+     * alerts as before.
+     */
+    public function acknowledged(array $row): bool
+    {
+        if (preg_match('/^feed:(\d+)$/', (string) $row['subject'], $m) !== 1 || empty($row['user_id'])) {
+            return false;
+        }
+        $id = (int) $m[1];
+        return $this->db->scalar("SELECT id FROM review_items WHERE user_id = ? AND status = 'dismissed' AND source_key IN (?, ?, ?) LIMIT 1",
+            [(int) $row['user_id'], ReviewQueue::accessKey($id), 'google-empty:' . $id, 'subscription:' . $id]) !== null;
+    }
+
+    /**
      * Does a failing row deserve an email right now? Pure, unit-tested.
      * The row is the raw table row; $now is UTC.
      */
@@ -295,7 +313,8 @@ final class SystemHealth
                 continue;
             }
             if ($row['status'] === 'failing' && self::shouldAlert($row, $now)
-                && !self::placeAlertHeld((string) $row['subject'], $failingSubjects, $placeSubjects)) {
+                && !self::placeAlertHeld((string) $row['subject'], $failingSubjects, $placeSubjects)
+                && !$this->acknowledged($row)) {
                 $failing[$to][] = $row;
             } elseif ($row['status'] === 'ok' && !empty($row['alerted_at'])) {
                 $recovered[$to][] = $row;

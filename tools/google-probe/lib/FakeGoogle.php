@@ -253,6 +253,10 @@ final class FakeGoogle
         $notFound = self::googleError(404, 'notFound', 'Not Found');
         $forbidden = self::googleError(403, 'forbidden', 'Forbidden');
         if ($this->role === 'none') {
+            // UNPROVEN, and contradicted: the first round read the account's own single event 200 and its PATCH 412 (rows
+            // 6a, 6d); the second (2026-11-14) read that event 404 with its PATCH still 412, and the series 200. Kept as the
+            // first round saw it; no product path depends on it (a write refused at any level asks the small list).
+            // A DELETE at not shown answers 404 for every target (round 2, rows D1 to D4), the account's own included.
             if ($rest !== null && preg_match('#^/events/([^/]+)$#', $rest, $m) === 1 && in_array($method, ['GET', 'PATCH'], true)) {
                 $e = $this->events[rawurldecode($m[1])] ?? null;
                 $own = $e !== null && ($e['creator']['email'] ?? '') === $this->owner && empty($e['recurrence']) && empty($e['recurringEventId']) && !isset($e['originalStartTime']);
@@ -268,7 +272,9 @@ final class FakeGoogle
         if ($rest !== null && preg_match('#^/events/([^/]+)$#', $rest, $m) === 1) {
             $id = rawurldecode($m[1]);
             $master = !empty($this->events[$id]['recurrence']);
-            if ($this->role === 'freeBusyReader' && $master && in_array($method, ['GET', 'PATCH', 'DELETE'], true)) {
+            // A series' main record at busy times only: 404 to a read and a PATCH (round 1, rows 6b, 6e); a DELETE is
+            // 403 forbidden like every DELETE at view only and busy times only (round 2, rows D1 to D4).
+            if ($this->role === 'freeBusyReader' && $master && in_array($method, ['GET', 'PATCH'], true)) {
                 return $notFound;
             }
             if ($method === 'PATCH' || $method === 'DELETE') {
@@ -286,9 +292,8 @@ final class FakeGoogle
 
     /**
      * An answer at busy times only. A read leaves out the title (the access probe, stage freebusy, rows 6a, 6c, 6g). A
-     * list leaves out at least the description and the private properties: none of row 4's seven items carried the
-     * probe's mark, which is in those two (Probe::isMarked); its titles were not recorded, and are left out as a read's
-     * are. What else Google leaves out (the place, the link) was not recorded, and is kept.
+     * list's items carry only end, etag, htmlLink, iCalUID, id, kind, start, status, updated and visibility (the second
+     * round, 2026-11-14, stage freebusy).
      */
     private function busyOnly(array $answer): array
     {
@@ -297,10 +302,9 @@ final class FakeGoogle
             return $answer;
         }
         if (isset($body['items']) && is_array($body['items'])) {
-            $body['items'] = array_map(static function (array $e): array {
-                unset($e['summary'], $e['description'], $e['extendedProperties']);
-                return $e;
-            }, $body['items']);
+            // A list item carries only these (round 2, stage freebusy, rows 4, U1, U2).
+            $keep = array_flip(['end', 'etag', 'htmlLink', 'iCalUID', 'id', 'kind', 'start', 'status', 'updated', 'visibility']);
+            $body['items'] = array_map(static fn(array $e): array => array_intersect_key($e, $keep), $body['items']);
         } elseif (($body['kind'] ?? '') === 'calendar#event') {
             unset($body['summary']);
         }
@@ -720,7 +724,9 @@ final class FakeGoogle
 
     private function list(array $q): array
     {
-        $single = ($q['singleEvents'] ?? 'false') === 'true';
+        // At busy times only a series is listed as its occurrences, with no rule (round 2, stage freebusy, U2: 4 items
+        // where writer gets 2), whatever singleEvents asks.
+        $single = ($q['singleEvents'] ?? 'false') === 'true' || $this->role === 'freeBusyReader';
         $deleted = ($q['showDeleted'] ?? 'false') === 'true';
         if (isset($q['syncToken'])) {
             if (preg_match('/^fake-sync-(\d+)$/', (string) $q['syncToken'], $m) !== 1 || (int) $m[1] < $this->roleSince) {
@@ -784,7 +790,8 @@ final class FakeGoogle
         $out = ['kind' => 'calendar#events', 'timeZone' => $this->zone, 'accessRole' => $this->role, 'items' => $slice];
         if ($offset + $size < count($items)) {
             $out['nextPageToken'] = (string) ($offset + $size);
-        } else {
+        } elseif ($this->role !== 'freeBusyReader') {
+            // At busy times only Google gave no sync token (round 2, stage freebusy, row 4).
             $out['nextSyncToken'] = 'fake-sync-' . $this->seq;
         }
         return self::ok($out);

@@ -444,7 +444,7 @@ final class GoogleUndo
             // The access rule refused it (GoogleWriter::admit, recheck): said as an undo's refusal.
             if (GoogleWriter::isReadOnly($e) && is_string($e->extra['access'] ?? null)) {
                 $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) ($e->extra['calendarId'] ?? 0)]) ?? [];
-                throw GoogleWriter::readOnly($calendar, (string) $e->extra['access'], true);
+                throw GoogleWriter::readOnly(['google_access_role' => $e->extra['was'] ?? null] + $calendar, (string) $e->extra['access'], true); // the level stored before the refusal
             }
             throw $e;
         }

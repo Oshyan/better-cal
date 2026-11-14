@@ -122,7 +122,7 @@ The last two do not meet the owner's "All review items must be dismissible"; the
 
 Access changes reach one person a few times a year at most. What is left needs a moment of seconds:
 - **The lag after access is given back.** One write was refused 403 a few seconds after editing was restored, while the list already said writer, and passed on a rerun (stage restored, first run, row 6e). It gets today's refusal, reworded (`GoogleWriter.php:611`): "Google refused this change; nothing was changed. If you just got edit access back, try again in a moment." How often: almost never.
-- **Access lost between a change's first read and its write** (milliseconds): the write's own 403 gets the sentence above, and its own 404 is read as today's "deleted at Google". How often: almost never.
+- **Access lost between a change's first read and its write** (milliseconds): amended after the independent read (its N4), see §8: a write refused 403, 404, 410 or 412 asks the small list before it is read as Google refusing that change, the event deleted, or the event changed at Google.
 - **Deleted against unshared.** Google gives no way to tell them apart, and the probe did not try a deletion. Both get the "no longer shows" sentence, which names both.
 - **Moving a calendar to Google** (`GoogleMove`): it writes into a calendar that is not yet a Google calendar here. Out of this model.
 
@@ -185,6 +185,33 @@ The stand-in (`tools/google-probe/lib/FakeGoogle.php`) answers by level exactly 
 - **Not probed, answered as the nearest proven request and said so in the code:** a DELETE (as a PATCH of the same target), a series' instances list (as a list).
 
 The brief 403 after access returns (stage restored, row 6e) stays out of the stand-in: it is not reproducible.
+
+## 8. Amended after the independent read of the build (2026-11-13)
+
+Four rules, each applied wherever its case arises, from the read's findings (its probes are the regular tests `server/tests/db/access-read-*`).
+
+**A. A refusal for access stored below writer is always preceded by asking Google, and the person can always ask.** Every place that refuses on the stored level asks the one small list first (`GoogleWriter::recheck`) and goes on when Google says writer: an edit, a delete, a new event, the previews of every change (one rule for previews: each starts a change), an undo, and Finish and Put back (`SeriesPlans::recoverTx`, which refused on the stored level before). The web app hides every change control on a calendar that is not editable, so a check would be reachable only through undo and an invitation answer; Check again is the person's own way to ask: a quiet control on the Review item of both access kinds and beside the settings line of a Google calendar below writer, one small list (`Events::checkGoogleAccess`, through `accessNow`, stored by `settleAccess`), its result said in a toast ("Still view only at Google, so nothing changed here."; "Google lets this account make changes now; changes work here."). What triggers a check: the next poll, Check again, an undo, an answer, and any change attempted through the API.
+
+**B. A read made below reader is never kept**, whichever read it is: the poll's listing, a change's read-backs stored over the rows (`GoogleSeries::store`) and the read a stopped change records as what Google held for Put back to compare with (`$settled` in `run`), each asking `GoogleWriter::shows` of the level its list gave.
+
+**C. The store says every tier it learns, and unknown is not view only.** A level learned when none was stored (a calendar added before levels were kept, or paused by the compromise reset) is a move like any other: its Activity line and its Review item, or the item closed, in words that say nothing about before ("'Team' is view only at Google, so it can't be changed here."; "Google doesn't show 'Team' to this account ..."; "Your permissions for 'Team' at Google allow changes."). The settings line for a calendar whose level is not known says so and that it is read at the next check.
+
+**D. A sentence is derived from the state, never from the path.**
+- Whether anything was changed is known from what the change sent: each refusal carries its reason without "nothing was changed" (`said`), and a change that had sent part of itself says that reason, then that part of it reached Google; Google's own reason text rides along on a permission refusal.
+- "No longer", "now" and "restore" are said only where the stored level before was writer: a calendar that could not be changed here says what it is ("'Team' is view only at Google, so it can't be changed here."; an undo: "This can't be undone: 'Team' is view only at Google.").
+- A write refused 403 (not a rate limit), 404, 410 or 412 is read only after the one small list says the level now; below writer it is refused as read-only, never as Google refusing that change, the event deleted ("already removed" for a delete) or changed at Google. Cost: one list, paid only on such a refusal, never on a write Google takes.
+- A DELETE refused 404 at not shown is the second round's answer for every target (below); it gets the small list like any refused write.
+
+**The second live round (2026-11-14, `workfolder/google-access-2/access-a49ac66229.md`, untracked; the manager's reading `workfolder/reviews/google-156/access-probe-round-2.md`) settles five things, each followed:**
+- Every DELETE with If-Match at view only and at busy times only answers 403 forbidden (the account's own single event, a day's record, a series and another's event alike; rows D1 to D4), and at not shown 404 notFound with every event still there afterwards. So a 404 on a DELETE is never "already deleted" until the small list has answered (rule D above). The stand-in answers so; its DELETE is no longer unproven.
+- A busy-only listing is another shape, never a thinner one: its items carry only end, etag, htmlLink, iCalUID, id, kind, start, status, updated and visibility; a series is listed as its occurrences with no rule (4 items where writer gets 2, U2); the listing ends with no sync token (row 4). Nothing in it says what an event is, so it can never be applied: there is no title, notes, place, rule or edited day to apply. The poll reads its first page, stores the level, keeps no sync position (Google gives none) and applies nothing; each poll at that level reads one page; the first after access returns reads the calendar whole.
+- An insert under an id that exists: 409 at writer, 403 requiredAccessLevel at view only and busy times only, 404 at not shown (row I): the level is checked before the id, so the small list after a refused insert reads it right.
+- The calendar list entry stays 404 after access is given back while events answer 200 (row 1, stage restored): reading the level from the events list, never the calendar list, is right.
+- Which of the account's own events stay readable at not shown differs between the rounds (round 1: the single event 200, its PATCH 412, the series 404; round 2: the single event 404 with its PATCH still 412, the series 200). Nothing is built on it: every write refused at any level asks the small list, and the stand-in's case is marked unproven and contradicted.
+
+**Known, not built: mixed answers in the seconds after access is given back.** Round 2, stage restored: a PATCH was taken 1.1 seconds in, but seconds later an insert answered 403 requiredAccessLevel and one list by iCalUID answered 404 while five others answered 200. For a 403 on an insert whose small list then says writer, the sentence stays right: "Google refused this change; nothing was changed. If you just got edit access back, try again in a moment." For two list answers in one request, the store takes the last: a 404 that comes after a writer answer stores not shown, says so once, and refuses the change as not shown; the next poll or attempt (seconds later) stores writer again and says so. Deciding between the answers (the highest level of the request, say) would be new mechanism for a window seconds wide; not built.
+
+**Known, not built: a change's older read stored after a newer poll's (the read's N5).** A change's level is stored when its transaction ends; a poll that fetched later but committed first is overwritten by the change's older word. Two connections, seconds wide, and the next poll or attempt corrects it. Not worth a mechanism.
 
 ## 7. Dependence on the fix branch
 

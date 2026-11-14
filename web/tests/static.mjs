@@ -370,6 +370,18 @@ for (const file of files) {
     check(['reader', 'freeBusyReader', 'none'].every((r) => !/—/.test(line(r))), 'the read-only line has no em-dash');
   }
   check(settingsSrc.includes('googleReadOnlyLine(cal.googleAccessRole)'), 'the settings panel must use the line for a Google calendar it can\'t change');
+  if (typeof line === 'function') {
+    check(line(null).includes("hasn't said yet") && line(null).includes('next check'), 'a level not known yet is said as that, not as view only');
+  }
+  // Check again: the person can always ask Google (rule A of the access read).
+  const checkSrc = (settingsSrc.match(/export function accessCheckWords\(role\) \{[\s\S]*?\n\}/) || [''])[0];
+  const said = checkSrc ? vm.runInNewContext(checkSrc.replace('export function', 'function') + '\naccessCheckWords') : null;
+  check(typeof said === 'function' && said('writer').includes('changes work here') && said('reader').startsWith('Still view only') && said('freeBusyReader').includes('only busy times') && said('none').includes("doesn't show"),
+    'Check again says what Google answered in plain words');
+  check(settingsSrc.includes("'/calendars/' + calendarId + '/check-access'") && settingsSrc.includes('bc-calset-check') && /\.bc-calset-check[\s{]/.test(css),
+    'the settings line of a Google calendar it can\'t change offers Check again, with its rule');
+  check(review.includes("action.name === 'check'") && review.includes('accessCheckWords(res && res.googleAccessRole)'),
+    'Check again on the Review notice says what Google answered');
 }
 
 console.log('');

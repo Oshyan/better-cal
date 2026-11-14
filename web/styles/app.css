@@ -585,6 +585,8 @@ html.bc-resizing-sidebar, html.bc-resizing-sidebar * { cursor: col-resize !impor
 .bc-calset-source { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; line-height: 1.45; color: var(--fg); }
 .bc-calset-source > svg { flex: none; margin-top: 2px; color: var(--fg-muted); }
 .bc-calset-source > span { min-width: 0; }
+/* Check again, beside the line saying a Google calendar can't be changed here: quiet, inline. */
+.bc-calset-check { font-size: inherit; padding: 0; white-space: nowrap; }
 .bc-calset-source .bc-calset-url { display: block; margin-top: 2px; }
 .bc-calset-folders { display: flex; flex-direction: column; gap: 2px; }
 .bc-calset-status { color: var(--fg-muted); font-size: 11px; }

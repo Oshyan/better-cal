@@ -523,6 +523,33 @@ $np = [$call($fake, 'PATCH', 'single0001', ['summary' => 'Changed', '_ifMatch' =
 check('stand-in, stage unshared: 404 on the list entry, the calendar, every list and an insert; reads 404 but the account\'s own single event 200; its PATCH 412, the rest 404',
     $none === [404, 404, 404, 404, 404] && $reads === [200, 404, 404, 404] && $np === [412, 404, 404, 404], json_encode([$none, $reads, $np]));
 
+// The second live round (2026-11-14, workfolder/google-access-2/access-a49ac66229.md): every DELETE with If-Match at view
+// only and at busy times only 403 forbidden, at not shown 404 for all, the events kept (rows D1 to D4); a busy-only list
+// carries only times and ids, gives a series as its occurrences with no rule, and no sync token (rows 4, U1, U2).
+$deletes = [];
+foreach (['reader', 'freeBusyReader', 'none'] as $level) {
+    $fake = $access();
+    $tags = ['single0001' => $etagOf($fake, 'single0001'), 'series0001' => $etagOf($fake, 'series0001'),
+        'series0001_20270308T180000Z' => $etagOf($fake, 'series0001_20270308T180000Z'), 'others0001' => $etagOf($fake, 'others0001')];
+    $fake->role = $level;
+    foreach ($tags as $id => $etag) {
+        $deletes[$level][] = $call($fake, 'DELETE', $id, ['_ifMatch' => $etag])[0];
+    }
+    $kept = array_filter(array_keys($tags), static fn(string $id): bool => ($fake->events[$id]['status'] ?? 'confirmed') !== 'cancelled');
+    $deletes[$level][] = count($kept);
+}
+check('stand-in, round 2, D1 to D4: DELETE 403 at view only and busy times only, 404 at not shown, for all four, the events kept',
+    $deletes === ['reader' => [403, 403, 403, 403, 4], 'freeBusyReader' => [403, 403, 403, 403, 4], 'none' => [404, 404, 404, 404, 4]], json_encode($deletes));
+$fake = $access();
+$fake->role = 'freeBusyReader';
+[, $bw] = $listOf($fake, ['showDeleted' => 'true', 'singleEvents' => 'false', 'maxResults' => '2500']);
+[, $bs] = $listOf($fake, ['iCalUID' => 'series0001@google.com', 'singleEvents' => 'false', 'showDeleted' => 'true']);
+$fields = array_unique(array_merge(...array_map('array_keys', $bw['items'] ?? [[]])));
+sort($fields);
+check('stand-in, round 2, rows 4 and U2: a busy-only list carries only times and ids, a series as its occurrences with no rule, and no sync token',
+    array_diff($fields, ['end', 'etag', 'htmlLink', 'iCalUID', 'id', 'kind', 'start', 'status', 'updated', 'visibility']) === [] && count($bs['items'] ?? []) === 4
+        && !isset($bw['nextSyncToken']) && array_filter($bw['items'] ?? [], static fn(array $e): bool => isset($e['recurrence'])) === [], json_encode([$fields, count($bs['items'] ?? []), isset($bw['nextSyncToken'])]));
+
 // Access given back (stage restored, second run): everything answers as a writer again.
 $fake->role = 'writer';
 [$rs] = $call($fake, 'PATCH', 'series0001', ['summary' => 'Sample series (restored)']);

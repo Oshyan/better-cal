@@ -175,6 +175,13 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/calendars/:id/export", [$exportController, 'calendar']);
         $router->add('GET', "$base/export", [$exportController, 'all']);
         $router->add('POST', "$base/calendars/:id/claim-subscription", [$calendarsController, 'claimSubscription']);
+        // Check again: what Google lets this account do with a Google calendar now (Events::checkGoogleAccess).
+        $router->add('POST', "$base/calendars/:id/check-access", function (Request $req, array $params) use ($events, $calendars): Response {
+            $req->requireSession('Checking a calendar\'s access at Google');
+            $userId = (int) $req->user['id'];
+            $role = $events->checkGoogleAccess($userId, (int) $params['id'], Domain\RequestAuthority::request($req));
+            return Response::json(['googleAccessRole' => $role, 'calendar' => $calendars->serializeById($userId, (int) $params['id'])]);
+        });
         $router->add('PATCH', "$base/calendars", [$calendarsController, 'patchMany']);
         $router->add('PATCH', "$base/calendars/:id", [$calendarsController, 'patch']);
         $router->add('POST', "$base/calendars/:id/position", [$calendarsController, 'position']);

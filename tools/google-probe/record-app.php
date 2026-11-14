@@ -1,14 +1,14 @@
 <?php
 // A scenario of the app's own Google writes that the edit harness doesn't
 // make (a single event created, changed and deleted; a whole repeating
-// event deleted), run through the product's Events against a GoogleStand
+// event deleted, plain and over an edited and a deleted day), run through the product's Events against a GoogleStand
 // on a database of its own, a poll after each write. record.php runs it,
 // one scenario per process, with GOOGLE_TRACE naming the trace file. Only
 // the stand-in is contacted. See README.md, "Replaying the App's Requests".
 //
 //   BC_TEST_DB=127.0.0.1:33308 GOOGLE_TRACE=<file.json> php tools/google-probe/record-app.php --scenario <name> [--zone America/Los_Angeles]
 //
-// Scenarios: single-timed, single-all-day, series-deleted-whole.
+// Scenarios: single-timed, single-all-day, series-deleted-plain, series-deleted-whole.
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
     http_response_code(404);
@@ -31,7 +31,7 @@ use BetterCal\EditHarness\GoogleStand;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\Migrator;
 
-const SCENARIOS = ['single-timed', 'single-all-day', 'series-deleted-whole'];
+const SCENARIOS = ['single-timed', 'single-all-day', 'series-deleted-plain', 'series-deleted-whole'];
 $opts = getopt('', ['scenario:', 'zone:']);
 $scenario = (string) ($opts['scenario'] ?? '');
 if (!in_array($scenario, SCENARIOS, true)) {
@@ -87,7 +87,17 @@ try {
             $write(static fn() => $events->patch($u, $id, ['start' => '2027-04-11', 'end' => '2027-04-12']));
             $write(static fn() => $events->deleteEvent($u, $id, null, null));
             break;
+        case 'series-deleted-plain':
+            // Its subject is the delete: nothing before it but the series made and polled.
+            $id = 0;
+            $write(static function () use ($events, $u, $cal, &$id): void {
+                $id = (int) $events->create($u, ['calendarId' => $cal, 'title' => 'Sample practice', 'location' => 'Sample Hall', 'rrule' => 'FREQ=WEEKLY;COUNT=6',
+                    'start' => '2027-05-04T17:00:00+00:00', 'end' => '2027-05-04T18:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC'])['eventId'];
+            });
+            $write(static fn() => $events->deleteEvent($u, $id, 'all', null));
+            break;
         case 'series-deleted-whole':
+            // The delete over an edited day and a deleted day, each made and polled first.
             $id = 0;
             $write(static function () use ($events, $u, $cal, &$id): void {
                 $id = (int) $events->create($u, ['calendarId' => $cal, 'title' => 'Sample weekly', 'location' => 'Sample Hall', 'rrule' => 'FREQ=WEEKLY;COUNT=6',

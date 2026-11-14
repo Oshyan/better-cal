@@ -16,7 +16,7 @@ It's for people who use Better-Cal with a Google calendar and wonder why it work
 
 Every claim below carries one of three labels, with a date:
 
-- **Measured:** the probe in [tools/google-probe](../tools/google-probe/README.md) sent the request and read back the result. Three runs so far: [2026-11-07](design/research/google-series/probe-2026-11-07.md) (66 cases, numbered 1.1 to 9.2), [2026-11-10](design/research/google-series/probe-2026-11-10.md) (19 more, numbered 3.17 to 3.35) and [2026-11-13](design/research/google-series/probe-2026-11-13.md) (19 more, 3.36 to 3.47, 4.3 and 10.1 to 10.6; every earlier case of groups 3 and 4 run again, with the same answers). The case number is given so the request and the answer can be looked up.
+- **Measured:** the probe in [tools/google-probe](../tools/google-probe/README.md) sent the request and read back the result. Several runs so far: [2026-11-07](design/research/google-series/probe-2026-11-07.md) (66 cases, numbered 1.1 to 9.2), [2026-11-10](design/research/google-series/probe-2026-11-10.md) (19 more, numbered 3.17 to 3.35) and [2026-11-13](design/research/google-series/probe-2026-11-13.md) (19 more, 3.36 to 3.47, 4.3 and 10.1 to 10.6; every earlier case of groups 3 and 4 run again, with the same answers; later that day 3.48 to 3.66, and on 2026-11-14 3.67 and 3.68 with group 3 again). The case number is given so the request and the answer can be looked up.
 - **Documented:** Google says so on a page that was live when read (2026-11-07 or 2026-11-10), linked beside the claim.
 - **Reported:** someone else wrote it up and I haven't tested it. Linked beside the claim, read 2026-11-10. Treat these as leads.
 
@@ -51,9 +51,9 @@ All Measured, on the date in the last column. "Dropped" means the day goes back 
 |---|---|---|---|---|
 | A new clock time | Dropped | Come back | 3.1 | 2026-11-07 |
 | A new time zone that moves the event's moments | Dropped | Come back | 3.3 | 2026-11-07 |
-| A new time zone, same moments | Kept, but a day's own time is reset | Stay deleted | 3.17 | 2026-11-10 |
+| A new time zone, same moments | Kept, but a day's own start is reset onto the event's time and its end left where it was | Stay deleted | 3.17 | 2026-11-10 |
 | The start moved to a day off the pattern | Dropped | Come back | 3.4 | 2026-11-07 |
-| The start moved along the pattern (a week later, on a weekly event) | Kept, but a day's own date and time are reset | Stay deleted | 3.5 | 2026-11-07 |
+| The start moved along the pattern (a week later, on a weekly event) | Kept, but a day's own start is reset onto the event's date and time and its end left where it was: a day at its own 14:00 to 15:30 on a 10:00 event reads 10:00 to 15:30 | Stay deleted | 3.5, 3.67 | 2026-11-14 |
 | Different repeat days (Monday becomes Tuesday) | Dropped | Come back | 3.6, 3.11 | 2026-11-07 |
 | A repeat day added (Monday becomes Monday and Wednesday) | Kept | Stay deleted, while still a day of the rule | 3.7, 3.43 | 2026-11-13 |
 | A new rule, for days still on it | Kept | Stay deleted | 3.33, 3.34, 3.42 to 3.47 | 2026-11-13 |
@@ -63,6 +63,7 @@ All Measured, on the date in the last column. "Dropped" means the day goes back 
 | Timed to all-day, or back | Dropped | Come back | 3.19 to 3.25 | 2026-11-10 |
 | A new title, description or location | Kept, but **overwritten**: a day with its own title takes the event's new one | Stay deleted | 3.12 to 3.14 | 2026-11-07 |
 | A new link | Kept, the link written into each | Stay deleted | 3.32 | 2026-11-10 |
+| Any change that doesn't send the description, on an event with no description of its own (a link, a new start, a title, even a private property with no repeat rule sent) | Kept, but **a day's own notes are cleared** | Stay deleted | 3.52 to 3.57, 3.68 | 2026-11-14 |
 | A new status (confirmed to tentative, say) | Kept, the status written into each | Come back | 3.15 | 2026-11-07 |
 | Split at a day ("this and following") | Kept before the split, dropped after it | Come back after it (none before it was tried) | 4.1, 4.2 | 2026-11-07 |
 

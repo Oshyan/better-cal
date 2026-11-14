@@ -428,8 +428,9 @@ final class FakeGoogle
             $new['status'] = 'cancelled';
         }
         $fields = array_intersect_key($body, array_flip(['summary', 'description', 'location', 'status', 'source']));
-        // A series with no notes, written without them: every kept record's own notes are cleared (3.52 to 3.57; with
-        // notes of its own, or its empty notes sent, they stay: 3.58 to 3.61).
+        // A series with no notes, written without them: every kept record's own notes are cleared (3.52 to 3.57; and
+        // with no recurrence sent, 3.68, 2026-11-14; with notes of its own, or its empty notes sent, they stay: 3.58 to
+        // 3.61).
         $clearNotes = !array_key_exists('description', $body) && (string) ($old['description'] ?? '') === '';
         // Those empty notes sent to a series that has none change nothing and are written into no record (3.61).
         if (($fields['description'] ?? null) === '' && (string) ($old['description'] ?? '') === '') {
@@ -475,11 +476,27 @@ final class FakeGoogle
             // stays at its instant, in the series' zone. Seen for the zone alone at the same moments (3.17, replay round 2
             // D), for a start date moved along the pattern (3.5: no record's end reported changed) and for a zone and rule
             // change put back (replay round 5, google-an-untouched-edited-day-keeps-its-own-list-after-a-zone-and-rule-change
-            // request 16: a day with its own 12:30 to 14:00 read back 13:00 to 14:00 under a 13:00 to 14:30 series).
-            if (($sameInstants || ($startChanged && $newLen === $oldLen && !$allDay)) && isset($r['end']['dateTime'])) {
-                $tz = (string) $new['start']['timeZone'];
-                [$r['start']] = $this->span($occ[$key], $newLen, $allDay, $tz);
-                $r['end'] = ['dateTime' => (new \DateTimeImmutable((string) $r['end']['dateTime']))->setTimezone(new \DateTimeZone($tz))->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz];
+            // request 16: a day with its own 12:30 to 14:00 read back 13:00 to 14:00 under a 13:00 to 14:30 series), and
+            // for the first day dragged a week later (3.67, 2026-11-14: a day at its own 14:00 to 15:30 read 10:00 to 15:30).
+            // A timed day of an all-day series the same way, its start the occurrence's date at 00:00 UTC and neither
+            // end named in a zone (replay round 5, google-a-reading-keeping-a-timed-day-under-an-all-day-series-is-
+            // offered-as-locally request 9: a day at 09:00 to 10:00 Berlin read 00:00 UTC to 10:00 Berlin, no timeZone).
+            if (($sameInstants || ($startChanged && $newLen === $oldLen)) && isset($r['end']['dateTime'])) {
+                if ($allDay) {
+                    $r['start'] = ['dateTime' => $occ[$key]->format('Y-m-d') . 'T00:00:00+00:00'];
+                    $r['end'] = ['dateTime' => (new \DateTimeImmutable((string) $r['end']['dateTime']))->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i:sP')];
+                } else {
+                    $tz = (string) $new['start']['timeZone'];
+                    [$r['start']] = $this->span($occ[$key], $newLen, $allDay, $tz);
+                    $r['end'] = ['dateTime' => (new \DateTimeImmutable((string) $r['end']['dateTime']))->setTimezone(new \DateTimeZone($tz))->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz];
+                    // A series in UTC: the record's start and end come back with no zone named (replay round 5,
+                    // google-undo-of-a-move-onto-a-skipped-day-date-only request 14 and -with-a-status-change request 13:
+                    // a live and a cancelled record of a UTC series after its start moved a day; the records' times
+                    // named UTC before that write). The answer then names none for originalStartTime either (shaped).
+                    if ($tz === 'UTC') {
+                        unset($r['start']['timeZone'], $r['end']['timeZone']);
+                    }
+                }
             } elseif ($startChanged) {
                 [$r['start'], $r['end']] = $this->span($occ[$key], $newLen, $allDay, (string) ($new['start']['timeZone'] ?? $this->zone));
             } elseif ($newLen !== $oldLen) {

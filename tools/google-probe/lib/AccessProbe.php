@@ -20,6 +20,21 @@
 // "cleanup" sends only the deletes of what the state file lists. Nothing is
 // deleted on any other stage.
 //
+// Round 2 (--round 2, after the first live round) adds, at every stage: a
+// list by iCalUID of the single event and of the series (U1, U2: item count,
+// accessRole, each item's key names), the key names of the first of the
+// probe's own items in request 4, and an insert under the id of the single
+// event the writer stage made (I). At stage writer it also makes three sets
+// of deletables (a single event and a weekly series of four with its second
+// day renamed), one each for reader, freebusy and unshared; at each of those
+// stages it sends, in this order, conditional on the etags stored: DELETE of
+// that stage's single event (D1), of its renamed day's record (D2), of its
+// series (D3), and of the owner's own event on the etag stored at writer
+// (D4), each one not refused followed by a GET (status only). At stage
+// restored it first PATCHes the single event's title once a second until
+// Google takes it or 180 seconds pass (R0), and at the end lists what of the
+// deletables still exists (R9). Cleanup deletes the deletables too.
+//
 // The state (event ids, their last etags, the last sync token and the stage
 // it came from) lives in a JSON file beside the report, named by a hash of
 // the calendar id, so each stage's run picks up where the last left off.
@@ -57,6 +72,8 @@ final class AccessProbe
         private readonly bool $allowOtherEvents = false,
         private readonly ?\DateTimeImmutable $today = null,
         private readonly bool $skipImport = false,
+        private readonly int $round = 1,
+        private readonly ?\Closure $sleep = null,
     ) {
         if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
             throw new \RuntimeException("cannot make the report folder $dir");
@@ -126,6 +143,10 @@ final class AccessProbe
 
     private function fixedSet(string $stage): void
     {
+        $started = microtime(true);
+        if ($this->round >= 2 && $stage === 'restored') {
+            $this->patchUntilTaken($started);
+        }
         $cal = $this->send('1', 'calendarList entry', 'GET', '/users/me/calendarList/{calendar}', [], null, [], static fn(array $r) => ['accessRole' => self::field($r, 'accessRole')]);
         $this->send('2', 'the calendar', 'GET', '');
         $this->send('3', 'events, maxResults=1', 'GET', '/events', ['maxResults' => 1], null, [], static fn(array $r) => [
@@ -146,6 +167,9 @@ final class AccessProbe
         if ($stage === 'writer') {
             $this->preflight($cal, $list);
             $this->makeEvents();
+            if ($this->round >= 2) {
+                $this->makeDeletables();
+            }
         }
 
         $insert = $this->send('5', 'insert a marked probe event', 'POST', '/events', [], $this->marked([
@@ -158,6 +182,178 @@ final class AccessProbe
 
         $this->eventRequests($stage);
         $this->send('7', 'get an event that never existed', 'GET', '/events/' . self::MISSING_ID);
+        if ($this->round >= 2) {
+            if ($stage === 'writer' && $this->state['ownerEvent'] !== null) {
+                $this->state['ownerEtagAtWriter'] = (string) ($this->state['ownerEvent']['etag'] ?? '');
+                $this->saveState();
+            }
+            $this->uidLists();
+            $this->insertWithTakenId();
+            if (in_array($stage, ['reader', 'freebusy', 'unshared'], true)) {
+                $this->deletesAt($stage);
+            }
+            if ($stage === 'restored') {
+                $this->deletablesLeft();
+            }
+        }
+    }
+
+    // ---- Round 2 ----------------------------------------------------------------
+
+    /** Stage writer: one set of deletables for each lowered stage, each read back for its current etag. */
+    private function makeDeletables(): void
+    {
+        foreach (['reader', 'freebusy', 'unshared'] as $i => $for) {
+            if (isset($this->state['deletables'][$for])) {
+                $this->record['notes'][] = "The deletables for $for were made by an earlier writer run; not made again.";
+                continue;
+            }
+            $set = [];
+            $x = $this->send("M$for.1", "deletables for $for: insert a single event", 'POST', '/events', [], $this->marked(['summary' => "Access probe deletable ($for)"] + $this->when(30 + $i, 9)), [], static fn(array $r) => ['id' => (string) ($r['id'] ?? '-')]);
+            if (self::ok($x) && isset($x['response']['id'])) {
+                $set['single'] = ['id' => (string) $x['response']['id'], 'uid' => (string) ($x['response']['iCalUID'] ?? ''), 'etag' => null];
+            }
+            $y = $this->send("M$for.2", "deletables for $for: insert a weekly series of four", 'POST', '/events', [], $this->marked(['summary' => "Access probe deletable weekly ($for)", 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4']] + $this->when(33 + $i, 11)), [], static fn(array $r) => ['id' => (string) ($r['id'] ?? '-')]);
+            if (self::ok($y) && isset($y['response']['id'])) {
+                $sid = (string) $y['response']['id'];
+                $set['series'] = ['id' => $sid, 'uid' => (string) ($y['response']['iCalUID'] ?? ''), 'etag' => null, 'day' => null, 'dayEtag' => null];
+                $this->state['deletables'][$for] = $set;
+                $this->saveState();
+                $inst = $this->send("M$for.3", "deletables for $for: the series' instances", 'GET', '/events/' . rawurlencode($sid) . '/instances');
+                $day = $inst['response']['items'][1]['id'] ?? null;
+                if ($day !== null) {
+                    $this->send("M$for.4", "deletables for $for: rename the series' second day", 'PATCH', '/events/' . rawurlencode((string) $day), [], ['summary' => "Access probe deletable weekly ($for, one changed)"]);
+                    $set['series']['day'] = (string) $day;
+                }
+            }
+            $this->state['deletables'][$for] = $set;
+            $this->saveState();
+            // Each read back now, for the etag a DELETE at its stage will carry (the renamed day's record its own).
+            foreach ([['single', 'id', 'etag', '5', 'the single event'], ['series', 'id', 'etag', '6', 'the series'], ['series', 'day', 'dayEtag', '7', 'the renamed day']] as [$k, $idKey, $etagKey, $n, $what]) {
+                $id = $set[$k][$idKey] ?? null;
+                if ($id === null) {
+                    continue;
+                }
+                $g = $this->send("M$for.$n", "deletables for $for: get $what for its etag", 'GET', '/events/' . rawurlencode((string) $id), [], null, [], static fn(array $r) => ['etag' => isset($r['etag']) ? 'given' : 'none']);
+                if (self::ok($g) && isset($g['response']['etag'])) {
+                    $this->state['deletables'][$for][$k][$etagKey] = (string) $g['response']['etag'];
+                }
+            }
+            $this->saveState();
+        }
+    }
+
+    /** At a lowered stage: its deletables and the owner's own event, each DELETE conditional on the etag stored; one not refused is followed by a GET. */
+    private function deletesAt(string $stage): void
+    {
+        $set = $this->state['deletables'][$stage] ?? null;
+        $targets = [];
+        if ($set !== null) {
+            if (isset($set['single'])) {
+                $targets[] = ['D1', "this stage's single event", (string) $set['single']['id'], $set['single']['etag'] ?? null];
+            }
+            if (isset($set['series']['day'])) {
+                $targets[] = ['D2', "this stage's renamed day's record", (string) $set['series']['day'], $set['series']['dayEtag'] ?? null];
+            }
+            if (isset($set['series'])) {
+                $targets[] = ['D3', "this stage's series", (string) $set['series']['id'], $set['series']['etag'] ?? null];
+            }
+        } else {
+            $this->record['notes'][] = "No deletables for $stage in the state file (made at a writer stage of round 2), so D1 to D3 were not sent.";
+        }
+        if ($this->state['ownerEvent'] !== null) {
+            $targets[] = ['D4', "the owner's own event (the etag stored at writer)", (string) $this->state['ownerEvent']['id'], $this->state['ownerEtagAtWriter'] ?? null];
+        }
+        foreach ($targets as [$n, $what, $id, $etag]) {
+            $x = $this->send($n, "delete $what" . ($etag !== null && $etag !== '' ? ' (If-Match)' : ''), 'DELETE', '/events/' . rawurlencode($id), [], null, $etag !== null && $etag !== '' ? ['If-Match: ' . $etag] : []);
+            if (self::ok($x)) {
+                $this->record['notes'][] = "$n was not refused: $what was deleted at stage $stage.";
+                $this->send("$n.get", "get $what after its delete", 'GET', '/events/' . rawurlencode($id), [], null, [], static fn(array $r) => ['status field' => self::field($r, 'status')]);
+            }
+        }
+    }
+
+    /** Every stage: the single event and the series the writer stage made, listed by iCalUID: count, accessRole, each item's key names. */
+    private function uidLists(): void
+    {
+        foreach ([['U1', 'the single event', 'single'], ['U2', 'the series', 'series']] as [$n, $what, $k]) {
+            $uid = (string) ($this->state[$k]['uid'] ?? '');
+            if ($uid === '') {
+                $this->record['notes'][] = "$n not sent: the state file has no iCalUID for $what (made by a writer stage of round 2).";
+                continue;
+            }
+            $this->send($n, "list $what by iCalUID, showDeleted, singleEvents=false", 'GET', '/events', ['iCalUID' => $uid, 'showDeleted' => 'true', 'singleEvents' => 'false'], null, [], static function (array $r): array {
+                $items = (array) ($r['items'] ?? []);
+                $out = ['accessRole' => self::field($r, 'accessRole'), 'item count' => (string) count($items)];
+                foreach (array_values($items) as $i => $e) {
+                    $keys = array_keys((array) $e);
+                    sort($keys);
+                    $out['item ' . ($i + 1) . ' keys'] = implode(', ', $keys);
+                }
+                return $out;
+            });
+        }
+    }
+
+    /** Every stage: an insert under the id of the single event the writer stage made. */
+    private function insertWithTakenId(): void
+    {
+        $id = $this->state['single']['id'] ?? null;
+        if ($id === null) {
+            $this->record['notes'][] = 'I not sent: no single event from a writer stage in the state file.';
+            return;
+        }
+        $x = $this->send('I', "insert under the id of the writer stage's single event", 'POST', '/events', [], $this->marked(['id' => (string) $id, 'summary' => 'Access probe insert, a taken id'] + $this->when(13, 9)), [], static fn(array $r) => ['id' => (string) ($r['id'] ?? '-')]);
+        if (self::ok($x) && isset($x['response']['id']) && (string) $x['response']['id'] !== (string) $id) {
+            $this->state['inserted'][] = (string) $x['response']['id'];
+            $this->saveState();
+        }
+    }
+
+    /** Stage restored, first of all: PATCH the single event's title once a second until Google takes it or 180 seconds pass. */
+    private function patchUntilTaken(float $started): void
+    {
+        $id = $this->state['single']['id'] ?? null;
+        if ($id === null) {
+            $this->record['notes'][] = 'R0 not sent: no single event from a writer stage in the state file.';
+            return;
+        }
+        $sleep = $this->sleep ?? static function (float $s): void {
+            usleep((int) round($s * 1_000_000));
+        };
+        for ($try = 1; ; $try++) {
+            $x = $this->send("R0.$try", "patch the single event's title, once a second until taken", 'PATCH', '/events/' . rawurlencode((string) $id), [], ['summary' => self::SINGLE_TITLE . " (restored, try $try)"]);
+            $secs = microtime(true) - $started;
+            if (self::ok($x)) {
+                $this->record['notes'][] = sprintf('R0: the first PATCH Google took was try %d, %.1f seconds after the stage began.', $try, $secs);
+                if (isset($x['response']['etag'])) {
+                    $this->state['single']['etag'] = (string) $x['response']['etag'];
+                }
+                return;
+            }
+            if ($secs >= 180) {
+                $this->record['notes'][] = sprintf('R0: no PATCH was taken in %d tries over %.1f seconds.', $try, $secs);
+                return;
+            }
+            $sleep(1.0);
+        }
+    }
+
+    /** Stage restored, at the end: what of the deletables still exists, by iCalUID with showDeleted. */
+    private function deletablesLeft(): void
+    {
+        foreach ((array) ($this->state['deletables'] ?? []) as $for => $set) {
+            foreach (['single' => 'single event', 'series' => 'series'] as $k => $what) {
+                $uid = (string) ($set[$k]['uid'] ?? '');
+                if ($uid === '') {
+                    continue;
+                }
+                $this->send("R9.$for.$k", "list the $for deletables' $what by iCalUID, showDeleted", 'GET', '/events', ['iCalUID' => $uid, 'showDeleted' => 'true', 'singleEvents' => 'false'], null, [], static function (array $r): array {
+                    $items = (array) ($r['items'] ?? []);
+                    return ['item count' => (string) count($items), 'items' => implode(', ', array_map(static fn(array $e) => (empty($e['recurringEventId']) ? 'event' : 'day') . ' ' . (string) ($e['status'] ?? '?'), $items))];
+                });
+            }
+        }
     }
 
     /** Request 6: the events the writer stage made, and the owner's own event. */
@@ -231,7 +427,7 @@ final class AccessProbe
         if ($this->state['single'] === null) {
             $x = $this->send('S1', 'insert the single event', 'POST', '/events', [], $this->marked(['summary' => self::SINGLE_TITLE] + $this->when(10, 15)), [], static fn(array $r) => ['id' => (string) ($r['id'] ?? '-')]);
             if (self::ok($x) && isset($x['response']['id'])) {
-                $this->state['single'] = ['id' => (string) $x['response']['id'], 'etag' => (string) ($x['response']['etag'] ?? '')];
+                $this->state['single'] = ['id' => (string) $x['response']['id'], 'etag' => (string) ($x['response']['etag'] ?? ''), 'uid' => (string) ($x['response']['iCalUID'] ?? '')];
                 $this->saveState();
             }
         } else {
@@ -243,7 +439,7 @@ final class AccessProbe
                 return;
             }
             $id = (string) $x['response']['id'];
-            $this->state['series'] = ['id' => $id, 'etag' => (string) ($x['response']['etag'] ?? ''), 'day' => null, 'dayEtag' => null];
+            $this->state['series'] = ['id' => $id, 'etag' => (string) ($x['response']['etag'] ?? ''), 'day' => null, 'dayEtag' => null, 'uid' => (string) ($x['response']['iCalUID'] ?? '')];
             $this->saveState();
             $inst = $this->send('S3', 'list the series\' instances', 'GET', '/events/' . rawurlencode($id) . '/instances', [], null, [], static fn(array $r) => ['items' => (string) count((array) ($r['items'] ?? []))]);
             $day = $inst['response']['items'][1]['id'] ?? null;
@@ -272,6 +468,13 @@ final class AccessProbe
         foreach ($this->state['inserted'] as $i => $id) {
             $ids['inserted event ' . ($i + 1)] = (string) $id;
         }
+        foreach ((array) ($this->state['deletables'] ?? []) as $for => $set) {
+            foreach (['single' => 'single event', 'series' => 'series'] as $k => $what) {
+                if (isset($set[$k]['id'])) {
+                    $ids["$for deletables' $what"] = (string) $set[$k]['id'];
+                }
+            }
+        }
         if ($ids === []) {
             $this->record['notes'][] = 'The state file lists nothing to delete.';
         }
@@ -288,6 +491,17 @@ final class AccessProbe
                 $this->state['single'] = null;
             } elseif ($what === 'series') {
                 $this->state['series'] = null;
+            } elseif (str_contains($what, 'deletables')) {
+                foreach ((array) ($this->state['deletables'] ?? []) as $for => $set) {
+                    foreach (['single', 'series'] as $k) {
+                        if ((string) ($set[$k]['id'] ?? '') === $id) {
+                            unset($this->state['deletables'][$for][$k]);
+                        }
+                    }
+                    if (($this->state['deletables'][$for] ?? []) === []) {
+                        unset($this->state['deletables'][$for]);
+                    }
+                }
             } else {
                 $this->state['inserted'] = array_values(array_diff($this->state['inserted'], [$id]));
             }
@@ -612,7 +826,11 @@ final class AccessProbe
             'not the probe\'s' => (string) count(array_filter($items, static fn(array $e) => !Probe::isMarked($e))),
             'sync token' => isset($r['nextSyncToken']) ? 'given' : 'none',
             'more pages' => isset($r['nextPageToken']) ? 'given' : 'none',
-        ];
+        ] + (($own = array_values(array_filter($items, static fn(array $e) => Probe::isMarked($e)))[0] ?? null) !== null
+            ? ['first probe item keys' => implode(', ', (static function (array $k): array {
+                sort($k);
+                return $k;
+            })(array_keys($own)))] : ($this->round >= 2 && $items !== [] ? ['first probe item keys' => '(none of the items carries the probe\'s marker)'] : []));
     }
 
     /** At the first stage that lists it, the one event on the calendar the probe did not make (the owner's own) is kept in the state. */

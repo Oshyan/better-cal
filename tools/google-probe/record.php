@@ -14,7 +14,7 @@
 // own process. Scenarios go in order until --max-requests would be passed.
 // A trace whose stand-in was changed outside a request in a way no request
 // repeats (lib/Trace.php, "setup") goes to <dir>/unreplayable/, one with
-// no request is dropped; both are listed. The three record-app.php
+// no request is dropped; both are listed. The four record-app.php
 // scenarios come first.
 // Prints what the set covers and which of the write kinds it should
 // cover it lacks.
@@ -77,7 +77,7 @@ foreach (["$out/unreplayable", "$out/.harness"] as $d) {
 $harness = static fn(string $name, array $args): array => array_merge([PHP_BINARY, "$root/tools/edit-harness/harness.php", '--google', '--no-shrink', '--quiet', '--findings', "$out/.harness/$name.json"], $args);
 $scenarios = [];
 // What the harness doesn't make (single events, a whole series deleted): record-app.php.
-foreach (['single-timed', 'single-all-day', 'series-deleted-whole'] as $s) {
+foreach (['single-timed', 'single-all-day', 'series-deleted-plain', 'series-deleted-whole'] as $s) {
     $scenarios["app-$s"] = [PHP_BINARY, __DIR__ . '/record-app.php', '--scenario', $s];
 }
 if ($fixedKind !== 'none') {

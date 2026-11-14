@@ -37,6 +37,7 @@ final class Probe
         '8' => ['Mail', 'Writes to a series with a guest, with sendUpdates=none and once with it left out, to be checked against the guest\'s mailbox by hand.'],
         '9' => ['Two live checks from the audit of closed issues', 'Manual: they run through the app, not the API.'],
         '10' => ['What an undo of a change to all events would meet', 'Each from a weekly 10:00 America/Los_Angeles series of ten with its own renamed and deleted days: whether a series stays still with no writes (10.1 takes ten minutes, it waits), a bound taken back and its days sent again, a split taken back, a deleted series made live again, a day under a deleted series, and a value only Google holds on one day (colorId). Each list is the singleEvents=false, showDeleted=true list by iCalUID, every field of every item printed.'],
+        '11' => ['A list by iCalUID right after a write', 'Whether the list by an event\'s iCalUID (singleEvents=false, showDeleted=true) carries a write at once, as a first read of a single event that replaces a GET by id must: 30 single events inserted, each listed at once; one single event PATCHed 30 times in a row, each conditional on the etag the list before it gave; the same 30 for one day of a repeating event that has its own record; 10 single events deleted, each listed at once. Each: listed or not, the etag (and title) equal to the write\'s answer or not, the milliseconds between the write\'s answer and the list\'s, and for a mismatch how long until a re-list agrees (up to five, a second apart). Counts, no verdict. No attendees.'],
     ];
 
     private string $runId;
@@ -1258,6 +1259,105 @@ final class Probe
         $this->probeCase('3', '3.66', 'a day written with no If-Match: a live record, a revived record, a cancelled record made an edited day, a record put back to the series\' values, a record cancelled, an ordinary day cancelled', function (CaseRun $c): void {
             $this->unconditionalDays($c);
         });
+
+        // The second independent read of the 1.5.6 branch, F1 and the notes: evidence, not a test of a theory. What a
+        // kept record's start and end are after the start moves along its pattern (until now read from 3.5, whose
+        // report named no end), and whether a master write that sends no recurrence clears a day's own notes too.
+        $this->probeCase('3', '3.67', 'the first day moved a week later for all events (start along the pattern, the drag the app sends) over a day with its own time and length and an ordinary day renamed: each kept record\'s start and end before and after', function (CaseRun $c): void {
+            $this->startAlongPattern($c);
+        });
+        $this->probeCase('3', '3.68', 'a series with no notes and a day with its own notes: the master PATCHed with one private property only, then with its title only, no recurrence in either; the day read after each', function (CaseRun $c): void {
+            $this->notesWithoutRule($c);
+        });
+    }
+
+    // ---- 3.67, 3.68: a kept record's end, and notes without a rule (second read of the 1.5.6 branch) ----
+
+    /** Each exception record of $m in $read, by label: status, title, start and end, in words. */
+    private function recordTimes(CaseRun $c, array $read): string
+    {
+        $parts = [];
+        foreach (self::exceptions($read) as $key => $e) {
+            $parts[] = $this->label($c, (string) $key) . ' ' . ($e['status'] ?? '?') . ' "' . ($e['summary'] ?? '') . '" start ' . self::when($e['start'] ?? null) . ', end ' . self::when($e['end'] ?? null);
+        }
+        return $parts === [] ? 'no exception records' : implode('; ', $parts);
+    }
+
+    /**
+     * 3.67: a weekly 10:00 to 11:00 Los Angeles series of six from 2027-03-01 (an empty description, as the app makes
+     * one); occurrence 2 given its own time and length (14:00 to 15:30), occurrence 3 renamed and left at the series'
+     * time. Then the master PATCHed as the app sends a drag of the first day a week later for all events: start and end
+     * on 2027-03-08 at 10:00 to 11:00, the rule as it was, If-Match the master's read. Both days remain days of the
+     * series. The finding: every record's start and end before and after, then the standard story.
+     */
+    private function startAlongPattern(CaseRun $c): void
+    {
+        $rule = ['RRULE:FREQ=WEEKLY;COUNT=6'];
+        $body = self::timed('Probe drag', self::LA, '2027-03-01 10:00', 60, $rule);
+        $body['description'] = '';
+        $x = $this->insert($c, 'setup', 'insert the series', $body, true, false);
+        $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+        $two = $this->nth($c, $m, 2, 'own time and length');
+        $three = $this->nth($c, $m, 3, 'renamed, at the series\' time');
+        $setup = [
+            $this->send($c, 'setup', 'occurrence 2 given its own time and length (14:00 to 15:30)', 'PATCH', '/events/' . rawurlencode((string) $two['id']), [], self::clockAt(self::LA, '2027-03-08 14:00', 90)),
+            $this->send($c, 'setup', 'occurrence 3 renamed', 'PATCH', '/events/' . rawurlencode((string) $three['id']), [], ['summary' => 'Probe drag (one renamed)']),
+        ];
+        foreach ($setup as $s) {
+            if ($s['status'] >= 300) {
+                throw new \RuntimeException('setting up the days failed: HTTP ' . $s['status']);
+            }
+        }
+        $etag = self::etagNamer();
+        $answer = '';
+        $this->standard($c, function (CaseRun $c) use ($m, $rule, $etag, &$answer): void {
+            $g = $c->step('read', 'get the master for its etag', $this->api->call('GET', '/events/' . rawurlencode($m)));
+            $im = is_array($g['response']) && is_string($g['response']['etag'] ?? null) ? $g['response']['etag'] : null;
+            $x = $this->send($c, 'write', 'the first day a week later for all events', 'PATCH', '/events/' . rawurlencode($m), [], self::clockAt(self::LA, '2027-03-08 10:00', 60) + ['recurrence' => $rule], $im !== null ? ['If-Match: ' . $im] : []);
+            $answer = 'the master PATCH (start and end on 2027-03-08 10:00 to 11:00, the rule as it was): ' . self::answer($x, $etag);
+        });
+        $c->sent = 'setup: a weekly 10:00 to 11:00 Los Angeles series of six from 2027-03-01, no notes; occurrence 2 at its own 14:00 to 15:30; occurrence 3 renamed; then the master PATCHed to start 2027-03-08 10:00 to 11:00, the rule as it was, If-Match the master\'s read';
+        $c->finding = $answer . '; records before: ' . $this->recordTimes($c, $c->before[$m] ?? []) . '; records after: ' . $this->recordTimes($c, $c->after[$m] ?? []) . '; ' . $this->seriesFinding($c, $m);
+    }
+
+    /**
+     * 3.68: a weekly 10:00 Los Angeles series of six with an empty description (as the app makes one); occurrence 2
+     * given its own notes. Then two master PATCHes, neither with a recurrence, each If-Match the master's read and each
+     * followed by a GET of occurrence 2: first one private extended property only (the probe's marker sent with it, so
+     * it is kept), then the title only. No attendees, nothing that sends mail. The finding: occurrence 2's notes after
+     * each.
+     */
+    private function notesWithoutRule(CaseRun $c): void
+    {
+        $body = self::timed('Probe notes no rule', self::LA, '2027-03-01 10:00', 60, ['RRULE:FREQ=WEEKLY;COUNT=6']);
+        $body['description'] = '';
+        $x = $this->insert($c, 'setup', 'insert the series', $body, true, false);
+        $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+        $two = $this->nth($c, $m, 2, 'own notes');
+        $r = $this->send($c, 'setup', 'occurrence 2 given its own notes', 'PATCH', '/events/' . rawurlencode((string) $two['id']), [], ['description' => 'Probe own notes of the day']);
+        if ($r['status'] >= 300) {
+            throw new \RuntimeException('setting up occurrence 2 failed: HTTP ' . $r['status']);
+        }
+        $etag = self::etagNamer();
+        $story = [];
+        $this->standard($c, function (CaseRun $c) use ($m, $two, $etag, &$story): void {
+            $writes = [
+                ['one private extended property only', ['extendedProperties' => ['private' => [self::MARKER_KEY => $this->runId, 'betterCalProbeExtra' => 'one']]]],
+                ['the title only', ['summary' => 'Probe notes no rule, renamed']],
+            ];
+            foreach ($writes as [$what, $patch]) {
+                $g = $c->step('read', 'get the master for its etag', $this->api->call('GET', '/events/' . rawurlencode($m)));
+                $im = is_array($g['response']) && is_string($g['response']['etag'] ?? null) ? $g['response']['etag'] : null;
+                $x = $this->send($c, 'write', "the master PATCHed with $what", 'PATCH', '/events/' . rawurlencode($m), [], $patch, $im !== null ? ['If-Match: ' . $im] : []);
+                $d = $this->get($c, 'read', (string) $two['id']);
+                $day = is_array($d['response']) ? $d['response'] : [];
+                $story[] = "the master PATCHed with $what, no recurrence (If-Match " . $etag($im) . '): ' . self::answer($x, $etag)
+                    . '; occurrence 2 after: HTTP ' . self::status($d) . ', ' . ($day['status'] ?? '?') . ', description ' . (array_key_exists('description', $day) ? json_encode($day['description'], JSON_UNESCAPED_UNICODE) : 'absent')
+                    . ', title ' . json_encode($day['summary'] ?? null, JSON_UNESCAPED_UNICODE);
+            }
+        });
+        $c->sent = 'setup: a weekly 10:00 Los Angeles series of six, no notes; occurrence 2 given its own notes; then the master PATCHed with one private extended property only, then with its title only, neither sending a recurrence, each If-Match the master\'s read and followed by a GET of occurrence 2';
+        $c->finding = implode('; ', $story) . '; ' . $this->seriesFinding($c, $m);
     }
 
     // ---- 3.48 to 3.51: a day hidden where its two forms meet at 00:00 UTC (replay round 4, cause 1) ----
@@ -2443,6 +2543,157 @@ final class Probe
     private const UNDO_TITLE = 'Probe undo';
     private const UNDO_OWN_TITLE = 'Probe undo (one changed)';
     private const UNDO_RULE = ['RRULE:FREQ=WEEKLY;COUNT=10'];
+
+    // ---- 11. A list by iCalUID right after a write ---------------------------------
+
+    private function group11(): void
+    {
+        $uidList = fn(CaseRun $c, string $uid, string $label): array => $this->pages($c, 'read', $label, '/events', ['iCalUID' => $uid, 'singleEvents' => 'false', 'showDeleted' => 'true'])['items'];
+        $byId = static function (array $items, string $id): ?array {
+            foreach ($items as $e) {
+                if ((string) ($e['id'] ?? '') === $id) {
+                    return $e;
+                }
+            }
+            return null;
+        };
+        $ms = static fn(float $from): int => (int) round((microtime(true) - $from) * 1000);
+
+        $this->probeCase('11', '11.1', 'thirty single events inserted, each listed by its iCalUID at once: listed, with the etag the insert returned', function (CaseRun $c) use ($uidList, $byId, $ms): void {
+            $rows = [];
+            for ($i = 1; $i <= 30; $i++) {
+                $x = $this->insert($c, 'write', "insert single event $i", self::timed("Probe list $i", self::LA, '2027-06-' . sprintf('%02d', min(28, $i)) . ' 10:00', 60));
+                $at = microtime(true);
+                $r = is_array($x['response']) ? $x['response'] : [];
+                if (!isset($r['id'], $r['iCalUID'])) {
+                    $rows[] = ['write' => 'HTTP ' . $x['status']];
+                    continue;
+                }
+                $want = fn(array $items): bool => ($e = $byId($items, (string) $r['id'])) !== null && ($e['etag'] ?? null) === ($r['etag'] ?? null);
+                $rows[] = $this->listedAfter($c, $at, $ms, fn(string $l): array => $uidList($c, (string) $r['iCalUID'], $l), static fn(array $items): array => [($e = $byId($items, (string) $r['id'])) !== null, $want($items)]);
+            }
+            $c->sent = 'thirty times: POST a single timed event (marked), then at once GET /events?iCalUID=<its uid>&singleEvents=false&showDeleted=true';
+            $c->finding = self::listedStory($rows, 'the insert', 'with the etag it returned');
+        });
+
+        $this->probeCase('11', '11.2', 'one single event PATCHed thirty times in a row, each conditional on the etag the list before it gave, each listed by its iCalUID at once: the etag and title the PATCH returned', function (CaseRun $c) use ($uidList, $byId, $ms): void {
+            $x = $this->insert($c, 'setup', 'insert the single event', self::timed('Probe list again', self::LA, '2027-06-10 10:00', 60));
+            $id = (string) ($x['response']['id'] ?? throw new \RuntimeException('the event was refused: HTTP ' . $x['status']));
+            $uid = (string) ($x['response']['iCalUID'] ?? '');
+            $etag = ($byId($uidList($c, $uid, 'list for the first etag'), $id)['etag'] ?? null) ?? ($x['response']['etag'] ?? null);
+            $rows = $this->patchedInARow($c, $id, $etag, static fn(int $i): array => ['summary' => "Probe list again ($i)"], $uidList, $uid, $byId, $ms);
+            $c->sent = 'one single timed event; thirty times: PATCH its title, If-Match the etag the list before gave (after a 412, a GET\'s), then at once the list by its iCalUID';
+            $c->finding = self::listedStory($rows, 'the PATCH');
+        });
+
+        $this->probeCase('11', '11.3', 'one day of a repeating event that has its own record PATCHed thirty times in a row, each conditional on the etag the list before it gave, the series listed by its iCalUID at once: the day\'s etag and title as the PATCH returned', function (CaseRun $c) use ($uidList, $byId, $ms): void {
+            $x = $this->insert($c, 'setup', 'insert the series', self::timed('Probe list series', self::LA, '2027-06-07 10:00', 60, ['RRULE:FREQ=WEEKLY;COUNT=4']));
+            $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+            $uid = (string) ($x['response']['iCalUID'] ?? '');
+            $day = (string) $this->nth($c, $m, 2, 'the day written thirty times')['id'];
+            $r = $this->send($c, 'setup', 'occurrence 2 given its own title (its own record)', 'PATCH', '/events/' . rawurlencode($day), [], ['summary' => 'Probe list series (own)']);
+            if ($r['status'] >= 300) {
+                throw new \RuntimeException('setting up occurrence 2 failed: HTTP ' . $r['status']);
+            }
+            $etag = ($byId($uidList($c, $uid, 'list for the first etag'), $day)['etag'] ?? null) ?? ($r['response']['etag'] ?? null);
+            $rows = $this->patchedInARow($c, $day, $etag, static fn(int $i): array => ['summary' => "Probe list series (own $i)"], $uidList, $uid, $byId, $ms);
+            $c->sent = 'a weekly series of four, occurrence 2 given its own title; thirty times: PATCH that day\'s title, If-Match the etag the list before gave (after a 412, a GET\'s), then at once the series\' list by its iCalUID';
+            $c->finding = self::listedStory($rows, 'the PATCH');
+        });
+
+        $this->probeCase('11', '11.4', 'ten single events deleted, each listed by its iCalUID with showDeleted at once: listed cancelled', function (CaseRun $c) use ($uidList, $byId, $ms): void {
+            $rows = [];
+            for ($i = 1; $i <= 10; $i++) {
+                $x = $this->insert($c, 'setup', "insert single event $i", self::timed("Probe list gone $i", self::LA, '2027-06-' . sprintf('%02d', $i) . ' 15:00', 60));
+                $id = (string) ($x['response']['id'] ?? throw new \RuntimeException('the event was refused: HTTP ' . $x['status']));
+                $uid = (string) ($x['response']['iCalUID'] ?? '');
+                $d = $this->send($c, 'write', "delete single event $i", 'DELETE', '/events/' . rawurlencode($id));
+                $at = microtime(true);
+                if ($d['status'] >= 300) {
+                    $rows[] = ['write' => 'HTTP ' . $d['status']];
+                    continue;
+                }
+                $rows[] = $this->listedAfter($c, $at, $ms, fn(string $l): array => $uidList($c, $uid, $l), static fn(array $items): array => [($e = $byId($items, $id)) !== null, ($e['status'] ?? null) === 'cancelled']);
+            }
+            $c->sent = 'ten times: POST a single timed event (marked), DELETE it, then at once the list by its iCalUID with showDeleted=true';
+            $c->finding = self::listedStory($rows, 'the delete', 'cancelled');
+        });
+    }
+
+    /**
+     * The list right after a write, and re-lists (up to five, a second apart) until it agrees. $check(items) gives
+     * [listed, agrees]. Returns listed, agree, ms (write's answer to the first list's), and for a mismatch the re-list
+     * that agreed (its number and ms) or none.
+     */
+    private function listedAfter(CaseRun $c, float $at, \Closure $ms, \Closure $list, \Closure $check): array
+    {
+        $items = $list('list at once');
+        $first = $ms($at);
+        [$listed, $agree] = $check($items);
+        $row = ['listed' => $listed, 'agree' => $agree, 'ms' => $first];
+        if (!$agree) {
+            $row['agreedAt'] = null;
+            for ($n = 1; $n <= 5; $n++) {
+                ($this->sleep)(1.0);
+                [, $ok] = $check($list("re-list $n"));
+                if ($ok) {
+                    $row['agreedAt'] = ['n' => $n, 'ms' => $ms($at)];
+                    break;
+                }
+            }
+        }
+        return $row;
+    }
+
+    /** Thirty conditional PATCHes of one id, each on the etag the list before gave (a GET's after a 412), each listed at once. */
+    private function patchedInARow(CaseRun $c, string $id, ?string $etag, \Closure $body, \Closure $uidList, string $uid, \Closure $byId, \Closure $ms): array
+    {
+        $rows = [];
+        for ($i = 1; $i <= 30; $i++) {
+            $x = $this->send($c, 'write', "PATCH $i, If-Match the last list's etag", 'PATCH', '/events/' . rawurlencode($id), [], $body($i), $etag !== null ? ['If-Match: ' . $etag] : []);
+            $at = microtime(true);
+            if ($x['status'] === 412) {
+                $rows[] = ['write' => 'HTTP 412'];
+                $g = $this->get($c, 'read', $id);
+                $etag = is_array($g['response']) && is_string($g['response']['etag'] ?? null) ? $g['response']['etag'] : null;
+                continue;
+            }
+            $r = is_array($x['response']) ? $x['response'] : [];
+            if ($x['status'] >= 300) {
+                $rows[] = ['write' => 'HTTP ' . $x['status']];
+                continue;
+            }
+            $items = [];
+            $row = $this->listedAfter($c, $at, $ms, static function (string $l) use ($uidList, $c, $uid, &$items): array {
+                return $items = $uidList($c, $uid, $l);
+            }, static fn(array $got): array => [($e = $byId($got, $id)) !== null, $e !== null && ($e['etag'] ?? null) === ($r['etag'] ?? null) && ($e['summary'] ?? null) === ($r['summary'] ?? null)]);
+            $rows[] = $row;
+            // The next PATCH is conditional on what the first list gave, as the app's next edit would be.
+            $etag = ($byId($items, $id)['etag'] ?? null) ?? $etag;
+        }
+        return $rows;
+    }
+
+    /** Counts over the rows, no verdict. */
+    private static function listedStory(array $rows, string $write, string $agreeWord = 'with the etag (and title) it returned'): string
+    {
+        $done = array_values(array_filter($rows, static fn(array $r): bool => !isset($r['write'])));
+        $refused = array_count_values(array_column(array_filter($rows, static fn(array $r): bool => isset($r['write'])), 'write'));
+        $mss = array_column($done, 'ms');
+        sort($mss);
+        $late = array_values(array_filter($done, static fn(array $r): bool => !$r['agree']));
+        $parts = [count($rows) . ' writes; ' . implode(', ', array_map(static fn(string $k, int $n): string => "$n answered $k", array_keys($refused), $refused)) . ($refused === [] ? 'every one taken' : '')];
+        $parts[] = 'listed at once after ' . count(array_filter($done, static fn(array $r): bool => $r['listed'])) . ' of ' . count($done) . ' taken';
+        $parts[] = 'the list agreed with ' . $write . ' (' . $agreeWord . ') at once for ' . (count($done) - count($late)) . ' of ' . count($done);
+        if ($mss !== []) {
+            $parts[] = 'milliseconds from the write\'s answer to the list\'s: least ' . $mss[0] . ', median ' . $mss[intdiv(count($mss), 2)] . ', most ' . $mss[count($mss) - 1];
+        }
+        if ($late !== []) {
+            $parts[] = 'where it did not: ' . implode('; ', array_map(static fn(array $r): string => ($r['listed'] ? 'listed, not agreeing' : 'not listed') . ', '
+                . ($r['agreedAt'] === null ? 'no re-list of five agreed' : 'agreed at re-list ' . $r['agreedAt']['n'] . ', ' . $r['agreedAt']['ms'] . ' ms after the write'), $late));
+        }
+        return implode('; ', $parts);
+    }
 
     private function group10(): void
     {

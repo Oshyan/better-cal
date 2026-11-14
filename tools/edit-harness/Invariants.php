@@ -233,16 +233,18 @@ trait Invariants
 
     /**
      * Whether a key is the series' first day (api-contract, This and following: from a series' first day it is the whole
-     * series' change): its stored start, or, for a start stored a period before a first day in a skipped hour (that
-     * stored day skipped, Zones, DST and All-Day Days), the first day shown.
+     * series' change; decisions.md, "From the first day still showing, this and following is the whole series"): the
+     * first raw occurrence not skipped. That covers a start stored a period before a first day in a skipped hour (that
+     * stored day a skip, Zones, DST and All-Day Days) and a series whose earlier days were all deleted.
      */
     private static function isFirstDay(array $st, string $key): bool
     {
-        $start = (string) ($st['row']['start_utc'] ?? '');
-        if ($key === $start) {
-            return true;
+        foreach ($st['raw'] as $o) {
+            if (!in_array((string) $o['key'], $st['exdates'], true)) {
+                return (string) $o['key'] === $key;
+            }
         }
-        return self::shownFrom($st) === 1 && $st['raw'][1]['key'] === $key;
+        return $key === (string) ($st['row']['start_utc'] ?? '');
     }
 
     /**

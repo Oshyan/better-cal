@@ -257,6 +257,62 @@ foreach (['other01', 'other02'] as $id) {
 [, $record, $sent] = stageRun($fake, "$tmp/refuse-others", 'writer', 'writer', $seen);
 check('refusal: a calendar with more than the owner\'s one event is refused', str_contains((string) ($record['stopped'] ?? ''), '--allow-other-events') && array_filter($sent, static fn(array $r) => $r['method'] !== 'GET') === []);
 
+// ---- Round 2: the second live round's requests through all five stages, then cleanup ----
+// As above, what the gate answers is invented; this only shows the requests run in each stage, in their order, and
+// that cleanup deletes what they make. It proves nothing about Google.
+function stageRun2(FakeGoogle $fake, string $dir, string $mode, string $stage, array &$seen): array
+{
+    $api = new Api(gated($fake, $mode, $seen), static fn(): string => 'fake-token', CAL, static function (float $s): void {
+    }, 0.25);
+    $scrub = new Report($dir);
+    $scrub->secret(ACCOUNT, '{account}');
+    $scrub->secret(CAL, '{calendar}');
+    $probe = new AccessProbe($api, $scrub, $dir, false, new \DateTimeImmutable('2027-03-01T08:00:00-08:00'), true, 2, static function (float $s): void {
+    });
+    $before = count($seen);
+    $record = $probe->run($stage);
+    return [$probe, $record, array_slice($seen, $before)];
+}
+$fake = new FakeGoogle(CAL);
+$fake->owner = ACCOUNT;
+$fake->seed(['id' => 'ownerevent01', 'summary' => 'Owner event', 'creator' => ['email' => OWNER], 'start' => ['dateTime' => '2027-03-05T10:00:00-08:00'], 'end' => ['dateTime' => '2027-03-05T11:00:00-08:00']]);
+$dir2 = $tmp . '/round2';
+foreach (['writer', 'reader', 'freebusy', 'unshared', 'restored', 'cleanup'] as $stage) {
+    [$probe, $record, $sent] = stageRun2($fake, $dir2, $stage === 'cleanup' ? 'restored' : $stage, $stage, $seen);
+    $ns = array_column($record['rows'], 'n');
+    check("round 2, $stage: runs without stopping", !isset($record['stopped']), (string) ($record['stopped'] ?? ''));
+    check("round 2, $stage: every request is a row", count($record['rows']) === count($sent), count($record['rows']) . ' rows, ' . count($sent) . ' sent');
+    if ($stage === 'cleanup') {
+        $live = array_filter($fake->events, static fn(array $e) => Probe::isMarked($e) && empty($e['recurringEventId']) && ($e['status'] ?? '') !== 'cancelled');
+        check('round 2, cleanup: nothing the probe made is live, the deletables included', $live === [], implode(', ', array_keys($live)));
+        check('round 2, cleanup: the owner\'s event is still there', ($fake->events['ownerevent01']['status'] ?? '') === 'confirmed');
+        continue;
+    }
+    check("round 2, $stage: U1, U2 and I are sent", array_diff(['U1', 'U2', 'I'], $ns) === [], implode(',', $ns));
+    $deletes = array_values(array_filter($ns, static fn(string $n) => in_array($n, ['D1', 'D2', 'D3', 'D4'], true)));
+    check("round 2, $stage: the deletes D1 to D4, in order, only at a lowered stage", $deletes === (in_array($stage, ['reader', 'freebusy', 'unshared'], true) ? ['D1', 'D2', 'D3', 'D4'] : []), implode(',', $deletes));
+    if ($stage === 'writer') {
+        $state = AccessProbe::loadState($probe->statePath);
+        check('round 2, writer: three sets of deletables, each with its etags', array_keys($state['deletables'] ?? []) === ['reader', 'freebusy', 'unshared']
+            && array_filter($state['deletables'], static fn(array $d) => !isset($d['single']['etag'], $d['series']['etag'], $d['series']['dayEtag'])) === [], json_encode($state['deletables'] ?? null));
+        check('round 2, writer: the owner\'s etag at writer is stored', ($state['ownerEtagAtWriter'] ?? '') !== '');
+    }
+    if ($stage === 'reader') {
+        $byN = array_column($record['exchanges'], null, 'n');
+        $d = AccessProbe::loadState($probe->statePath)['deletables']['reader'];
+        check('round 2, reader: each delete carries the etag stored for it', ($byN['D1']['headers'] ?? null) === ['If-Match: ' . $d['single']['etag']] && ($byN['D2']['headers'] ?? null) === ['If-Match: ' . $d['series']['dayEtag']] && ($byN['D3']['headers'] ?? null) === ['If-Match: ' . $d['series']['etag']]);
+        $u2 = array_values(array_filter($record['rows'], static fn(array $r) => $r['n'] === 'U2'))[0]['fields'] ?? [];
+        check('round 2, reader: U2 gives the item count, accessRole and each item\'s key names', isset($u2['item count'], $u2['accessRole'], $u2['item 1 keys']), json_encode($u2));
+        $r4 = array_values(array_filter($record['rows'], static fn(array $r) => $r['n'] === '4'))[0]['fields'] ?? [];
+        check('round 2, reader: request 4 names the first probe item\'s keys', isset($r4['first probe item keys']), json_encode($r4));
+    }
+    if ($stage === 'restored') {
+        check('round 2, restored: R0 comes first, and the deletables are listed at the end', str_starts_with($ns[0] ?? '', 'R0.') && count(array_filter($ns, static fn(string $n) => str_starts_with($n, 'R9.'))) === 6, implode(',', $ns));
+        check('round 2, restored: the note says when the PATCH was taken', str_contains(implode(' ', $record['notes']), 'R0: the first PATCH Google took was try 1'));
+    }
+}
+check('round 2: the owner\'s event was never deleted by the stand-in (every lowered stage refused it)', ($fake->events['ownerevent01']['status'] ?? '') === 'confirmed');
+
 // tidy up, unless ACCESS_TEST_KEEP=1 asks to keep the stand-in's report to read
 if (getenv('ACCESS_TEST_KEEP') === '1') {
     echo "Kept: $tmp/stages\n";

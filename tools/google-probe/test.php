@@ -157,6 +157,18 @@ $made = array_keys(array_filter($fake->events, static fn(array $e) => Probe::isM
 check('cleanup: every event the run made is deleted', $made !== [] && array_filter($made, static fn(string $id) => $fake->events[$id]['status'] !== 'cancelled') === []);
 check('cleanup: the report says nothing marked is live', ($json['run']['markedLive'] ?? -1) === 0, (string) json_encode($json['run']['cleanup'] ?? null));
 
+// ---- Group 11 alone: the list by iCalUID right after a write ----------------------
+$fake = new FakeGoogle(CAL);
+[$report, $error] = probeRun($fake, $tmp . '/g11', ['only' => ['11']], $sleep);
+$json = json_decode((string) file_get_contents($report->jsonPath), true);
+$g11 = array_column($json['cases'] ?? [], null, 'id');
+check('group 11: runs alone, its four cases with no error', $error === null && array_keys($g11) === ['11.1', '11.2', '11.3', '11.4'] && array_filter($g11, static fn(array $c) => ($c['error'] ?? null) !== null) === [], $error?->getMessage() ?? json_encode(array_keys($g11)));
+check('group 11: on the stand-in every write is listed and agrees at once (30, 30, 30, 10)',
+    str_contains($g11['11.1']['finding'] ?? '', 'at once for 30 of 30') && str_contains($g11['11.2']['finding'] ?? '', 'at once for 30 of 30')
+    && str_contains($g11['11.3']['finding'] ?? '', 'at once for 30 of 30') && str_contains($g11['11.4']['finding'] ?? '', 'at once for 10 of 10'), json_encode(array_column($g11, 'finding')));
+check('group 11: every event it made is deleted', liveMarked($fake) === [], implode(', ', liveMarked($fake)));
+check('group 11: no write carries attendees', array_filter(writes($fake), static fn(array $r) => isset($r['body']['attendees'])) === []);
+
 // ---- The mail case, with --guest -------------------------------------------
 $fake = new FakeGoogle(CAL);
 [$report, $error] = probeRun($fake, $tmp . '/mail', ['only' => ['8']], $sleep, GUEST);
@@ -467,6 +479,67 @@ $call($fake, 'PATCH', 'standin01', ['start' => $la('2027-03-08 10:00'), 'end' =>
 $moved = $fake->records('standin01')['20270315T170000Z'] ?? [];
 check('stand-in, 3.5: the start moved along the pattern moves the moved day\'s start onto its occurrence and leaves its end',
     $at($moved['start'] ?? []) === '2027-03-15 10:00' && $at($moved['end'] ?? []) === '2027-03-16 11:00', json_encode($moved));
+
+// Cause 6 (google-a-reading-keeping-a-timed-day-under-an-all-day-series-is-offered-as-locally, request 9: a monthly
+// all-day series moved from the 5th to the 6th, its 28 February at 09:00 to 10:00 Berlin, read from 00:00 UTC on its
+// date to 10:00 Berlin, neither end in a zone). The same shape on a weekly all-day series (the stand-in's own reading
+// of rules has no monthly days), its start moved a week along the pattern.
+$fake = new FakeGoogle(CAL);
+$fake->token = null;
+$fake->seed(['id' => 'allday01', 'summary' => 'Sample series', 'start' => ['date' => '2027-03-01'], 'end' => ['date' => '2027-03-02'], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']]);
+$call($fake, 'PATCH', 'allday01_20270315', ['start' => ['dateTime' => '2027-03-15T09:00:00+01:00', 'timeZone' => 'Europe/Berlin', 'date' => null], 'end' => ['dateTime' => '2027-03-15T10:00:00+01:00', 'timeZone' => 'Europe/Berlin', 'date' => null]]);
+$call($fake, 'PATCH', 'allday01', ['start' => ['date' => '2027-03-08'], 'end' => ['date' => '2027-03-09'], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']]);
+$own = $fake->records('allday01')['20270315'] ?? [];
+$utcAt = static fn(array $w): string => isset($w['dateTime']) ? (new DateTimeImmutable((string) $w['dateTime']))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i') : '';
+check('stand-in, round 5 cause 6: a timed day of an all-day series reads from 00:00 UTC on its date to its own end, neither in a zone, after the series\' start moves',
+    [$utcAt($own['start'] ?? []), $utcAt($own['end'] ?? []), isset($own['start']['timeZone']) || isset($own['end']['timeZone'])] === ['2027-03-15 00:00', '2027-03-15 09:00', false], json_encode($own));
+
+// Cause 8 (google-undo-of-a-move-onto-a-skipped-day-date-only request 14, -with-a-status-change request 13): a daily
+// series in UTC, one day renamed and one deleted, its start moved a day; Google listed both records with no timeZone on
+// start, end and originalStartTime, where they named UTC before.
+$fake = new FakeGoogle(CAL);
+$fake->token = null;
+$fake->seed(['id' => 'utczone1', 'summary' => 'Sample series', 'start' => $utc('2027-01-01 09:00'), 'end' => $utc('2027-01-01 10:00'), 'recurrence' => ['RRULE:FREQ=DAILY']]);
+$call($fake, 'PATCH', 'utczone1_20270103T090000Z', ['summary' => 'Sample series, day 1']);
+$call($fake, 'DELETE', 'utczone1_20270102T090000Z');
+[, $l] = $call($fake, 'GET', '', null, ['iCalUID' => 'utczone1@google.com', 'singleEvents' => 'false', 'showDeleted' => 'true']);
+$zonesBefore = array_values(array_filter(array_map(static fn(array $e): ?string => $e['start']['timeZone'] ?? null, $l['items'] ?? [])));
+$call($fake, 'PATCH', 'utczone1', ['start' => $utc('2027-01-02 09:00'), 'end' => $utc('2027-01-02 10:00'), 'recurrence' => ['RRULE:FREQ=DAILY']]);
+[, $l] = $call($fake, 'GET', '', null, ['iCalUID' => 'utczone1@google.com', 'singleEvents' => 'false', 'showDeleted' => 'true']);
+$zonesAfter = [];
+foreach ($l['items'] ?? [] as $e) {
+    $zonesAfter[(string) $e['id']] = [$e['start']['timeZone'] ?? null, $e['end']['timeZone'] ?? null, $e['originalStartTime']['timeZone'] ?? null];
+}
+ksort($zonesAfter);
+check('stand-in, round 5 cause 8: a UTC series\' start moved: its records name no zone after, where they named UTC before; the master still does',
+    $zonesBefore === ['UTC', 'UTC', 'UTC'] && $zonesAfter === ['utczone1' => ['UTC', 'UTC', null], 'utczone1_20270102T090000Z' => [null, null, null], 'utczone1_20270103T090000Z' => [null, null, null]],
+    json_encode([$zonesBefore, $zonesAfter]));
+
+// ---- The stand-in against the probe of 2026-11-14 (3.67, 3.68) ----------------
+// 3.67: weekly 10:00 to 11:00 Los Angeles, occurrence 2 at its own 14:00 to 15:30, occurrence 3 renamed; the first day
+// moved a week later for all events. Google: occurrence 2 read 10:00 to 15:30 (start onto its occurrence, end left),
+// occurrence 3 kept its 10:00 to 11:00 and its title.
+$fake = new FakeGoogle(CAL);
+$fake->token = null;
+$fake->seed(['id' => 'drag0001', 'summary' => 'Sample drag', 'description' => '', 'start' => $la('2027-03-01 10:00'), 'end' => $la('2027-03-01 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']]);
+$call($fake, 'PATCH', 'drag0001_20270308T180000Z', ['start' => $la('2027-03-08 14:00'), 'end' => $la('2027-03-08 15:30')]);
+$call($fake, 'PATCH', 'drag0001_20270315T170000Z', ['summary' => 'Sample drag (one renamed)']);
+$call($fake, 'PATCH', 'drag0001', ['start' => $la('2027-03-08 10:00'), 'end' => $la('2027-03-08 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']]);
+$two = $fake->records('drag0001')['20270308T180000Z'] ?? [];
+$three = $fake->records('drag0001')['20270315T170000Z'] ?? [];
+check('stand-in, 3.67: the start along the pattern: the own-time day reads 10:00 to 15:30, the renamed day keeps 10:00 to 11:00 and its title',
+    [$at($two['start'] ?? []), $at($two['end'] ?? []), $at($three['start'] ?? []), $at($three['end'] ?? []), $three['summary'] ?? null]
+    === ['2027-03-08 10:00', '2027-03-08 15:30', '2027-03-15 10:00', '2027-03-15 11:00', 'Sample drag (one renamed)'], json_encode([$two, $three]));
+// 3.68: a series with no notes, a day with its own notes; a master PATCH with one private property and no recurrence
+// clears the notes; a title-only PATCH after leaves them absent and renames the day, which held the series' title.
+$fake = $notes(null);
+$call($fake, 'PATCH', 'notes001_20270308T180000Z', ['summary' => 'Sample notes']);
+$call($fake, 'PATCH', 'notes001', ['extendedProperties' => ['private' => ['sampleKey' => 'one']]]);
+$afterProperty = $day($fake);
+$call($fake, 'PATCH', 'notes001', ['summary' => 'Sample notes, renamed']);
+$afterTitle = $day($fake);
+check('stand-in, 3.68: a master PATCH with no recurrence clears a day\'s own notes on a series with none; a title-only PATCH after leaves them absent and renames the day',
+    !array_key_exists('description', $afterProperty) && !array_key_exists('description', $afterTitle) && ($afterTitle['summary'] ?? null) === 'Sample notes, renamed', json_encode([$afterProperty, $afterTitle]));
 
 // ---- Report scrubbing on its own ---------------------------------------------
 $r = new Report($tmp . '/scrub');

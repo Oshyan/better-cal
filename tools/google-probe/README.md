@@ -14,7 +14,7 @@ php tools/google-probe/run.php --calendar <googleCalendarId> --account <google_a
 
 - `--calendar`: the throwaway calendar's id, from its settings in Google Calendar ("Integrate calendar", Calendar ID). It doesn't need to be connected in Better-Cal, and it's quieter if it isn't.
 - `--account`: the connected account, by its `google_accounts` id or its address as stored. The probe takes its access token through `GoogleAuth`, as the worker does.
-- `--only 1,3`: run some of the ten groups.
+- `--only 1,3`: run some of the eleven groups.
 - `--guest <address>`: runs group 8 (mail), inviting that address. Use a mailbox you own and can read; it is the only case that leaves out `sendUpdates=none`, once, to see the default.
 - `--report <dir>`: where the report goes; `workfolder/google-probe/` by default (gitignored).
 - `--allow-other-events`: run on a calendar that has events the probe didn't make.
@@ -23,7 +23,7 @@ It loads the app's config and database the way `server/bin/worker.php` does, so 
 
 ## What It Does
 
-Ten groups: the nine the survey lists (rule forms, each exception kind alone (timed and all-day, plus Pacific/Auckland and Asia/Tokyo for the instance keys), master changes over exceptions, the split, etags and If-Match, deletes and their reverse, sync, mail, and the two live checks from the audit), and group 10, what an undo of a change to all events would meet (its first case waits ten minutes on purpose). Each case starts from a state it makes itself, reads it back (the master, `events.instances`, the `singleEvents=false` list of the series), takes a sync token, writes, then reads back again and lists the sync-token delta from that token, and finally runs a second delta to see whether anything still moves. The finding is written only from what came back. Group 8 can't read a mailbox, so its findings give the times to check against. Group 9 runs through the app, not the API, and the report gives its steps to do by hand.
+Eleven groups: the nine the survey lists (rule forms, each exception kind alone (timed and all-day, plus Pacific/Auckland and Asia/Tokyo for the instance keys), master changes over exceptions, the split, etags and If-Match, deletes and their reverse, sync, mail, and the two live checks from the audit), and group 10, what an undo of a change to all events would meet (its first case waits ten minutes on purpose), and group 11, whether a list by an event's iCalUID carries a write at once (thirty inserts, thirty conditional PATCHes of a single event and of one day of a series, ten deletes, each listed at once and re-listed up to five times a second apart where it differs; it reports counts and milliseconds). Each case starts from a state it makes itself, reads it back (the master, `events.instances`, the `singleEvents=false` list of the series), takes a sync token, writes, then reads back again and lists the sync-token delta from that token, and finally runs a second delta to see whether anything still moves. The finding is written only from what came back. Group 8 can't read a mailbox, so its findings give the times to check against. Group 9 runs through the app, not the API, and the report gives its steps to do by hand.
 
 A read-back is retried on a 404 or on a delta that doesn't yet show the write, a bounded number of times with backoff, and the report says how many tries it took. Nothing waits on a timer for correctness.
 
@@ -53,7 +53,7 @@ What it proves: for each recorded request, that Google answers as the stand-in d
 
 ### Recording
 
-A trace is one scenario's requests and answers, in order, as JSON (`lib/Trace.php` has the format). `GOOGLE_TRACE=<file.json>` makes the edit harness's stand-in (`tools/edit-harness/GoogleStand.php`) record through a wrapper around its transports; nothing in the stand-in changes. The trace set comes from one process per scenario, so each trace holds its scenario alone: the three scenarios in `record-app.php` (a timed single event and an all-day one created, changed and deleted, a series deleted whole), the harness's fixed cases whose names start with `google-`, every sequence, and drawn cases 1 to 15 of seed 7, a poll after each write. On the test database:
+A trace is one scenario's requests and answers, in order, as JSON (`lib/Trace.php` has the format). `GOOGLE_TRACE=<file.json>` makes the edit harness's stand-in (`tools/edit-harness/GoogleStand.php`) record through a wrapper around its transports; nothing in the stand-in changes. The trace set comes from one process per scenario, so each trace holds its scenario alone: the four scenarios in `record-app.php` (a timed single event and an all-day one created, changed and deleted, a series deleted whole, plain and over an edited and a deleted day), the harness's fixed cases whose names start with `google-`, every sequence, and drawn cases 1 to 15 of seed 7, a poll after each write. On the test database:
 
 ```bash
 BC_TEST_DB=127.0.0.1:33308 php tools/google-probe/record.php --out workfolder/google-traces --zone America/Los_Angeles
@@ -131,6 +131,26 @@ php tools/google-probe/access.php --calendar <id> --account <google_accounts id 
 `writer` refuses, writing nothing, when the calendar isn't in the account's list, when the account owns it, when Google doesn't say `writer`, or when it holds more than the owner's one event (`--allow-other-events` overrides the last). `--stage cleanup` sends only the deletes of what the state file lists and says what it could not delete; it is needed only when the calendar is kept instead of deleted. Requests per stage, with the owner's event: 18 for `writer`, 15 for each later stage (13 and 16 without it); a retry Google asks for adds one.
 
 Each run adds a table to `access-<hash>.md` (and `.json`, every exchange raw), where the hash stands for the calendar id; the state (event ids, their last etags, the last sync token and the stage it came from) is `access-state-<hash>.json` beside them and holds the raw token. The report opens with a table of every request's status by stage and ends with the questions to answer from it, left blank. It is scrubbed as the probe's is, and any other address in it is replaced too. Every write sends `sendUpdates=none`, and every event made carries the probe's marker.
+
+### Round 2
+
+A second live round, run with `--round 2` on every stage and a fresh `--report` folder so the state starts empty; the owner's steps are the same up to step 8 (the calendar can be deleted, or kept and cleaned up). What it adds to the fixed set, each a row like the others:
+
+- At `writer`, after what it makes today: three sets of deletables (a single timed event, and a weekly series of four with its second day renamed), one each for `reader`, `freebusy` and `unshared`, each read back for its current etag (the renamed day's record its own). The owner's event's etag after the stage is kept as the one stored at writer.
+- At `reader`, `freebusy` and `unshared`, in this order, each conditional on the etag stored: D1 deletes that stage's single event, D2 its renamed day's record, D3 its series, D4 the owner's own event (on the etag stored at writer). A delete that is not refused is noted and followed by a GET. None of these is sent at `writer` or `restored`.
+- At every stage: U1 and U2 list the single event and the series the writer stage made by iCalUID (`singleEvents=false`, `showDeleted=true`): item count, `accessRole`, and each item's key names (the items stay raw in the JSON). Request 4's row adds the key names of the first of the probe's own items. I inserts an event under the id of the writer stage's single event (409, 403 or another answer).
+- At `restored`, first of all, R0 PATCHes the single event's title once a second until Google takes it or 180 seconds pass, each try a row, and a note gives the try and the seconds from the stage's start to the first one taken. At its end, R9 lists what of the deletables still exists, by iCalUID with `showDeleted`.
+
+`--stage cleanup` deletes the deletables too.
+
+```bash
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --report workfolder/google-access-2 --round 2 --stage writer     # after step 4
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --report workfolder/google-access-2 --round 2 --stage reader     # after step 5
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --report workfolder/google-access-2 --round 2 --stage freebusy   # after step 6
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --report workfolder/google-access-2 --round 2 --stage unshared   # after step 7
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --report workfolder/google-access-2 --round 2 --stage restored   # after step 8, at once
+php tools/google-probe/access.php --calendar <id> --account <google_accounts id or email> --report workfolder/google-access-2 --round 2 --stage cleanup    # when the calendar is kept
+```
 
 ### Stage listread
 

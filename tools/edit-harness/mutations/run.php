@@ -16,7 +16,11 @@ $root = dirname(__DIR__, 3);
 $opts = getopt('', ['only:', 'search:', 'seed:', 'cases:']);
 $mutations = require __DIR__ . '/list.php';
 $tmp = sys_get_temp_dir() . '/bc-mutations-' . bin2hex(random_bytes(4));
-mkdir($tmp, 0700, true);
+// The patched copies are run from here, so only a folder this run made will do (issue 280).
+if (!@mkdir($tmp, 0700)) {
+    fwrite(STDERR, "Could not make a new folder $tmp for the patched copies (one by that name may already exist); nothing was run.\n");
+    exit(2);
+}
 
 /** A copy of the mutation's file with each find replaced, or an error when a find isn't there exactly once. */
 $apply = static function (array $m) use ($root, $tmp): string {

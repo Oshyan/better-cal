@@ -112,7 +112,7 @@ mkdir($tmp, 0700, true);
 // ---- The stages in the README's order, with cleanup before the delete ------
 $fake = new FakeGoogle(CAL);
 $fake->owner = ACCOUNT;
-$fake->seed(['id' => 'ownerevent01', 'summary' => 'Owner event', 'creator' => ['email' => OWNER], 'start' => ['dateTime' => '2027-03-05T10:00:00-08:00'], 'end' => ['dateTime' => '2027-03-05T11:00:00-08:00']]);
+$fake->seed(['id' => 'ownerevent01', 'summary' => 'Owner event', 'description' => 'Invented owner notes', 'location' => 'Example Hall', 'creator' => ['email' => OWNER], 'start' => ['dateTime' => '2027-03-05T10:00:00-08:00'], 'end' => ['dateTime' => '2027-03-05T11:00:00-08:00']]);
 $dir = $tmp . '/stages';
 $counts = [];
 $records = [];
@@ -199,6 +199,24 @@ check('report: the across-stages table and the template are there', str_contains
 foreach (['the account address' => ACCOUNT, 'the owner\'s address' => OWNER, 'the calendar id' => CAL, 'a sync token' => 'fake-sync-', 'the bearer token' => 'fake-token', 'an event link' => 'eid='] as $what => $needle) {
     check("report: never holds $what", !str_contains($md, $needle) && !str_contains($json, $needle));
 }
+// The owner's own event is the one the access probe expects not to be its own (issue 279): it is read at every stage and
+// renamed at writer, and only its id and status may reach the report, rows and exchanges alike.
+foreach (['Invented owner notes', 'Example Hall', '2027-03-05T10:00'] as $text) {
+    check("report: the owner's event's \"$text\" is in neither file", !str_contains($md, $text) && !str_contains($json, $text));
+}
+$ownerShown = [];
+$walk = static function (mixed $v) use (&$walk, &$ownerShown): void {
+    if (is_array($v)) {
+        if (($v['id'] ?? null) === 'ownerevent01') {
+            $ownerShown[] = array_keys($v);
+        }
+        array_map($walk, $v);
+    }
+};
+$walk(json_decode($json, true));
+check('report: the owner\'s event appears (the check above is not empty), as its id and status alone', $ownerShown !== [] && array_filter($ownerShown, static fn(array $k) => array_diff($k, ['id', 'status']) !== []) === [], json_encode($ownerShown));
+$g6 = array_values(array_filter($stages[0]['rows'] ?? [], static fn(array $r) => $r['n'] === '6g'))[0]['fields'] ?? [];
+check('report: the owner\'s event\'s row has its status, not its title', ($g6['status field'] ?? null) === 'confirmed' && ($g6['summary'] ?? null) === '(absent)', json_encode($g6));
 
 // ---- Stage listread ------------------------------------------------------------
 // On a calendar the account owns (the probe calendar) and one it may write. The stand-in has no events.import route,

@@ -33,7 +33,7 @@ Every event the probe makes carries a marker: a private extended property `bette
 
 `probe-<date>.md`: a section per group and a table per group (case, what was sent, what came back, finding). `probe-<date>.json`: every request and response, raw, by case and phase (setup, before, settle, write, delta, after, second delta, cleanup). Both are brought up to date after every case, so a stopped run leaves what it got.
 
-Neither holds the account's address, the calendar id, a guest's address, tokens, event links (Google's `htmlLink` encodes the calendar's address), display names or sync tokens: each is replaced by a placeholder. It reads nothing from any other calendar. Event titles are invented ("Probe weekly", "Probe all-day").
+Neither holds the account's address, the calendar id, a guest's address, tokens, event links (Google's `htmlLink` encodes the calendar's address), display names or sync tokens: each is replaced by a placeholder. An event the probe did not make (with `--allow-other-events`) is cut to its id and status wherever an answer carries it (a list, a delta, instances, a GET), decided by the probe's own record of what it made, never by what the event holds. It reads nothing from any other calendar. Event titles are invented ("Probe weekly", "Probe all-day").
 
 The findings go into [the model's Google section](../../docs/design/series-model.md#google-as-a-contract) by hand, and into the harness's Google stand-in.
 
@@ -130,7 +130,7 @@ php tools/google-probe/access.php --calendar <id> --account <google_accounts id 
 
 `writer` refuses, writing nothing, when the calendar isn't in the account's list, when the account owns it, when Google doesn't say `writer`, or when it holds more than the owner's one event (`--allow-other-events` overrides the last). `--stage cleanup` sends only the deletes of what the state file lists and says what it could not delete; it is needed only when the calendar is kept instead of deleted. Requests per stage, with the owner's event: 18 for `writer`, 15 for each later stage (13 and 16 without it); a retry Google asks for adds one.
 
-Each run adds a table to `access-<hash>.md` (and `.json`, every exchange raw), where the hash stands for the calendar id; the state (event ids, their last etags, the last sync token and the stage it came from) is `access-state-<hash>.json` beside them and holds the raw token. The report opens with a table of every request's status by stage and ends with the questions to answer from it, left blank. It is scrubbed as the probe's is, and any other address in it is replaced too. Every write sends `sendUpdates=none`, and every event made carries the probe's marker.
+Each run adds a table to `access-<hash>.md` (and `.json`, every exchange raw), where the hash stands for the calendar id; the state (event ids, their last etags, the last sync token and the stage it came from) is `access-state-<hash>.json` beside them and holds the raw token. The report opens with a table of every request's status by stage and ends with the questions to answer from it, left blank. It is scrubbed as the probe's is (the owner's own event and any other the probe did not make are cut to their id and status, the state file's record of what earlier stages made deciding which), and any other address in it is replaced too. Every write sends `sendUpdates=none`, and every event made carries the probe's marker.
 
 ### Round 2
 

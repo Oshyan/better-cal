@@ -39,7 +39,10 @@
 // it came from) lives in a JSON file beside the report, named by a hash of
 // the calendar id, so each stage's run picks up where the last left off.
 // The report (access-<hash>.md and .json) gains one table per stage on each
-// run, scrubbed through Report::scrub(); the raw sync token stays in the
+// run, each exchange through Report::keep() as it is recorded (an event the
+// probe did not make, the owner's own among them, is cut to its id and
+// status; the state names what earlier stages made) and the whole through
+// Report::scrub(); the raw sync token stays in the
 // state file alone, which is in the report folder (gitignored by default).
 declare(strict_types=1);
 
@@ -114,12 +117,27 @@ final class AccessProbe
         rename($tmp, $this->statePath);
     }
 
+    /** @return list<string> the events earlier stages made, from the state (the owner's own event is not among them) */
+    private function madeEarlier(): array
+    {
+        $s = $this->state;
+        $ids = array_merge((array) $s['inserted'], (array) $s['listreadMade'], [$s['single']['id'] ?? null, $s['series']['id'] ?? null]);
+        foreach ((array) ($s['deletables'] ?? []) as $set) {
+            $ids[] = $set['single']['id'] ?? null;
+            $ids[] = $set['series']['id'] ?? null;
+        }
+        return array_values(array_map('strval', array_filter($ids, static fn($id) => $id !== null && $id !== '')));
+    }
+
     // ---- One stage ------------------------------------------------------------
 
     /** Runs one stage and writes the report. @return array the stage's record, scrubbed */
     public function run(string $stage): array
     {
         $this->record = ['stage' => $stage, 'started' => Api::now(), 'rows' => [], 'notes' => [], 'exchanges' => []];
+        foreach ($this->madeEarlier() as $id) {
+            $this->scrubber->made($id);
+        }
         $before = $this->api->requests;
         try {
             if ($stage === 'cleanup') {
@@ -701,7 +719,7 @@ final class AccessProbe
             $lists[$deleted] = $l;
         }
         foreach (['master' => $id, 'renamed day' => $day] as $what => $eid) {
-            $g = $this->api->call('GET', '/events/' . rawurlencode($eid));
+            $g = $this->scrubber->keep($this->api->call('GET', '/events/' . rawurlencode($eid)));
             $this->addRow("L7.get-" . ($what === 'master' ? 'master' : 'day'), "get the $what by id", $g, $this->compareFields($g, $lists['true'], $eid) + ['against showDeleted=false' => $this->compareFields($g, $lists['false'], $eid)['differs'] ?? '-']);
         }
     }
@@ -716,10 +734,10 @@ final class AccessProbe
     /** A GET by id, then both lists by iCalUID, each list compared field by field with the GET's answer. */
     private function getAgainstLists(string $n, string $what, string $id, string $uid): void
     {
-        $g = $this->api->call('GET', '/events/' . rawurlencode($id));
+        $g = $this->scrubber->keep($this->api->call('GET', '/events/' . rawurlencode($id)));
         $lists = [];
         foreach (['true', 'false'] as $deleted) {
-            $lists[$deleted] = $this->api->call('GET', '/events', ['iCalUID' => $uid, 'showDeleted' => $deleted, 'singleEvents' => 'false']);
+            $lists[$deleted] = $this->scrubber->keep($this->api->call('GET', '/events', ['iCalUID' => $uid, 'showDeleted' => $deleted, 'singleEvents' => 'false']));
         }
         $this->addRow("$n.get", "$what: get by id", $g, self::ok($g) ? ['status field' => self::field($g['response'], 'status'), 'etag' => self::field($g['response'], 'etag')] : []);
         foreach ($lists as $deleted => $l) {
@@ -791,30 +809,38 @@ final class AccessProbe
 
     // ---- Requests -------------------------------------------------------------
 
-    /** A row for an exchange already sent, with fields computed by the caller. */
+    /**
+     * A row for an exchange already sent, with fields the caller computed from
+     * what Report::keep() left of it (getAgainstLists and lrSeries keep first).
+     */
     private function addRow(string $n, string $label, array $x, array $fields): void
     {
-        $this->record['rows'][] = ['n' => $n, 'request' => $label, 'method' => $x['method'], 'path' => $x['path'], 'status' => $x['status'], 'reason' => self::reason($x), 'message' => self::message($x), 'fields' => $fields];
-        $this->record['exchanges'][] = ['n' => $n] + $x;
+        $this->log($n, $label, $x, static fn(): array => $fields);
     }
 
-    /** One request, recorded as a row: status, reason, message, and the named fields of a 2xx answer. */
+    /** One request, recorded as a row: status, reason, message, and the named fields of a 2xx answer. Returns the answer whole. */
     private function send(string $n, string $label, string $method, string $path, array $query = [], ?array $body = null, array $headers = [], ?\Closure $fields = null): array
     {
         $x = $this->api->call($method, $path, $query, $body, $headers);
-        $resp = is_array($x['response']) ? $x['response'] : [];
+        $this->log($n, $label, $x, $fields ?? static fn(): array => []);
+        return $x;
+    }
+
+    /** The one way an exchange reaches the record: through Report::keep(), its row's fields computed from what that left. */
+    private function log(string $n, string $label, array $x, \Closure $fields): void
+    {
+        $x = $this->scrubber->keep($x);
         $this->record['rows'][] = [
             'n' => $n,
             'request' => $label,
-            'method' => $method,
+            'method' => $x['method'],
             'path' => $x['path'],
             'status' => $x['status'],
             'reason' => self::reason($x),
             'message' => self::message($x),
-            'fields' => self::ok($x) && $fields !== null ? $fields($resp) : [],
+            'fields' => self::ok($x) ? $fields(is_array($x['response']) ? $x['response'] : []) : [],
         ];
         $this->record['exchanges'][] = ['n' => $n] + $x;
-        return $x;
     }
 
     private function listFields(array $r): array
@@ -916,7 +942,7 @@ final class AccessProbe
     public static function markdown(array $stages): string
     {
         $md = "# Google Access Probe\n\n";
-        $md .= "What Google answered the connected account at each stage of a shared calendar's access being lowered and taken away, one table per run, in the order run. The calendar is {calendar}; addresses, links and sync tokens are replaced by placeholders here and in the JSON beside this file, which has every exchange raw.\n\n";
+        $md .= "What Google answered the connected account at each stage of a shared calendar's access being lowered and taken away, one table per run, in the order run. The calendar is {calendar}; addresses, links and sync tokens are replaced by placeholders here and in the JSON beside this file, which has every exchange raw, except that an event the probe did not make (the owner's own among them) is cut to its id and status.\n\n";
         $md .= "## Across Stages\n\nStatus of each request by stage (accessRole where the answer has one).\n\n";
         $ns = [];
         foreach ($stages as $s) {

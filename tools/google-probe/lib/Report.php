@@ -6,6 +6,15 @@
 // address, the calendar id, a guest address, event links (Google's htmlLink
 // encodes the calendar's address), display names and sync tokens never
 // reach either file.
+//
+// Before that, every exchange passes through keep() as it is recorded (a
+// probe case's step, an access probe row): an event the probe did not make
+// is cut to its id and status, wherever it appears in an answer (a list, a
+// delta, instances, a GET or a write's answer). What the probe made is
+// decided by its own record, never by what an event holds: the ids its
+// inserts and imports were answered with (keep() notes them itself) and any
+// it names with made() (the access probe's state from earlier stages); a day
+// of one of those series is the probe's too.
 declare(strict_types=1);
 
 namespace BetterCal\GoogleProbe;
@@ -29,6 +38,8 @@ final class Report
     private array $secrets = [];
     /** @var array<string,string> sync and page tokens => short labels */
     private array $tokens = [];
+    /** @var array<string,true> ids of the events the probe made */
+    private array $made = [];
 
     public function __construct(string $dir, ?\DateTimeImmutable $at = null)
     {
@@ -48,6 +59,51 @@ final class Report
         if (trim($value) !== '') {
             $this->secrets[$value] = $placeholder;
         }
+    }
+
+    /** An event the probe made (in an earlier run, for the access probe's stages). */
+    public function made(string $id): void
+    {
+        if ($id !== '') {
+            $this->made[$id] = true;
+        }
+    }
+
+    /**
+     * The exchange as it may be recorded: every event in its answer that the
+     * probe did not make is cut to its id and status. A 2xx insert or import
+     * adds the id it was answered with to what the probe made, first.
+     */
+    public function keep(array $exchange): array
+    {
+        $path = (string) ($exchange['path'] ?? '');
+        $path = str_starts_with($path, '/calendars/{calendar}') ? substr($path, strlen('/calendars/{calendar}')) : $path;
+        $answer = $exchange['response'] ?? null;
+        if (!is_array($answer) || ($path !== '/events' && !str_starts_with($path, '/events/'))) {
+            return $exchange;
+        }
+        $status = (int) ($exchange['status'] ?? 0);
+        if (($exchange['method'] ?? '') === 'POST' && in_array($path, ['/events', '/events/import'], true) && $status >= 200 && $status < 300 && isset($answer['id'])) {
+            $this->made((string) $answer['id']);
+        }
+        if (isset($answer['items']) && is_array($answer['items'])) {
+            $answer['items'] = array_map(fn($e) => is_array($e) ? $this->ownOrPlaceholder($e) : $e, $answer['items']);
+        } elseif (isset($answer['id'])) {
+            $answer = $this->ownOrPlaceholder($answer);
+        }
+        $exchange['response'] = $answer;
+        return $exchange;
+    }
+
+    private function ownOrPlaceholder(array $event): array
+    {
+        $id = (string) ($event['id'] ?? '');
+        $series = (string) ($event['recurringEventId'] ?? '');
+        $cut = strpos($id, '_');
+        if (isset($this->made[$id]) || ($series !== '' && isset($this->made[$series])) || ($cut !== false && isset($this->made[substr($id, 0, $cut)]))) {
+            return $event;
+        }
+        return array_intersect_key($event, ['id' => true, 'status' => true]);
     }
 
     public function group(string $id, string $title, string $about): void
@@ -152,7 +208,7 @@ final class Report
         if (isset($run['cleanup'])) {
             $md .= 'Cleanup: ' . self::cell((string) $run['cleanup']) . "\n\n";
         }
-        $md .= "Each finding says only what the read-back showed. Addresses, the calendar id, event links and sync tokens are replaced by placeholders here and in the JSON. Findings go into [the model's Google section](../../docs/design/series-model.md#google-as-a-contract) by hand.\n\n";
+        $md .= "Each finding says only what the read-back showed. Addresses, the calendar id, event links and sync tokens are replaced by placeholders here and in the JSON, and an event the probe did not make is cut to its id and status. Findings go into [the model's Google section](../../docs/design/series-model.md#google-as-a-contract) by hand.\n\n";
         foreach ($data['groups'] as $gid => $g) {
             $md .= "## $gid. {$g['title']}\n\n{$g['about']}\n\n";
             if (isset($g['skipped'])) {
@@ -208,14 +264,15 @@ final class CaseRun
     public ?string $error = null;
     public readonly string $started;
 
-    public function __construct(public readonly string $group, public readonly string $id, public readonly string $title)
+    public function __construct(private readonly Report $report, public readonly string $group, public readonly string $id, public readonly string $title)
     {
         $this->started = Api::now();
     }
 
+    /** Records the exchange as Report::keep() leaves it; returns it whole, for the case to read. */
     public function step(string $phase, string $label, array $exchange): array
     {
-        $this->steps[] = ['phase' => $phase, 'label' => $label, 'exchange' => $exchange];
+        $this->steps[] = ['phase' => $phase, 'label' => $label, 'exchange' => $this->report->keep($exchange)];
         return $exchange;
     }
 

@@ -1,0 +1,46 @@
+{
+    "about": "The hidden-days rule (decisions.md, \"A switch between timed and all-day that Google would hide days with is refused\"): a daily series at 19:00 New York in January (00:00 UTC the next day), a day given its own notes and the change undone, then every event made all-day, refused with google_hidden_days before anything is sent. A refused switch re-places nothing, so the redo is judged as if no switch had been asked: it goes through and the notes are back on their own date (x-day).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/New_York",
+        "start": "2027-01-04 19:00",
+        "length": 60,
+        "flipZone": "America/New_York",
+        "flipClock": 68400,
+        "otherZone": "America/Los_Angeles"
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.3,
+            "what": "description",
+            "mark": "d"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0
+        },
+        {
+            "do": "w-all",
+            "pick": 0,
+            "what": "flip"
+        },
+        {
+            "do": "redo",
+            "pick": 0,
+            "judge": {
+                "mark": "d",
+                "expect": "description",
+                "anchor": "none"
+            }
+        }
+    ]
+}

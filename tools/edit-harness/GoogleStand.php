@@ -228,10 +228,21 @@ final class GoogleStand
      */
     public function hidesOnSwitch(string $gid, array $target): bool
     {
+        return $this->hiddenOnSwitch($gid, $target) !== [];
+    }
+
+    /**
+     * The days of $target such a switch would hide, by their keys in $target's form (UTC, 'Y-m-d H:i:s'; an all-day day's
+     * key its date at 00:00): the same reading as hidesOnSwitch, listing what it finds.
+     *
+     * @return list<string>
+     */
+    public function hiddenOnSwitch(string $gid, array $target): array
+    {
         $m = $this->fake->events[$gid] ?? null;
         $allDay = (int) ($target['all_day'] ?? 0) === 1;
         if ($m === null || empty($target['rrule']) || isset($m['start']['date']) === $allDay) {
-            return false;
+            return [];
         }
         $held = [];
         foreach ($this->fake->records($gid) as $key => $r) {
@@ -241,12 +252,13 @@ final class GoogleStand
         $row = ['start_utc' => (string) $target['start_utc'], 'end_utc' => (string) $target['end_utc'], 'all_day' => $allDay ? 1 : 0, 'tzid' => $allDay ? 'UTC' : (string) $target['tzid'], 'rrule' => (string) $target['rrule'], 'exdates_json' => null];
         $ev = clone Rfc::ofRow($row);
         $keys = $ev->refused ? array_column(array_slice(Truth::expand($row)['occ'], 0, 730), 'key') : array_map(static fn(array $o): string => gmdate('Y-m-d H:i:s', $o[0]), $ev->first(730));
+        $out = [];
         foreach ($keys as $key) {
             if (isset($held[Clock::parse($key)->format('Ymd\THis\Z')])) {
-                return true;
+                $out[] = (string) $key;
             }
         }
-        return false;
+        return $out;
     }
 
     public function calendar(): array

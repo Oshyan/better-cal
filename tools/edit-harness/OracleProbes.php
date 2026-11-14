@@ -286,6 +286,29 @@ final class OracleProbes
                     }
                     return [$out, $s0, $this->reshape($s1)];
                 }],
+            // The hidden-days rule (decisions.md, "A switch between timed and all-day that Google would hide days with is refused";
+            // interleaving-invariants.md, x-day, x-finish, x-undo-fields). A switch refused for hidden days re-places nothing, so a
+            // redo after it is judged as a placed day's: refused, it fails. (A switch that goes through is still judged by the
+            // gate: the probe above, at 20:00 New York.)
+            ['check' => 'x-day', 'what' => 'the redo after a switch refused for hidden days is refused though nothing was re-placed', 'case' => 'a-day-notes-redone-after-a-switch-refused-for-hidden-days-at-19-new-york', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'not_undoable', 'message' => 'Sample probe refusal'] + $out, $s0, $s1];
+                }],
+            // Finish refused for hidden days is accepted only where the harness's own reading says the switch would hide a day.
+            ['check' => 'x-finish', 'what' => 'Finish refused for hidden days where the switch hides none', 'case' => 'a-daily-10-los-angeles-series-made-all-day-its-master-write-not-taken-the-edited-day-notes-changed-at-google-then-finished', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'google_hidden_days', 'message' => 'Sample probe refusal'] + $out, $s0, $s1];
+                }],
+            // A switch made at Google where no day is hidden (10:00 Los Angeles): the day is judged as before, by x-day and
+            // x-undo-fields, so a redo refused as deleted at Google fails both.
+            ['check' => 'x-day', 'what' => 'a redo refused as deleted at Google after a switch made there that hid no day', 'case' => 'a-day-notes-redone-after-a-switch-made-at-google-at-10-los-angeles', 'step' => 6,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'google_deleted', 'message' => 'Sample probe refusal'] + $out, $s0, $s1];
+                }],
+            ['check' => 'x-undo-fields', 'what' => 'a redo refused as deleted at Google after a switch made there that hid no day, nothing changed since', 'case' => 'a-day-notes-redone-after-a-switch-made-at-google-at-10-los-angeles', 'step' => 6,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'google_deleted', 'message' => 'Sample probe refusal'] + $out, $s0, $s1];
+                }],
             // The retention rule after an undo: a row its entry only changed goes only when what the undo leaves owns nothing.
             ['check' => 'x-undo-fields', 'what' => 'an undo of a day\'s notes removes the row, which still owns its tag', 'case' => 'a-tagged-day-given-notes-then-the-notes-undone-keeps-the-row-for-its-tag', 'step' => 3,
                 'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {

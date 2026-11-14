@@ -1,0 +1,56 @@
+{
+    "about": "The control for the owner's rule: the same as a day hidden by a switch made at Google at midnight UTC, the switch at 10:00 Los Angeles, where no day of the series meets a record, so nothing is hidden and everything is judged as before: the redo of the day's notes goes through on its own date (x-day, x-undo-fields).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-01-04",
+        "length": 1,
+        "flipZone": "America/Los_Angeles",
+        "flipClock": 36000,
+        "otherZone": "Europe/Berlin"
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.195,
+            "what": "tags",
+            "mark": "t"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0,
+            "what": "description",
+            "onMark": "t",
+            "mark": "d"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0
+        },
+        {
+            "do": "r-flip",
+            "pick": 0
+        },
+        {
+            "do": "p-delta",
+            "pick": 0
+        },
+        {
+            "do": "redo",
+            "pick": 0,
+            "judge": {
+                "mark": "d",
+                "expect": "description",
+                "anchor": "row"
+            }
+        }
+    ]
+}

@@ -661,6 +661,9 @@ final class Interleave
             return;
         }
         $this->ran('step', $do . ($out['ok'] ? '' : ' refused'));
+        if ($do === 'w-all' && ($step['what'] ?? '') === 'flip' && !$out['ok'] && ($out['error'] ?? '') === 'google_hidden_days') {
+            $this->flipRefused = true;
+        }
         $s1 = $this->snap();
         if ($this->probe !== null && $this->probeStep === $this->step) {
             // An oracle probe (OracleProbes.php): damage injected into what the step's checks read, which a check that
@@ -678,6 +681,18 @@ final class Interleave
 
     /** @var array<int,array{before:array,after:array,step:int}> each Activity entry's rows by identity before and after the step that made it */
     private array $entryStates = [];
+    /**
+     * The hidden-days rule (decisions.md, "A switch between timed and all-day that Google would hide days with is
+     * refused"; interleaving-invariants.md, x-day, x-finish, x-undo-fields): whether a switch asked here was refused for
+     * hidden days, so nothing was re-placed; the switch each series was last asked to make here, as a row, for the
+     * harness's own reading at Finish; and the dates (as the days show, Y-m-d) a switch made at Google by another client
+     * hid there, Google's own fault (issue 266), about which nothing is asserted.
+     */
+    private bool $flipRefused = false;
+    /** @var array<string,array> */
+    private array $flipTarget = [];
+    /** @var array<string,true> */
+    private array $remoteHidden = [];
     /** The day a w-race step's remote change touched, kept out of that step's entry (someone else's change, not the request's). */
     private ?string $racedIdent = null;
     /** An oracle probe's damage, applied after the step numbered probeStep (OracleProbes.php); null in every ordinary run. */
@@ -922,6 +937,9 @@ final class Interleave
                 $in += ['start' => $date, 'end' => Days::date(Days::ofDate($date) + 1), 'allDay' => true];
             }
             $fields = ['time' => true, 'allDay' => true];
+            $this->flipTarget[(string) $master['google_event_id']] = (int) $master['all_day'] === 1
+                ? ['start_utc' => Clock::db($t), 'end_utc' => Clock::db(Clock::plus($t, 3600)), 'all_day' => 0, 'tzid' => $z, 'rrule' => (string) $master['rrule']]
+                : ['start_utc' => $date . ' 00:00:00', 'end_utc' => Days::date(Days::ofDate($date) + 1) . ' 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'rrule' => (string) $master['rrule']];
         } elseif ($what === 'time' || $what === 'length') {
             if ((int) $master['all_day'] === 1 || $scope !== 'all') {
                 return ['skip' => true];
@@ -995,6 +1013,12 @@ final class Interleave
             return;
         }
         $date = $mark['date'];
+        if (isset($this->remoteHidden[$date])) {
+            // A day Google hid when another client switched the series' form at such a time: Google's own fault, filed
+            // (issue 266) and not built for, so nothing is asserted about it.
+            $this->ran('x-day', 'hidden by a switch at Google');
+            return;
+        }
         $near = [Days::date(Days::ofDate($date) - 1), Days::date(Days::ofDate($date) + 1)];
         $mid = (int) $master['id'];
         $dayRows = static function (string $d) use ($s1, $master, $mid): array {
@@ -1011,7 +1035,13 @@ final class Interleave
         };
         $wrote = array_values(array_filter($this->writesBetween($s0, $s1), static fn(array $q): bool => !in_array('X-Harness: remote', (array) ($q['headers'] ?? []), true)));
         $quiet = self::sameHere($s0, $s1) && $wrote === [];
-        if ($judge['expect'] !== 'stopped' && ($judge['anchor'] ?? 'none') === 'none') {
+        // A switch refused for hidden days re-placed nothing: the day is judged as if no switch had been asked.
+        $anchor = (string) ($judge['anchor'] ?? 'none');
+        if ($anchor === 'none' && $this->flipRefused) {
+            $this->ran('x-day', 'switch refused, nothing re-placed');
+            $anchor = 'row';
+        }
+        if ($judge['expect'] !== 'stopped' && $anchor === 'none') {
             // The gate, before staleness and whatever was changed since: a day with no row and no skip when its series was
             // re-placed has no recorded place, and is never placed by its key or its date.
             $this->ran('x-day', 'unplaced');
@@ -1031,6 +1061,11 @@ final class Interleave
             $this->ran('x-day', 'stopped put back');
             $this->expect('x-day', !$out['ok'] && $quiet, "step {$this->step} (putback): Put back after a change at Google since is refused, with nothing written here or sent",
                 $context + ['out' => $out['error'], 'sent' => count($wrote)]);
+            return;
+        }
+        if (!$out['ok'] && $do === 'finish' && $out['error'] === 'google_hidden_days' && $this->finishHides()) {
+            // Finish of a switch Google would hide days with is refused as the switch itself is; x-finish judges the rest.
+            $this->ran('x-day', 'finish refused for hidden days');
             return;
         }
         if (!$out['ok']) {
@@ -1070,6 +1105,17 @@ final class Interleave
         foreach ($near as $n) {
             $this->expect('x-day', !$has($dayRows($n)), "step {$this->step} ($do): the day before or after has none of them", $context + ['near' => $n, 'want' => $want]);
         }
+    }
+
+    /** Whether finishing the switch asked here would hide a day at Google now, by the harness's own reading. */
+    private function finishHides(): bool
+    {
+        foreach ($this->flipTarget as $gid => $target) {
+            if ($this->stand->hidesOnSwitch((string) $gid, $target)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** x-day after a flip stopped before its master write landed, a change at Google meanwhile, then Finish or Put back. */
@@ -1164,6 +1210,14 @@ final class Interleave
                 } else {
                     $d = (new \DateTimeImmutable((string) $g['start']['dateTime']))->setTimezone(new \DateTimeZone($tz))->format('Y-m-d');
                     $body = ['start' => ['date' => $d], 'end' => ['date' => Days::date(Days::ofDate($d) + 1)]];
+                }
+                // The days Google hides when the form changes at such a time (issue 266, not built for): read before the
+                // switch drops the records, by the harness's own reading, and named by the date each shows on.
+                $to = isset($body['start']['date'])
+                    ? ['start_utc' => $body['start']['date'] . ' 00:00:00', 'end_utc' => $body['end']['date'] . ' 00:00:00', 'all_day' => 1, 'tzid' => 'UTC']
+                    : ['start_utc' => Clock::db(new \DateTimeImmutable($body['start']['dateTime'])), 'end_utc' => Clock::db(new \DateTimeImmutable($body['end']['dateTime'])), 'all_day' => 0, 'tzid' => (string) $body['start']['timeZone']];
+                foreach ($this->stand->hiddenOnSwitch($gid, $to + ['rrule' => $rule]) as $k) {
+                    $this->remoteHidden[$to['all_day'] === 1 ? substr($k, 0, 10) : Clock::local($k, $to['tzid'])->format('Y-m-d')] = true;
                 }
                 // Set whole, as another client changes the form at Google (the probe of 2026-11-10, 3.19 to 3.29).
                 $body = \BetterCal\GoogleProbe\FakeGoogle::asSet($body);
@@ -2013,7 +2067,16 @@ final class Interleave
         }
         $this->ran('x-finish', $changedSince === [] ? 'unchanged' : 'changed since');
         if (!$out['ok']) {
-            $this->expect('x-finish', $error === 'google_finish_local' && in_array($p['id'], array_column($s1['half'], 'id'), true), "step {$this->step}: Finish fails only with google_finish_local, the change left in Review", $context);
+            if ($error === 'google_hidden_days' && $this->finishHides()) {
+                // The hidden-days rule at Finish: a switch Google would hide days with, by the harness's own reading, is
+                // refused before anything is sent, the change left in Review.
+                $this->ran('x-finish', 'refused for hidden days');
+                // Nothing is sent; the rows here take what Google holds, as after any stop (GoogleSeries::run).
+                $this->expect('x-finish', $taken === [] && in_array($p['id'], array_column($s1['half'], 'id'), true),
+                    "step {$this->step}: a Finish refused for hidden days sends nothing and leaves the change in Review", $context + ['writes' => self::brief($taken)]);
+                return;
+            }
+            $this->expect('x-finish', $error === 'google_finish_local' && in_array($p['id'], array_column($s1['half'], 'id'), true), "step {$this->step}: Finish fails only with google_finish_local, or with google_hidden_days where the switch would hide a day, the change left in Review", $context);
             return;
         }
         $this->expect('x-finish', !in_array($p['id'], array_column($s1['half'], 'id'), true), "step {$this->step}: Finish clears the change from Review", $context);
@@ -2124,8 +2187,19 @@ final class Interleave
                     $was = $state['before']['series:' . $g] ?? null;
                     $hides = $hides || ($was !== null && $this->stand->hidesOnSwitch($g, ['start_utc' => $was['start'], 'end_utc' => $was['end'], 'all_day' => $was['allDay'], 'tzid' => $was['tz'], 'rrule' => $was['rrule']]));
                 }
+                // A day Google hid when another client switched the series' form at such a time (issue 266, not built
+                // for): nothing is asserted about an undo of a change to it.
+                $hidden = false;
+                foreach (array_keys(self::entryChange($state)) as $ident) {
+                    if (preg_match('/^day:([^:]+):(.+)$/', (string) $ident, $mm) === 1) {
+                        $was = $state['before']['series:' . $mm[1]] ?? null;
+                        $k = $mm[2];
+                        $d = strlen($k) <= 10 || ($was !== null && !empty($was['allDay'])) ? substr($k, 0, 10) : Clock::local($k, (string) ($was['tz'] ?? 'UTC'))->format('Y-m-d');
+                        $hidden = $hidden || isset($this->remoteHidden[$d]);
+                    }
+                }
                 $allowed = in_array($error, ['google_pending', 'not_undoable'], true) || ($unread && in_array($error, ['google_conflict', 'google_deleted'], true))
-                    || ($error === 'google_hidden_days' && $hides);
+                    || ($error === 'google_hidden_days' && $hides) || $hidden;
                 if (!$allowed) {
                     $this->fail('x-undo-fields', $error === 'stale_undo'
                         ? "step {$this->step} ($do): an undo of the entry step {$state['step']} made was refused as stale though nothing it changed has changed since"

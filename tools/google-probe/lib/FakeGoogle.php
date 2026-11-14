@@ -481,6 +481,13 @@ final class FakeGoogle
                     $tz = (string) $new['start']['timeZone'];
                     [$r['start']] = $this->span($occ[$key], $newLen, $allDay, $tz);
                     $r['end'] = ['dateTime' => (new \DateTimeImmutable((string) $r['end']['dateTime']))->setTimezone(new \DateTimeZone($tz))->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz];
+                    // A series in UTC: the record's start and end come back with no zone named (replay round 5,
+                    // google-undo-of-a-move-onto-a-skipped-day-date-only request 14 and -with-a-status-change request 13:
+                    // a live and a cancelled record of a UTC series after its start moved a day; the records' times
+                    // named UTC before that write). The answer then names none for originalStartTime either (shaped).
+                    if ($tz === 'UTC') {
+                        unset($r['start']['timeZone'], $r['end']['timeZone']);
+                    }
                 }
             } elseif ($startChanged) {
                 [$r['start'], $r['end']] = $this->span($occ[$key], $newLen, $allDay, (string) ($new['start']['timeZone'] ?? $this->zone));

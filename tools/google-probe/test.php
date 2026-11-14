@@ -482,6 +482,27 @@ $utcAt = static fn(array $w): string => isset($w['dateTime']) ? (new DateTimeImm
 check('stand-in, round 5 cause 6: a timed day of an all-day series reads from 00:00 UTC on its date to its own end, neither in a zone, after the series\' start moves',
     [$utcAt($own['start'] ?? []), $utcAt($own['end'] ?? []), isset($own['start']['timeZone']) || isset($own['end']['timeZone'])] === ['2027-03-15 00:00', '2027-03-15 09:00', false], json_encode($own));
 
+// Cause 8 (google-undo-of-a-move-onto-a-skipped-day-date-only request 14, -with-a-status-change request 13): a daily
+// series in UTC, one day renamed and one deleted, its start moved a day; Google listed both records with no timeZone on
+// start, end and originalStartTime, where they named UTC before.
+$fake = new FakeGoogle(CAL);
+$fake->token = null;
+$fake->seed(['id' => 'utczone1', 'summary' => 'Sample series', 'start' => $utc('2027-01-01 09:00'), 'end' => $utc('2027-01-01 10:00'), 'recurrence' => ['RRULE:FREQ=DAILY']]);
+$call($fake, 'PATCH', 'utczone1_20270103T090000Z', ['summary' => 'Sample series, day 1']);
+$call($fake, 'DELETE', 'utczone1_20270102T090000Z');
+[, $l] = $call($fake, 'GET', '', null, ['iCalUID' => 'utczone1@google.com', 'singleEvents' => 'false', 'showDeleted' => 'true']);
+$zonesBefore = array_values(array_filter(array_map(static fn(array $e): ?string => $e['start']['timeZone'] ?? null, $l['items'] ?? [])));
+$call($fake, 'PATCH', 'utczone1', ['start' => $utc('2027-01-02 09:00'), 'end' => $utc('2027-01-02 10:00'), 'recurrence' => ['RRULE:FREQ=DAILY']]);
+[, $l] = $call($fake, 'GET', '', null, ['iCalUID' => 'utczone1@google.com', 'singleEvents' => 'false', 'showDeleted' => 'true']);
+$zonesAfter = [];
+foreach ($l['items'] ?? [] as $e) {
+    $zonesAfter[(string) $e['id']] = [$e['start']['timeZone'] ?? null, $e['end']['timeZone'] ?? null, $e['originalStartTime']['timeZone'] ?? null];
+}
+ksort($zonesAfter);
+check('stand-in, round 5 cause 8: a UTC series\' start moved: its records name no zone after, where they named UTC before; the master still does',
+    $zonesBefore === ['UTC', 'UTC', 'UTC'] && $zonesAfter === ['utczone1' => ['UTC', 'UTC', null], 'utczone1_20270102T090000Z' => [null, null, null], 'utczone1_20270103T090000Z' => [null, null, null]],
+    json_encode([$zonesBefore, $zonesAfter]));
+
 // ---- The stand-in against the probe of 2026-11-14 (3.67, 3.68) ----------------
 // 3.67: weekly 10:00 to 11:00 Los Angeles, occurrence 2 at its own 14:00 to 15:30, occurrence 3 renamed; the first day
 // moved a week later for all events. Google: occurrence 2 read 10:00 to 15:30 (start onto its occurrence, end left),

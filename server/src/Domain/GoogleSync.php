@@ -152,8 +152,9 @@ final class GoogleSync
         self::assertWithinDeadline($deadline);
         $whole = $syncToken === null;
         $emptyRefused = false;
+        $busyOnly = false;
         // The account first, as every change to its data takes it (Undo::write).
-        $count = (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($account, $calendar, $calendarId, $eventLimit, $role, $snapshot, $nextToken, $deadline, $unchanged, $whole, &$emptyRefused): int {
+        $count = (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($account, $calendar, $calendarId, $eventLimit, $role, $snapshot, $nextToken, $deadline, $unchanged, $whole, &$emptyRefused, &$busyOnly): int {
             // Adopt and every event writer serialize on this row. Re-read the
             // complete Google binding after the fetch so a response from the
             // old authority can never land in a newly-local, moving calendar.
@@ -179,6 +180,14 @@ final class GoogleSync
             if ($role !== null && self::unmoved($calendar, $current)) {
                 GoogleWriter::settleAccess($this->db, new Undo($this->db), $current, $role);
                 $current['google_access_role'] = $role;
+            }
+            // A listing below reader shows only times, never what Google holds: nothing of it is applied, every row
+            // here stays as it was. The new sync position is kept (deltas stay cheap; any change of access makes it
+            // answer 410, so the poll after access returns reads the calendar whole and catches up).
+            if (!GoogleWriter::shows($role)) {
+                $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
+                $busyOnly = true;
+                return 0;
             }
             if ($unchanged) {
                 $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
@@ -211,6 +220,9 @@ final class GoogleSync
             $this->feeds->pollSucceeded($current, $this->storedCount($calendarId), $count);
             return $count;
         });
+        if ($busyOnly) {
+            throw new \RuntimeException(GoogleWriter::accessWords($calendar, (string) $role));
+        }
         if ($emptyRefused) {
             $message = 'Google listed no events for this calendar while it has events here; nothing was removed, and the next poll reads it again.';
             error_log('google sync: calendar ' . $calendarId . ': a whole read listed nothing; not applied');

@@ -113,6 +113,9 @@ function ReviewCard({ item, onChanged }) {
         toast(out.text, { error: !!out.error });
       } else if (item.kind === 'duplicate') {
         toast(action.name === 'linked' ? 'Shown as one event from now on' : 'Kept as separate events');
+      } else if (item.kind === 'subscription' && action.name === 'dismiss') {
+        // Acknowledged, not decided: the feed stays paused, and its notice comes back if that changes.
+        toast('Notice dismissed. The feed stays paused; its saved events stay visible.');
       } else if (item.kind === 'subscription') {
         // Removing deletes a calendar, which undo puts back; the others are log-only.
         toast(action.name === 'keep_updating' ? 'Calendar updates resumed' : action.name === 'remove' ? 'Subscription removed' : 'Saved events kept as a local calendar', { undo: action.name === 'remove' ? entriesOf(res) : [] });

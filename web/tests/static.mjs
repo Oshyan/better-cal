@@ -332,6 +332,8 @@ for (const file of files) {
       `Review must label and draw the ${kind} notice`);
     check(review.includes(`item.kind === '${kind}'`), `dismissing a ${kind} notice must say what the dismiss does`);
   }
+  check(review.includes("item.kind === 'subscription' && action.name === 'dismiss'") && review.includes('The feed stays paused'),
+    'dismissing a paused feed\'s notice must say the feed stays paused (a dismiss decides nothing)');
   check(review.includes('The calendar stays read-only here until Google allows changes again.'),
     'dismissing an access notice must say the calendar stays read-only (a dismiss acknowledges, it changes nothing)');
   const settingsSrc = readFileSync(join(root, 'app', 'CalendarSettings.js'), 'utf8');
@@ -339,9 +341,9 @@ for (const file of files) {
   const line = fn ? vm.runInNewContext(fn.replace('export function', 'function') + '\ngoogleReadOnlyLine') : null;
   check(typeof line === 'function', 'CalendarSettings must compose the read-only line in googleReadOnlyLine(role)');
   if (typeof line === 'function') {
-    check(line('reader').startsWith('View only at Google') && line('freeBusyReader').startsWith('Busy times only at Google')
+    check(line('reader').startsWith('View only at Google') && line('freeBusyReader').includes('only busy times') && line('freeBusyReader').includes('don\'t update')
       && line('none').includes('no longer shows it to this account') && line('none').includes('keep it as a calendar of your own'),
-      'the read-only line must name view only, busy times only and not shown apart');
+      'the read-only line must name view only, busy times only (events not updating) and not shown apart');
     check(['reader', 'freeBusyReader', 'none'].every((r) => !/—/.test(line(r))), 'the read-only line has no em-dash');
   }
   check(settingsSrc.includes('googleReadOnlyLine(cal.googleAccessRole)'), 'the settings panel must use the line for a Google calendar it can\'t change');

@@ -116,6 +116,10 @@ final class CalendarsController
         try {
             $imported = $this->feeds->poll($id);
         } catch (HttpError $e) {
+            // A refresh refused because the feed's updates are paused brings its dismissed Review notice back.
+            if ($e->errorCode === 'subscription_authorization_revoked') {
+                \BetterCal\Domain\ReviewQueue::reopenAfter($this->db, $userId, 'subscription:' . $id);
+            }
             throw $e;
         } catch (\Throwable $e) {
             throw new HttpError('feed_fetch_failed', $e->getMessage(), 502);

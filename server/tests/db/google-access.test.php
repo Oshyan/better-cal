@@ -39,7 +39,7 @@ return static function (Db $db): void {
         [$t->u, 'google-access:' . $t->s->calendarId, $status]), 'kind');
     // Activity's lines about the calendar's access (a poll's own entries stand on the calendar too).
     $lines = static fn(object $t): array => array_values(array_filter(array_column($db->all("SELECT summary FROM mutations WHERE user_id = ? AND entity = 'calendar' AND entity_id = ? ORDER BY id",
-        [$t->u, $t->s->calendarId]), 'summary'), static fn(?string $l): bool => preg_match('/^(Your permissions for|Google no longer shows|Google shows)/', (string) $l) === 1));
+        [$t->u, $t->s->calendarId]), 'summary'), static fn(?string $l): bool => preg_match('/^(Your permissions for|Google no longer shows|Google shows|Google now shows)/', (string) $l) === 1));
     $row = static fn(object $t): ?array => $db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$t->id]);
     $tags = static fn(object $t): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$t->id]), 'name');
     $caught = static function (callable $fn): ?HttpError {
@@ -79,7 +79,7 @@ return static function (Db $db): void {
                 }
                 checkEq("$level: the event is here as it was, its tag kept (a delete was not taken for already deleted)", [$before, ['sample-tag']], [$row($t), $tags($t)]);
                 checkEq("$level: the stored level is the one the stand-in's last list gave; one Review item; one Activity line", [$said, [$code], 1],
-                    [$stored($t), $items($t), count(array_filter($lines($t), static fn(string $l): bool => str_contains($l, $level === 'none' ? 'no longer shows' : 'are now read-only')))]);
+                    [$stored($t), $items($t), count(array_filter($lines($t), static fn(string $l): bool => str_contains($l, match ($level) { 'none' => 'no longer shows', 'freeBusyReader' => 'only busy times', default => 'are now read-only' })))]);
             } finally {
                 H::done($t);
             }
@@ -182,6 +182,76 @@ return static function (Db $db): void {
         }
     });
 
+    // ---- Busy times only: what Google lists is not applied ------------------------------------------------------------
+
+    // The rule (the model, section 1): a listing below reader is not applied. Expectation: what was held before the level
+    // dropped is still held, every column of every event row, until a listing at reader or above comes; then the
+    // calendar catches up with what Google holds (a title changed there while the level was low).
+    $held = static fn(object $t): array => $db->all('SELECT id, uid, title, description, location, url, start_utc, end_utc, all_day, rrule, exdates_json, status, recurrence_instance_utc
+        FROM events WHERE calendar_id = ? AND deleted_at IS NULL ORDER BY id', [$t->s->calendarId]);
+    scenario('google access, busy times only: a poll applies nothing Google lists (every row stays as it was, its tags too), stores the level, says events don\'t update; given back, the next poll catches up', function () use ($db, $weekly, $held, $stored, $tags): void {
+        $t = H::make($db, $weekly + ['description' => 'Sample notes', 'location' => 'Sample Hall']);
+        try {
+            H::this($t, '2027-03-08T10:00:00-08:00', ['title' => 'Sample series (own)']);
+            $t->e->patch($t->u, $t->id, ['scope' => 'all', 'tagNames' => ['sample-tag']]);
+            $t->s->poll();
+            $before = $held($t);
+            $t->s->fake->role = 'freeBusyReader';
+            $said = 'freeBusyReader';
+            $error = null;
+            foreach ([1, 2] as $n) { // the 410 and whole read, then a delta at that level
+                try {
+                    $t->s->poll();
+                } catch (\RuntimeException $e) {
+                    $error = $e->getMessage();
+                }
+            }
+            checkEq('busy times only, two polls: every row as it was, its tag kept, the level stored, the poll saying events don\'t update', [$before, ['sample-tag'], $said, true],
+                [$held($t), $tags($t), $stored($t), str_contains((string) $error, 'only busy times') && str_contains((string) $error, "don't update")]);
+            // Meanwhile at Google, by the calendar's owner: the series renamed (in the stand-in's store, as another account writes).
+            $t->s->fake->events[$t->gid]['summary'] = 'Sample series, renamed elsewhere';
+            $t->s->fake->role = 'reader';
+            $t->s->poll();
+            checkEq('view only again: the next poll reads the calendar whole and catches up, the tag kept', ['Sample series, renamed elsewhere', ['sample-tag'], 'reader'],
+                [$db->scalar('SELECT title FROM events WHERE id = ?', [$t->id]), $tags($t), $stored($t)]);
+        } finally {
+            H::done($t);
+        }
+    });
+
+    scenario('google access, busy times only reached during a change: its read-backs are not stored over what is held', function () use ($db, $weekly, $held, $stored): void {
+        $t = H::make($db, $weekly + ['description' => 'Sample notes']);
+        try {
+            H::this($t, '2027-03-08T10:00:00-08:00', ['title' => 'Sample series (own)']);
+            $before = array_map(static fn(array $r): array => array_diff_key($r, ['start_utc' => 1, 'end_utc' => 1]), $held($t));
+            // Right after the change's first write is taken, the owner lowers the account to busy times only.
+            $t->s->knobs->race = static function () use ($t): void {
+                $t->s->fake->role = 'freeBusyReader';
+            };
+            H::tryChange($t, ['scope' => 'all', 'instanceStart' => '2027-03-01T10:00:00-08:00', 'start' => '2027-03-01T11:00:00-08:00', 'end' => '2027-03-01T12:00:00-08:00']);
+            $titles = array_column($held($t), 'title');
+            checkEq('no row here took a blank title or lost its notes from a read made at busy times only; the level stored', [[], 'freeBusyReader'],
+                [array_values(array_filter($held($t), static fn(array $r): bool => in_array((string) $r['title'], ['', '(No title)'], true) || ($r['recurrence_instance_utc'] === null && (string) $r['description'] !== 'Sample notes'))), $stored($t)]);
+            check('the titles held before are held still', array_column($before, 'title') === $titles, json_encode([array_column($before, 'title'), $titles]));
+        } finally {
+            H::done($t);
+        }
+    });
+
+    // ---- Re-attach stores the level through the one store ----------------------------------------------------------
+
+    scenario('google access, re-attach: a calendar re-attached at a lower level than it had gets its line and its Review item, as a poll would give it', function () use ($db, $single, $stored, $items, $lines): void {
+        $t = H::make($db, $single);
+        try {
+            $account = (int) $db->scalar('SELECT google_account_id FROM calendars WHERE id = ?', [$t->s->calendarId]);
+            $db->run('UPDATE calendars SET google_account_id = NULL WHERE id = ?', [$t->s->calendarId]); // as a disconnect leaves it
+            $t->d->undo->write($t->u, fn() => $t->d->calendars->reattachGoogle($t->u, $t->s->calendarId, $account, 'reader', 'owner@example.test'));
+            checkEq('re-attached at reader: stored, one line, one item', ['reader', 1, ['google_read_only']], [$stored($t), count($lines($t)), $items($t)]);
+        } finally {
+            H::done($t);
+        }
+    });
+
     // ---- What the poll stores ---------------------------------------------------------------------------------------
 
     scenario('google access, the poll: it stores the level of its own list answers, the 410 after a change of access included; the Review item opens once, can be dismissed, stays dismissed while the level stays, and comes back when the level moves again', function () use ($db, $single, $stored, $items, $lines): void {
@@ -197,10 +267,18 @@ return static function (Db $db): void {
             checkEq('another poll at the same level: still one item, no new line', [['google_read_only'], 1], [$items($t), count($lines($t))]);
             $id = (int) $db->scalar("SELECT id FROM review_items WHERE user_id = ? AND status = 'open' AND kind = 'google_read_only'", [$t->u]);
             (new ReviewQueue($db, $t->e))->dismissGoogleDifferences($t->u, $id);
-            $t->s->fake->role = 'freeBusyReader'; // the same tier, read-only
             $t->s->poll();
-            checkEq('dismissed; a poll at busy times only (the same tier): stored, nothing opened again, no new line', ['freeBusyReader', [], ['google_read_only'], 1],
-                [$stored($t), $items($t), $items($t, 'dismissed'), count($lines($t))]);
+            checkEq('dismissed; another poll at the same level: nothing opened again, no new line', [[], ['google_read_only'], 1],
+                [$items($t), $items($t, 'dismissed'), count($lines($t))]);
+            $t->s->fake->role = 'freeBusyReader'; // a state of its own: events stop updating too
+            $busy = null;
+            try {
+                $t->s->poll();
+            } catch (\RuntimeException $e) {
+                $busy = $e->getMessage();
+            }
+            checkEq('busy times only: stored, the poll says events stay as they were, a new item (the state changed), a second line', [true, 'freeBusyReader', ['google_read_only'], 2],
+                [str_contains((string) $busy, 'only busy times') && str_contains((string) $busy, "don't update"), $stored($t), $items($t), count($lines($t))]);
             $t->s->fake->role = 'none';
             $error = null;
             try {
@@ -208,14 +286,14 @@ return static function (Db $db): void {
             } catch (\RuntimeException $e) {
                 $error = $e->getMessage();
             }
-            checkEq('sharing removed: the poll fails saying so, stores none, opens the not-shown item; a second line', [true, 'none', ['google_not_shown'], 2],
+            checkEq('sharing removed: the poll fails saying so, stores none, opens the not-shown item; a third line', [true, 'none', ['google_not_shown'], 3],
                 [str_contains((string) $error, 'no longer shows'), $stored($t), $items($t), count($lines($t))]);
             $t->s->fake->role = 'writer';
             $t->s->poll();
-            checkEq('shared again with editing: stored writer, nothing open, a third line', ['writer', [], 3], [$stored($t), $items($t), count($lines($t))]);
+            checkEq('shared again with editing: stored writer, nothing open, a fourth line', ['writer', [], 4], [$stored($t), $items($t), count($lines($t))]);
             $t->s->fake->role = 'reader';
             $t->s->poll();
-            checkEq('lowered again: a new item opens beside the dismissed one', [['google_read_only'], ['google_read_only']], [$items($t), $items($t, 'dismissed')]);
+            checkEq('lowered again: a new item opens', [['google_read_only']], [$items($t)]);
         } finally {
             H::done($t);
         }

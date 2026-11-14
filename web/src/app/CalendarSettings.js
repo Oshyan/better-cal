@@ -46,8 +46,9 @@ function nearest(options, value) {
 // view only, busy times only, or no longer shown at all (docs/design/google-access-detect-and-inform.md).
 export function googleReadOnlyLine(role) {
   if (role === 'none') return 'Google no longer shows it to this account, so it is read-only here and no longer updates. If it is shared with you again, it updates again; otherwise remove it, or keep it as a calendar of your own.';
-  const what = role === 'freeBusyReader' ? 'Busy times only at Google' : 'View only at Google';
-  return what + ': it can\'t be changed here, and past changes can\'t be undone. Once Google lets this account make changes, it can be changed here; changes made there come in at each check below.';
+  // Busy times only: Google lists no details, so nothing it lists is applied and the events here don't update.
+  if (role === 'freeBusyReader') return 'Google now shows this account only busy times, so its events here stay as they were and don\'t update, and it can\'t be changed here. Once Google shows full details again, it catches up at the next check.';
+  return 'View only at Google: it can\'t be changed here, and past changes can\'t be undone. Once Google lets this account make changes, it can be changed here; changes made there come in at each check below.';
 }
 
 function pollStatusLine(cal) {

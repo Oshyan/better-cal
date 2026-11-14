@@ -68,6 +68,9 @@ final class ReviewController
         $storedItems = $this->queue->listFor($userId, $openOnly, isset($req->query['before']) ? max(1, (int) $req->query['before']) : null);
         $mailSettings = $this->queue->mailSettings($userId);
         foreach ($storedItems as $c) {
+            if ($c['kind'] === 'subscription') {
+                continue; // a paused feed's notice row: listed below, from the feed's state now
+            }
             $open = $c['status'] === 'open';
             if (in_array($c['kind'], [ReviewQueue::KIND_MAIL_LIMIT, ReviewQueue::KIND_MODEL_LIMIT, ReviewQueue::KIND_MAIL_ERROR, ReviewQueue::KIND_GOOGLE_DIFFERS, ReviewQueue::KIND_GOOGLE_EMPTY, ReviewQueue::KIND_GOOGLE_READ_ONLY, ReviewQueue::KIND_GOOGLE_NOT_SHOWN], true)) {
                 $isModel = $c['kind'] === ReviewQueue::KIND_MODEL_LIMIT;
@@ -197,7 +200,15 @@ final class ReviewController
                 ] : [],
             ];
         }
-        foreach ($this->calendars->subscriptionsAwaitingReview($userId) as $calendar) {
+        // Each paused feed is a state notice (ReviewQueue::subscriptionNotices): dismissed, it stays out of the list
+        // while its updates stay paused for the same reason, and comes back when that changes or a refresh is refused.
+        $paused = $this->calendars->subscriptionsAwaitingReview($userId);
+        $notices = $this->queue->subscriptionNotices($userId, $paused);
+        foreach ($paused as $calendar) {
+            $notice = $notices[(int) $calendar['id']] ?? null;
+            if ($notice === null || $notice['status'] !== 'open') {
+                continue;
+            }
             $authorization = $calendar['subscriptionAuthorization'];
             $items[] = [
                 'key' => 'subscription:' . $calendar['id'],
@@ -215,6 +226,8 @@ final class ReviewController
                     self::action('keep_updating', 'Keep updating', "/calendars/{$calendar['id']}/claim-subscription"),
                     self::action('keep_local', 'Keep a local copy', "/calendars/{$calendar['id']}/adopt"),
                     array_replace(self::action('remove', 'Remove', "/calendars/{$calendar['id']}"), ['method' => 'DELETE']),
+                    // Acknowledged, not decided: the feed stays paused.
+                    self::action('dismiss', 'Dismiss', "/review/notices/{$notice['row']}/dismiss") + ['quiet' => true],
                 ] : [],
             ];
         }
@@ -358,7 +371,7 @@ final class ReviewController
             'rsvp' => count($this->queue->invitationsAwaitingReply($userId)),
             'proposal' => count($this->proposals->listFor($userId, 'open')),
             'duplicate' => count($this->duplicates?->possible($userId) ?? []),
-            'subscription' => count($this->calendars->subscriptionsAwaitingReview($userId)),
+            'subscription' => count(array_filter($this->queue->subscriptionNotices($userId, $this->calendars->subscriptionsAwaitingReview($userId)), static fn(array $n): bool => $n['status'] === 'open')),
             'plugin' => count($this->plugins?->turnedOffByRevokedKey() ?? []),
             'google_half' => count($this->queue->googleHalfDone($userId)),
             'google_differs' => $this->queue->openCount($userId, ReviewQueue::KIND_GOOGLE_DIFFERS),
@@ -433,6 +446,13 @@ final class ReviewController
     {
         $req->requireSession('Review decisions');
         return Response::json(['item' => $this->queue->dismissMailError((int) $req->user['id'], (int) $params['id'])]);
+    }
+
+    /** POST /review/notices/:id/dismiss: any notice that reports a state or an event (ReviewQueue::NOTICE_KINDS). */
+    public function dismissNotice(Request $req, array $params): Response
+    {
+        $req->requireSession('Review decisions');
+        return Response::json(['item' => $this->queue->dismissNotice((int) $req->user['id'], (int) $params['id'])]);
     }
 
     public function dismissGoogleDifferences(Request $req, array $params): Response

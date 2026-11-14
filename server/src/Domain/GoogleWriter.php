@@ -94,7 +94,31 @@ final class GoogleWriter
     /** The tier a level is in for the person: 'edit', 'view' (view only, or busy times only) or 'none' (not shown). Pure. */
     public static function tier(string $role): string
     {
-        return $role === 'none' ? 'none' : (self::writes($role) ? 'edit' : 'view');
+        return $role === 'none' ? 'none' : (self::writes($role) ? 'edit' : ($role === 'freeBusyReader' ? 'busy' : 'view'));
+    }
+
+    /**
+     * Does a listing at this level show what Google holds, so it may be
+     * applied to the events stored here? Reader and above do; busy times
+     * only does not (Google leaves out the title of a read, the access
+     * probe's stage freebusy rows 6a, 6c, 6g, and the description and
+     * private properties of a list's items, row 4), and is never applied:
+     * what is held here stays as it was (docs/design/google-access-detect-and-inform.md,
+     * section 1). A level not stated (null) is not known to be lower, as
+     * before. The one rule every place that applies a list answer asks:
+     * the poll (GoogleSync) and a change's read-backs (GoogleSeries::store);
+     * apply stores only a write's own answer, which Google gives only at
+     * writer or owner (the access probe, rows 5, 6d to 6h). Pure.
+     */
+    public static function shows(?string $role): bool
+    {
+        return $role === null || in_array($role, ['reader', 'writer', 'owner'], true);
+    }
+
+    /** Whether the last list answer for the calendar through this writer shows what Google holds (shows). */
+    public function listShows(array $calendar): bool
+    {
+        return self::shows($this->listed[self::keyOf($calendar)][0] ?? null);
     }
 
     /**
@@ -150,6 +174,20 @@ final class GoogleWriter
             ['access' => $role, 'calendarId' => isset($calendar['id']) ? (int) $calendar['id'] : null]);
     }
 
+    /**
+     * The access rule refusing a change the person attempted: readOnly, and
+     * the calendar's access notice, if dismissed, open again once the
+     * request is over (ReviewQueue::reopenState: a refusal because of the
+     * state a notice reports brings it back).
+     */
+    private function refused(array $calendar, string $role, bool $undo = false): HttpError
+    {
+        if (isset($calendar['id'], $calendar['user_id'])) {
+            ReviewQueue::reopenAfter($this->db, (int) $calendar['user_id'], ReviewQueue::accessKey((int) $calendar['id']));
+        }
+        return self::readOnly($calendar, $role, $undo);
+    }
+
     /** Whether a refusal is the access rule's (readOnly). Pure. */
     public static function isReadOnly(HttpError $e): bool
     {
@@ -203,7 +241,7 @@ final class GoogleWriter
             throw new HttpError('google_write_failed', 'Google did not say what this account may do with this calendar, so nothing was sent. Try again in a minute.', 502);
         }
         if (!self::writes($role)) {
-            throw self::readOnly($calendar, $role);
+            throw $this->refused($calendar, $role);
         }
     }
 
@@ -248,7 +286,7 @@ final class GoogleWriter
             throw new HttpError('google_write_failed', 'Google could not be asked whether this calendar may be changed now, so nothing was changed. Try again in a minute.', 502);
         }
         if (!self::writes($role)) {
-            throw self::readOnly($calendar, $role, $undo);
+            throw $this->refused($calendar, $role, $undo);
         }
         return ['google_access_role' => $role] + $calendar;
     }
@@ -320,8 +358,7 @@ final class GoogleWriter
         $words = self::accessWords($now, $role);
         $undo->record((int) $now['user_id'], 'calendar', (int) $now['id'], 'update', null, null, match (self::tier($role)) {
             'edit' => "Your permissions for $name at Google allow changes now. Changes and undo work here.",
-            'view' => self::tier($was) === 'none' ? "Google shows $name to this account again, to view only. " . $words : $words,
-            default => $words,
+            default => self::tier($was) === 'none' ? "Google shows $name to this account again. " . $words : $words,
         });
         ReviewQueue::holdGoogleAccess($db, (int) $now['user_id'], ['google_access_role' => $role] + $now, self::tier($role), $words);
     }
@@ -330,9 +367,11 @@ final class GoogleWriter
     public static function accessWords(array $calendar, string $role): string
     {
         $name = self::named($calendar);
-        return self::tier($role) === 'none'
-            ? "Google no longer shows $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and no longer update. If it is shared with you again, it updates again; otherwise remove it, or keep it as a calendar of your own."
-            : "Your permissions for $name at Google are now read-only. If you have access, restore full editing there. Until then $name works read-only here: changes, and undoing past changes, are unavailable.";
+        return match (self::tier($role)) {
+            'none' => "Google no longer shows $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and no longer update. If it is shared with you again, it updates again; otherwise remove it, or keep it as a calendar of your own.",
+            'busy' => "Google now shows this account only busy times for $name, so its events here stay as they were and don't update, and changes and undo are unavailable. If you have access, restore full details and editing at Google.",
+            default => "Your permissions for $name at Google are now read-only. If you have access, restore full editing there. Until then $name works read-only here: changes, and undoing past changes, are unavailable.",
+        };
     }
 
     // ---- Shape translation (pure, unit-tested) ---------------------------------
@@ -918,7 +957,7 @@ final class GoogleWriter
                 $this->listAnswered($calendar, $account, $role);
             }
             if ($role === 'none' && isset($calendar['id'])) {
-                throw self::readOnly($calendar, 'none');
+                throw $this->refused($calendar, 'none');
             }
         }
         // An insert is the one write whose first request is the write itself: refused (view only
@@ -927,7 +966,7 @@ final class GoogleWriter
         if ($method === 'POST' && $path === '' && isset($calendar['id']) && in_array(self::refusal((int) $r['status'], (string) $r['body']), ['permission', 'deleted'], true)) {
             $role = $this->accessNow($calendar, $beforeSend);
             if ($role !== null && !self::writes($role)) {
-                throw self::readOnly($calendar, $role);
+                throw $this->refused($calendar, $role);
             }
         }
         if ($r['status'] === 412) {

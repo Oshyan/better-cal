@@ -2761,6 +2761,11 @@ final class GoogleSeries
      */
     public function store(array $calendar, array $readbacks, array $targets, ?int $pendingId = null): void
     {
+        // A read-back listed below reader (access dropped to busy times only during the change) is never applied
+        // (GoogleWriter::shows): what is held here stays as it was.
+        if (!$this->writer->listShows($calendar)) {
+            return;
+        }
         $uids = array_fill_keys(array_map('strval', array_keys($readbacks)), true);
         $items = [];
         foreach ($readbacks as $list) {

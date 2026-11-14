@@ -290,6 +290,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/review/mail-errors/:id/dismiss", [$reviewController, 'dismissMailError']);
         $router->add('POST', "$base/review/model-limits/:id/dismiss", [$reviewController, 'dismissModelLimit']);
         $router->add('POST', "$base/review/google-differences/:id/dismiss", [$reviewController, 'dismissGoogleDifferences']);
+        $router->add('POST', "$base/review/notices/:id/dismiss", [$reviewController, 'dismissNotice']);
         $router->add('POST', "$base/review/google-half/:id/finish", [$reviewController, 'finishGoogle']);
         $router->add('POST', "$base/review/google-half/:id/put-back", [$reviewController, 'putBackGoogle']);
         $router->add('POST', "$base/duplicates/:id", [$reviewController, 'decideDuplicate']);

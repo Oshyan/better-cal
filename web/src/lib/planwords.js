@@ -889,6 +889,7 @@ const REFUSALS = {
 // from a day on: Series\Split::REASONS). Its plan carries scope 'following'.
 const SPLIT_REFUSALS = {
   shape: 'This repeat can’t be split on this day: started there, it wouldn’t give the same days. Change only this one, or all events.',
+  empty: 'This would leave no events from this day on. Delete this and following instead?',
 };
 // The same reason in one line, where a scope chooser leaves a scope out
 // (app/scopes.js): a scope refused for every occurrence of a calendar kind

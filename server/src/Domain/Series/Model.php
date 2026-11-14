@@ -68,6 +68,8 @@ final class Model
         'dayset' => 'This repeat came from another app and picks its days in a way a drag can\'t follow. Move only this one, or open the series to choose its days.',
         'empty' => 'This would leave the series with no events. Delete it instead?',
     ];
+    /** The same for a split's part (this and following): the days before stay, so only the part would be left with none. */
+    public const EMPTY_FROM_DAY = 'This would leave no events from this day on. Delete this and following instead?';
 
     public const GOOGLE_NOTE = 'This change is sent to Google and read back from it: the calendar shows what Google stores. It can\'t be undone yet.';
 
@@ -1425,8 +1427,15 @@ final class Model
     }
 
     /** A refusal of the whole edit, with the series as it is. */
+    /** A plan that leaves no events, in words for its reach: the whole series, or a split's part from its day on. */
+    private function emptyWords(): string
+    {
+        return isset($this->opts['splitDay']) ? self::EMPTY_FROM_DAY : self::REASONS['empty'];
+    }
+
     private function refused(string $code, ?string $words = null, array $data = []): array
     {
+        $words ??= $code === 'empty' ? $this->emptyWords() : null;
         $this->refusals[] = ['code' => $code, 'words' => $words ?? self::REASONS[$code] ?? $code] + $data;
         $before = Words::rule($this->r0, $this->allDay0 ? null : $this->clock0);
         return [
@@ -1970,7 +1979,7 @@ final class Model
             [$this->groups, $this->refusals, $this->notes, $this->choices] = $saved;
             if ($m === null) {
                 // Nothing left (Bounds): refused, and the rest of the plan stands.
-                $out[] = ['disabled' => true, 'code' => 'empty', 'reason' => self::REASONS['empty']] + $r;
+                $out[] = ['disabled' => true, 'code' => 'empty', 'reason' => $this->emptyWords()] + $r;
                 continue;
             }
             if ($m['writes'] === null) {

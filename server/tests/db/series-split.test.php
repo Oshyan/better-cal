@@ -354,7 +354,7 @@ return static function (Db $db): void {
         $plan = $d->events->previewPatch($u, $short, ['scope' => 'following', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=2', 'preview' => true]);
         checkEq('COUNT=2 sent at the third day: "2 from this day on" is selected, with 2 events from 19 Jan', ['part', 2, '2027-01-26'],
             [$plan['groups'][0]['selected'] ?? null, $plan['bound']['events'] ?? null, $plan['bound']['last'] ?? null]);
-        checkEq('the disabled whole-count reading carries the empty reason and code', [true, 'This would leave the series with no events. Delete it instead?', ['group' => 'bound', 'option' => 'whole', 'code' => 'empty']],
+        checkEq('the disabled whole-count reading carries the empty reason, in a split\'s words (from this day on), and code', [true, 'This would leave no events from this day on. Delete this and following instead?', ['group' => 'bound', 'option' => 'whole', 'code' => 'empty']],
             [$plan['groups'][0]['options'][0]['disabled'] ?? false, $plan['groups'][0]['options'][0]['reason'] ?? null,
                 array_values(array_map(static fn(array $r): array => array_intersect_key($r, ['group' => 1, 'option' => 1, 'code' => 1]), array_filter($plan['refusals'], static fn(array $r): bool => ($r['group'] ?? null) === 'bound')))[0] ?? null]);
     });
@@ -367,8 +367,9 @@ return static function (Db $db): void {
         $entries = (int) $db->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = ?', [$u]);
         $whole = $d->events->previewPatch($u, $walk, ['scope' => 'all', 'rrule' => 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20261229T235959Z', 'preview' => true]);
         $plan = $d->events->previewPatch($u, $walk, $edit + ['preview' => true]);
-        checkEq('the preview refuses it with the whole series\' reason for an end before the start, the same code and words', [
-            [['code' => 'empty', 'words' => 'This would leave the series with no events. Delete it instead?']], $whole['refusals'], [],
+        // The same code as the whole series' end before the start; the words say what is left without events, from this day on.
+        checkEq('the preview refuses it with the code of an end before the start, in a split\'s words', [
+            [['code' => 'empty', 'words' => 'This would leave no events from this day on. Delete this and following instead?']], [['code' => 'empty', 'words' => 'This would leave the series with no events. Delete it instead?']], [],
         ], [$plan['refusals'], array_map(static fn(array $r): array => array_intersect_key($r, ['code' => 1, 'words' => 1]), $whole['refusals']), $plan['groups']]);
         [$code, $errPlan] = $error(fn() => $d->events->patch($u, $walk, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => []]]));
         checkEq('the commit is 422 series_refused with the plan, and every row and the Undo list are as before', ['422 series_refused', 'empty', $before, $entries],

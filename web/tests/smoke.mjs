@@ -6723,9 +6723,10 @@ console.log('--- the scopes an occurrence has, one rule for every chooser (1.5.1
   eq('scope row: Google offers This and following too', row(google).includes('This and following'), true);
 
   // The refusal panel's sentence for a split is the split's where it has one, else the change's.
-  eq('refusal words: a split\'s own refusal (its shape) has its own sentence; a change\'s own reason with no split sentence reads the same under either scope', [
-    planRefusal({ scope: 'following', refusals: [{ code: 'shape' }] }) !== refusalWords('shape'), planRefusal({ scope: 'following', refusals: [{ code: 'empty' }] }) === refusalWords('empty'),
-  ], [true, true]);
+  eq('refusal words: a split\'s own refusals (its shape, no events from its day on) have their own sentences; a change\'s own reason with no split sentence reads the same under either scope', [
+    planRefusal({ scope: 'following', refusals: [{ code: 'shape' }] }) !== refusalWords('shape'), planRefusal({ scope: 'following', refusals: [{ code: 'unreadable' }] }) === refusalWords('unreadable'),
+    planRefusal({ scope: 'following', refusals: [{ code: 'empty' }] }), refusalWords('empty'),
+  ], [true, true, 'This would leave no events from this day on. Delete this and following instead?', 'This would leave the series with no events. Delete it instead?']);
 
   // Delete following and an answer from a day on carry "Change scope".
   let asked = 0;

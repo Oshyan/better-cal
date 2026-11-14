@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 // A plan that leaves a series no day but deleted ones is refused as leaving no events (decisions.md, "A plan that
 // leaves no undeleted day is refused as leaving no events"; replay round 4, cause 3; probe 2026-11-13, 3.62: Google
-// cancels such a series for good). On every calendar: a change to all events, and "this and following" whose earlier
-// part would be left only deleted days. Expectations by date. Invented data.
+// cancels such a series for good). On every calendar. And "this and following" from the first day still showing,
+// whose earlier days are all deleted, is the whole series' change, never refused. Expectations by date. Invented data.
 
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
@@ -55,13 +55,73 @@ return static function (Db $db): void {
         }
     });
 
-    scenario('only skipped, this and following: a split whose earlier part would keep only deleted days is refused as empty', function () use ($db, $weekly, $codeOf): void {
+    // "This and following" from the first day still showing is the whole series, whether or not earlier days were
+    // deleted (decisions.md, "From the first day still showing, this and following is the whole series"; the second
+    // read of the 1.5.6 branch, F2). A weekly series of three from 1 March, 1 March deleted, each change from 8 March:
+    // what the calendar shows after it, by date, on a local calendar and on Google.
+    $shown = static function (BetterCal\Domain\Events $events, int $u, int $cal) use ($la): array {
+        $utc = new DateTimeZone('UTC');
+        $out = [];
+        foreach ($events->window($u, new DateTimeImmutable('2027-02-20 00:00:00', $utc), new DateTimeImmutable('2027-04-01 00:00:00', $utc), [$cal], null, true) as $x) {
+            $out[] = (new DateTimeImmutable((string) $x['start']))->setTimezone(new DateTimeZone($la))->format('m-d H:i') . ' ' . $x['title'];
+        }
+        sort($out);
+        return $out;
+    };
+    $second = '2027-03-08T10:00:00-08:00';
+    $changes = [
+        'renamed from 8 March on' => [['scope' => 'following', 'instanceStart' => $second, 'title' => 'Sample series, renamed'], ['03-08 10:00 Sample series, renamed', '03-15 10:00 Sample series, renamed']],
+        'an hour later from 8 March on' => [['scope' => 'following', 'instanceStart' => $second, 'start' => '2027-03-08T11:00:00-08:00', 'end' => '2027-03-08T12:00:00-08:00'], ['03-08 11:00 Sample series', '03-15 11:00 Sample series']],
+        'deleted from 8 March on' => [null, []],
+    ];
+    foreach (['local', 'Google'] as $kind) {
+        foreach ($changes as $what => [$body, $want]) {
+            scenario("first day still showing, $kind: 1 March deleted, then $what: the whole series, no refusal", function () use ($db, $weekly, $kind, $body, $want, $what, $second, $shown, $refusalCodes): void {
+                if ($kind === 'local') {
+                    $u = freshUser($db);
+                    $d = domains($db);
+                    $cal = (int) $d->calendars->create($u, ['name' => 'Sample local'])['id'];
+                    $events = $d->events;
+                    $id = (int) $events->create($u, ['calendarId' => $cal, 'title' => 'Sample series'] + $weekly)['eventId'];
+                    $t = null;
+                } else {
+                    $t = H::make($db, $weekly);
+                    [$u, $cal, $events, $id] = [$t->u, $t->s->calendarId, $t->e, $t->id];
+                }
+                try {
+                    $events->deleteEvent($u, $id, 'this', '2027-03-01T10:00:00-08:00');
+                    $events->throwDeferred();
+                    if ($body === null) {
+                        $plan = $events->previewDelete($u, $id, 'following', $second);
+                        checkEq("$kind, $what: the preview is the whole series' delete, no refusal", [true, []], [!empty($plan['whole']), $refusalCodes($plan)]);
+                        plannedDelete($events, $u, $id, $second);
+                    } else {
+                        $plan = $events->previewPatch($u, $id, $body + ['plan' => ['choices' => []]]);
+                        checkEq("$kind, $what: the preview is the whole series' plan, no refusal", ['all', []], [$plan['scope'] ?? null, $refusalCodes($plan)]);
+                        planned($events, $u, $id, $body);
+                    }
+                    $events->throwDeferred();
+                    checkEq("$kind, $what: what the calendar shows after", $want, $shown($events, $u, $cal));
+                    if ($t !== null) {
+                        checkEq("$kind, $what: nothing half done", [], H::halfDone($t));
+                    }
+                } finally {
+                    if ($t !== null) {
+                        H::done($t);
+                    }
+                }
+            });
+        }
+    }
+
+    // A change that truly leaves no events from its day on is refused, in words for this and following.
+    scenario('this and following with an end before its day: refused, the words say from this day on and name the way out', function () use ($db, $weekly): void {
         $u = freshUser($db);
         $d = domains($db);
         $cal = (int) $d->calendars->create($u, ['name' => 'Sample local'])['id'];
         $id = (int) $d->events->create($u, ['calendarId' => $cal, 'title' => 'Sample series'] + $weekly)['eventId'];
-        $d->events->deleteEvent($u, $id, 'this', '2027-03-01T10:00:00-08:00');
-        $plan = $d->events->previewDelete($u, $id, 'following', '2027-03-08T10:00:00-08:00');
-        checkEq('delete following from the second day, the first deleted: refused as leaving no events', ['empty'], array_values(array_unique(array_column($plan['refusals'] ?? [], 'code'))));
+        $plan = $d->events->previewPatch($u, $id, ['scope' => 'following', 'instanceStart' => '2027-03-08T10:00:00-08:00', 'rrule' => 'FREQ=WEEKLY;UNTIL=20270302T000000Z', 'plan' => ['choices' => []]]);
+        checkEq('refused as empty, in the split\'s words', [['empty', 'This would leave no events from this day on. Delete this and following instead?']],
+            array_map(static fn(array $r): array => [$r['code'] ?? '', $r['words'] ?? ''], $plan['refusals'] ?? []));
     });
 };

@@ -21,8 +21,12 @@ declare(strict_types=1);
 // `<id>_20270108T180000Z` (Fri 8 Jan at 10:00) names nothing there. (The hunter's probe expected the change kept
 // on its date; the restated rule names it instead, and these rows assert the sentence.)
 //
-// The control is the same sequence with the master write taken and only its answer lost, where the day changed at
-// Google is a day of the 11:00 series: there the change at Google is kept, as the hunter wrote it.
+// The other half is the same sequence with the master write taken and only its answer lost, where the day changed at
+// Google is a day of the 11:00 series. Once the series' own write has landed, what Google did to the days with it
+// can't be told from a change made there since, so Finish sets each day as the change has it and says what it replaced,
+// with what Google held and what it set (decisions.md, "Finish sets the plan's days where it can't tell its own change
+// from another"). Until 1.5.6 the change made at Google was kept there, on a prediction of what the write itself does
+// to the days, and the hunter wrote these rows so.
 //
 // Every expected value is written from the contract by date; nothing in server/src computes one. Google is the edit
 // harness's stand-in, default settings. Whole-series undo is off (the 1.5.5 default). Invented data.
@@ -52,11 +56,17 @@ return static function (Db $db): void {
         }
         return $out;
     };
+    // What Finish says it replaced on the day with its own notes when the series' write had landed and that day was not
+    // yet sent: Google held it without them (a write to a series with no notes clears a kept day's, probe 3.52 to 3.57).
+    $notesSet = 'On ' . $day('2027-01-06') . " Google Calendar held no notes; Finish set the notes 'Notes A', as this change has it.";
     $cases = [
-        // [the request made at Google, the day's date, its body, the calendar by date where the change is kept (the control), what was done in words]
-        'Fri 8 Jan deleted at Google' => ['DELETE', '2027-01-08', null, $plain([], ['08']), 'deleted'],
-        'Fri 8 Jan renamed at Google' => ['PATCH', '2027-01-08', ['summary' => 'Renamed at Google'], $plain(['08' => 'Renamed at Google||']), 'renamed'],
-        'Wed 6 Jan (the day with its own notes) given other notes at Google' => ['PATCH', '2027-01-06', ['description' => 'Notes from Google'], $plain(['06' => 'Sample series|Notes from Google|']), 'given other notes'],
+        // [the request made at Google, the day's date, its body, what Finish says it replaced where the series' write had landed, what was done in words]
+        'Fri 8 Jan deleted at Google' => ['DELETE', '2027-01-08', null,
+            [$notesSet, $day('2027-01-08') . ' was deleted in Google Calendar; Finish put it back as this change has it (11:00 to 12:00).'], 'deleted'],
+        'Fri 8 Jan renamed at Google' => ['PATCH', '2027-01-08', ['summary' => 'Renamed at Google'],
+            [$notesSet, 'On ' . $day('2027-01-08') . " Google Calendar held the title 'Renamed at Google'; Finish set the title 'Sample series', as this change has it."], 'renamed'],
+        'Wed 6 Jan (the day with its own notes) given other notes at Google' => ['PATCH', '2027-01-06', ['description' => 'Notes from Google'],
+            ['On ' . $day('2027-01-06') . " Google Calendar held the notes 'Notes from Google'; Finish set the notes 'Notes A', as this change has it."], 'given other notes'],
     ];
     // The sibling on a split: "this and following" from Wed 6 Jan, renamed (no time changes at all). Its first write
     // (the old series' new end) is sent and not taken; Fri 8 Jan, a day of the part, is deleted at Google in the series
@@ -97,10 +107,10 @@ return static function (Db $db): void {
     });
 
     foreach (['sent and not taken (the network down)' => 'netAt', 'taken, its answer lost (the control)' => 'loseAt'] as $how => $knob) {
-        foreach ($cases as $what => [$method, $date, $payload, $kept, $done]) {
-            // Sent and not taken: the plan whole, the change named. Taken: the change kept, as the hunter wrote it.
-            $expect = $knob === 'netAt' ? $plain() : $kept;
-            scenario("F2: 10:00 to 11:00 for all events, the master write $how, $what, then Finish", function () use ($build, $to11, $la, $how, $knob, $what, $method, $date, $payload, $expect, $done, $day, $plain): void {
+        foreach ($cases as $what => [$method, $date, $payload, $replaced, $done]) {
+            // Either way the plan whole. Sent and not taken: the change made at Google named as not kept. Taken: what Finish replaced, said.
+            $expect = $plain();
+            scenario("F2: 10:00 to 11:00 for all events, the master write $how, $what, then Finish", function () use ($build, $to11, $la, $how, $knob, $what, $method, $date, $payload, $expect, $replaced, $done, $day, $plain): void {
                 $name = "F2 (master write $how; $what)";
                 $t = $build();
                 try {
@@ -145,8 +155,11 @@ return static function (Db $db): void {
                     if ($knob === 'netAt') {
                         checkEq("$name: the change made at Google is named once, by its date, as not kept",
                             ['While this change was waiting to be finished, ' . $day($date) . " was $done in Google Calendar. That was lost when the event's time changed. Make it again there if you still want it."], $out['differences'] ?? null);
+                    } else {
+                        checkEq("$name: Finish says what it replaced, each day with what Google held and what it set, and no cause",
+                            array_merge(['This change had stopped part way, and Google Calendar no longer held the event as it was left.'], $replaced), $out['differences'] ?? null);
                     }
-                    check("$name: by date, the series is at 11:00 and " . ($knob === 'netAt' ? 'exactly as planned, no other day touched' : 'the change made at Google is kept'), $now === $expect,
+                    check("$name: by date, the series is at 11:00 and " . ($knob === 'netAt' ? 'exactly as planned, no other day touched' : 'every day as the change has it'), $now === $expect,
                         "\n   missing: " . implode("\n            ", array_diff($expect, $now)) . "\n   extra:   " . implode("\n            ", array_diff($now, $expect))
                         . "\n   the answer's differences: " . json_encode($out['differences'] ?? null) . "\n   Finish wrote:\n     " . implode("\n     ", $writes));
                     // What the answer says is true: it names no day "the plan" never had, and never says "left as Google has it" of a value it did not leave.

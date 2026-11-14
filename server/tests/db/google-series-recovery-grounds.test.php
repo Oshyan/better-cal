@@ -43,7 +43,7 @@ return static function (Db $db): void {
 
     // The series a scenario starts from: daily, eight of them from 19 July 2027.
     $la = ['clock' => '17:00', 'zone' => 'America/Los_Angeles'];   // 00:00 UTC the next day
-    $midnight = ['clock' => '00:00', 'zone' => 'UTC'];            // its keys are those of the same dates all-day
+    $la18 = ['clock' => '18:00', 'zone' => 'America/Los_Angeles']; // 01:00 UTC the next day: at 17:00 (00:00 UTC) a switch to all-day would hide days at Google, and is refused there (google-hidden-switch)
     // The changes for all events: the request, and the series' clock and zone after it (null clock: all-day).
     $changes = [
         'an hour later' => [static fn(array $s): array => ['start' => $iso('2027-07-19', '18:00', $s['zone']), 'end' => $iso('2027-07-19', '19:00', $s['zone'])], ['clock' => '18:00'], []],
@@ -242,12 +242,11 @@ return static function (Db $db): void {
 
     // Every change that places the series' days again, completed in one go (the control), stopped before its master
     // write landed and finished, and stopped after it and finished. A change between timed and all-day and a zone
-    // change re-form the series: every key is another instant or a date. A series at midnight UTC made all-day, and a
-    // zone moved at the same moment, keep every key, and record no move, as the commit records none.
+    // change re-form the series: every key is another instant or a date. A zone moved at the same moment keeps every key,
+    // and records no move, as the commit records none. (A series at midnight UTC made all-day is refused on Google.)
     $cases = [
         ['an hour later', $la],
-        ['made all-day', $la],
-        ['made all-day', $midnight],
+        ['made all-day', $la18],
         ['moved to Denver at the same clock time', $la],
         ['moved to Denver at the same moment', $la],
         ['ten events', $la],
@@ -353,7 +352,7 @@ return static function (Db $db): void {
             }]);
         checkEq('the clock moved at Google meanwhile: Finish completes, the series at Google\'s clock with the day Google kept', [true, 0, []], [$r['recovered'], $r['left'], $r['changed']['skips']]);
         check('the clock moved at Google meanwhile: Finish names the time it left as Google has it and the day Google kept',
-            count(array_filter($r['named'], static fn(string $w): bool => str_contains($w, "The event's time was changed in Google Calendar"))) === 1 && count(array_filter($r['named'], static fn(string $w): bool => str_contains($w, 'but Google Calendar kept it'))) === 1, json_encode($r['named']));
+            count(array_filter($r['named'], static fn(string $w): bool => str_contains($w, "The event's time was changed in Google Calendar"))) === 1 && count(array_filter($r['named'], static fn(string $w): bool => str_contains($w, 'is on the calendar in Google Calendar (20:00 to 21:00); this change deleted it'))) === 1, json_encode($r['named']));
         checkEq("the clock moved at Google meanwhile: Finish's entry records the deleted day's skip as gone and no move", [[], true],
             [$r['moves'], in_array('series skip:2027-07-25 00:00:00', $r['grounds'], true)]);
         checkEq('the clock moved at Google meanwhile: the undo of the delete is refused, its skip neither carried nor left standing, with nothing written here and nothing sent',
@@ -373,13 +372,13 @@ return static function (Db $db): void {
     });
 
     // A day that had notes of its own and was then deleted: its entry holds the day's row, so the entry itself says
-    // which day its key names (17:00 Los Angeles on 24 July is 00:00 UTC on the 25th, the key of all-day 25 July).
+    // which day its key names (18:00 Los Angeles on 24 July is 01:00 UTC on the 25th, a day later than all-day 24 July).
     // After the series is made all-day and finished from Review, the undo brings the day back with its notes on 24
     // July, the date it was deleted on, and on no other.
     foreach ([null, 'after its master write, the answer lost'] as $stop) {
         scenario('a day with notes deleted, the series made all-day ' . ($stop === null ? 'in one go' : 'with the answer of its master write lost and finished from Review') . ', the delete undone: the day is back with its notes on its own date',
-            function () use ($run, $la, $stop): void {
-                $r = $run(['series' => $la, 'plain' => true, 'before' => [['2027-07-24', ['description' => 'Bring the sample checklist']]], 'change' => 'made all-day'] + ($stop === null ? [] : ['stop' => $stop, 'then' => 'finish']));
+            function () use ($run, $la18, $stop): void {
+                $r = $run(['series' => $la18, 'plain' => true, 'before' => [['2027-07-24', ['description' => 'Bring the sample checklist']]], 'change' => 'made all-day'] + ($stop === null ? [] : ['stop' => $stop, 'then' => 'finish']));
                 $name = 'notes, then deleted, made all-day ' . ($stop ?? 'in one go');
                 checkEq("$name: the day stays deleted on its date through the change", [1, ['2027-07-24']], [$r['changed']['allDay'], $r['changed']['skips']]);
                 checkEq("$name: the undo goes through and the day is back with its notes on its own date and no other", [null, [], ['2027-07-24' => 'Bring the sample checklist']],

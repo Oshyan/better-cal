@@ -37,7 +37,7 @@ final class Split
     public const REASONS = [
         'unreadable' => Model::REASONS['unreadable'],
         'shape' => 'This repeat can\'t be split on this day: started there, it wouldn\'t give the same days. Change only this one, or all events.',
-        'empty' => Model::REASONS['empty'],
+        'empty' => Model::EMPTY_FROM_DAY,
     ];
 
     /**
@@ -45,7 +45,7 @@ final class Split
      * required); $mode is EDIT, DELETE or ANSWER.
      *
      * Returns ['whole' => true] when the day acted on is the series' first
-     * (the change is the whole series'), else ['plan', 'writes', 'missing',
+     * day still showing (the change is the whole series'), else ['plan', 'writes', 'missing',
      * 'refused']: writes['old'] the old master's columns, writes['part'] the
      * new series' columns before its plan (null for a delete), writes['rows']
      * the ids of the rows from the split on, writes['plan'] the part's plan
@@ -68,7 +68,12 @@ final class Split
         // The old part: every raw occurrence keyed before the split (a
         // rule several times a day counts each of its times).
         $before = array_values(array_filter($old->keys($actedDn), static fn(array $k): bool => $k[1] < $acted));
-        if ($before === []) {
+        $skips = Recurrence::decodeExdates($master['exdates_json'] ?? null);
+        $oldSkips = array_values(array_filter($skips, static fn(string $k): bool => $k < $acted));
+        // The series' first day is the first day still showing, not the first date of its rule (decisions.md, "From the
+        // first day still showing, this and following is the whole series"): with every day before the one acted on
+        // deleted, the change is the whole series', as from a first day with none deleted.
+        if (array_diff(array_column($before, 1), $oldSkips) === []) {
             return ['whole' => true];
         }
         $last = $before[count($before) - 1][1];
@@ -76,8 +81,6 @@ final class Split
         // a date for an all-day series, its instant in UTC for a timed one.
         $until = $allDay ? Time::fromDb($last)->format('Ymd') : Time::fromDb($last)->format('Ymd\THis\Z');
         $oldRule = Recurrence::inForm($old->storedRule()->withBound(null, $until)->text(), $allDay, $tz);
-        $skips = Recurrence::decodeExdates($master['exdates_json'] ?? null);
-        $oldSkips = array_values(array_filter($skips, static fn(string $k): bool => $k < $acted));
         $partSkips = array_values(array_filter($skips, static fn(string $k): bool => $k >= $acted));
         $kept = [];
         $partRows = [];
@@ -265,13 +268,18 @@ final class Split
         $partChoices = array_diff_key($choices, ['bound' => true]);
         foreach ($counts as $id => $n) {
             $option = ['id' => $id, 'label' => $labels[$id]];
+            $alt = $n >= 1 ? Model::plan($partMaster, $partRows, ['rrule' => $sent->withBound($n, null)->text(), 'boundSent' => true] + $partEdit, $partChoices, $opts) : null;
+            // A reading whose part keeps no day but deleted ones leaves no events, as one that keeps none does.
+            if ($alt !== null && $alt['writes'] === null && in_array('empty', array_column($alt['plan']['refusals'] ?? [], 'code'), true)) {
+                $n = 0;
+            }
             if ($n >= 1) {
-                $alts[$id] = Model::plan($partMaster, $partRows, ['rrule' => $sent->withBound($n, null)->text(), 'boundSent' => true] + $partEdit, $partChoices, $opts);
+                $alts[$id] = $alt;
                 $alt = $alts[$id]['plan'];
                 $option += ['bound' => $alt['bound'], 'next' => array_map(static fn(array $e): array => array_intersect_key($e, ['start' => 1, 'allDay' => 1, 'tz' => 1]), array_slice($alt['next'], 0, 3))];
             } else {
-                $option += ['disabled' => true, 'reason' => Model::REASONS['empty']];
-                $refusals[] = ['group' => 'bound', 'option' => $id, 'code' => 'empty', 'words' => Model::REASONS['empty']];
+                $option += ['disabled' => true, 'reason' => self::REASONS['empty']];
+                $refusals[] = ['group' => 'bound', 'option' => $id, 'code' => 'empty', 'words' => self::REASONS['empty']];
             }
             $options[] = $option;
         }

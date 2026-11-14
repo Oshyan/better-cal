@@ -22,9 +22,11 @@ use BetterCal\Domain\GoogleWriter;
 use BetterCal\Domain\Recurrence;
 use BetterCal\Domain\Undo;
 use BetterCal\GoogleProbe\FakeGoogle;
+use BetterCal\GoogleProbe\TraceRecorder;
 use BetterCal\Infra\Db;
 
 require_once dirname(__DIR__) . '/google-probe/lib/FakeGoogle.php';
+require_once dirname(__DIR__) . '/google-probe/lib/Trace.php';
 
 final class GoogleStand
 {
@@ -77,12 +79,16 @@ final class GoogleStand
         $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
         $fake = new FakeGoogle(self::CALENDAR);
         $fake->token = 'sample-access';
-        $fake->zone = 'UTC';
-        $fake->expand = static fn(array $master): array => self::expand($master);
+        // The calendar's own zone; GOOGLE_STAND_ZONE sets another for recording traces (tools/google-probe/record.php --zone).
+        $fake->zone = getenv('GOOGLE_STAND_ZONE') ?: 'UTC';
+        $fake->expand = static fn(array $master, ?\DateTimeImmutable $through = null): array => self::expand($master, $through);
         $auth = new GoogleAuth($db, $cfg, static fn(string $url, array $fields, ?float $deadline): array
             => ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])]);
         $feeds = new Feeds($db);
-        $inner = $fake->writerTransport();
+        // GOOGLE_TRACE=<file.json> records every request the app sends the stand-in, with its answer, for
+        // tools/google-probe/replay.php (README there, "Replaying the App's Requests"); unset, the transports are the stand-in's.
+        $recorder = TraceRecorder::fromEnv($fake, 'edit-harness', 'edit-harness');
+        $inner = $recorder?->writerTransport() ?? $fake->writerTransport();
         // HARNESS_GOOGLE_TRACE=1 prints every request to the stand-in on stderr.
         $trace = getenv('HARNESS_GOOGLE_TRACE') !== false;
         // Failures injected into the app's writes (the interleaving mode, Interleave.php): the write numbered beforeAt
@@ -146,7 +152,7 @@ final class GoogleStand
             }
             return $answer;
         });
-        $list = $fake->syncTransport();
+        $list = $recorder?->syncTransport() ?? $fake->syncTransport();
         $sync = new GoogleSync($db, $auth, $feeds, static function (string $url, array $headers) use ($list, $knobs): array {
             if ($knobs->duringFetch !== null) {
                 $during = $knobs->duringFetch;
@@ -183,8 +189,14 @@ final class GoogleStand
         return new self($db, $fake, $calendarId, $writer, $sync, $events, $knobs);
     }
 
-    /** The stand-in's occurrences of a master: the harness's own evaluator over the resource read as a row, 730 at most. @return list<\DateTimeImmutable> */
-    public static function expand(array $master): array
+    /**
+     * The stand-in's occurrences of a master: the harness's own evaluator over the resource read as a row, 730 at most
+     * as a listing, or with $through every one up to it (the stand-in asks that way whether a record's date is still a
+     * day of the rule, which the listing's length does not decide).
+     *
+     * @return list<\DateTimeImmutable>
+     */
+    public static function expand(array $master, ?\DateTimeImmutable $through = null): array
     {
         $allDay = isset($master['start']['date']);
         $zone = $allDay ? 'UTC' : (string) ($master['start']['timeZone'] ?? 'UTC');
@@ -209,8 +221,50 @@ final class GoogleStand
         $ev = clone Rfc::ofRow($row);
         $keys = $ev->refused
             ? array_column(array_slice(Truth::expand($row)['occ'], 0, 730), 'key')
-            : array_map(static fn(array $o): string => gmdate('Y-m-d H:i:s', $o[0]), $ev->first(730));
+            : array_map(static fn(array $o): string => gmdate('Y-m-d H:i:s', $o[0]), $through === null ? $ev->first(730) : $ev->through($through->getTimestamp()));
         return array_map(static fn(string $key): \DateTimeImmutable => Clock::parse($key)->setTimezone(Clock::zone($zone)), $keys);
+    }
+
+    /**
+     * Whether switching series $gid, as the stand-in holds it, to the series $target (a row: start_utc, end_utc, all_day,
+     * tzid, rrule) in the other form would hide days at Google (decisions.md, "A switch between timed and all-day that
+     * Google would hide days with is refused"; probe 2026-11-13, 3.48 to 3.51, 3.65): a record of the series, live or
+     * cancelled, at the instant of a day of $target, an all-day day's instant being its date at 00:00 UTC. The harness's
+     * own reading, from the stand-in's store and the harness's expander, sharing nothing with the product.
+     */
+    public function hidesOnSwitch(string $gid, array $target): bool
+    {
+        return $this->hiddenOnSwitch($gid, $target) !== [];
+    }
+
+    /**
+     * The days of $target such a switch would hide, by their keys in $target's form (UTC, 'Y-m-d H:i:s'; an all-day day's
+     * key its date at 00:00): the same reading as hidesOnSwitch, listing what it finds.
+     *
+     * @return list<string>
+     */
+    public function hiddenOnSwitch(string $gid, array $target): array
+    {
+        $m = $this->fake->events[$gid] ?? null;
+        $allDay = (int) ($target['all_day'] ?? 0) === 1;
+        if ($m === null || empty($target['rrule']) || isset($m['start']['date']) === $allDay) {
+            return [];
+        }
+        $held = [];
+        foreach ($this->fake->records($gid) as $key => $r) {
+            $k = (string) $key;
+            $held[strlen($k) === 8 ? $k . 'T000000Z' : $k] = true;
+        }
+        $row = ['start_utc' => (string) $target['start_utc'], 'end_utc' => (string) $target['end_utc'], 'all_day' => $allDay ? 1 : 0, 'tzid' => $allDay ? 'UTC' : (string) $target['tzid'], 'rrule' => (string) $target['rrule'], 'exdates_json' => null];
+        $ev = clone Rfc::ofRow($row);
+        $keys = $ev->refused ? array_column(array_slice(Truth::expand($row)['occ'], 0, 730), 'key') : array_map(static fn(array $o): string => gmdate('Y-m-d H:i:s', $o[0]), $ev->first(730));
+        $out = [];
+        foreach ($keys as $key) {
+            if (isset($held[Clock::parse($key)->format('Ymd\THis\Z')])) {
+                $out[] = (string) $key;
+            }
+        }
+        return $out;
     }
 
     public function calendar(): array

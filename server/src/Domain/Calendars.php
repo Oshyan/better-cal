@@ -154,13 +154,19 @@ final class Calendars
     public function reattachGoogle(int $userId, int $id, int $accountId, string $accessRole, string $accountEmail): void
     {
         $before = $this->get($userId, $id);
-        $this->db->run(
-            "UPDATE calendars SET google_account_id = ?, google_access_role = ?,
+        $attached = $this->db->run(
+            "UPDATE calendars SET google_account_id = ?,
                 google_binding_version = google_binding_version + 1,
                 last_poll_status = 'ok', last_poll_error = NULL
              WHERE id = ? AND user_id = ? AND google_account_id IS NULL",
-            [$accountId, $accessRole, $id, $userId]
-        );
+            [$accountId, $id, $userId]
+        )->rowCount();
+        // The level, through the one store of a level (GoogleWriter::settleAccess): a move between tiers
+        // since the calendar was last attached gets its Activity line and its Review item, as on a poll.
+        $now = $attached > 0 ? $this->db->one('SELECT * FROM calendars WHERE id = ?', [$id]) : null;
+        if ($now !== null) {
+            GoogleWriter::settleAccess($this->db, $this->undo, $now, $accessRole);
+        }
         $after = $this->get($userId, $id);
         $this->undo->record(
             $userId, 'calendar', $id, 'update',
@@ -460,6 +466,8 @@ final class Calendars
                 touches: array_merge(Undo::touchesOf($before, $after), array_map(static fn(int $e) => [Undo::keyOf('events', ['id' => $e]), 'source'], $events)));
             // A change left half done on it (its account disconnected, its access paused) can never run now: closed.
             GoogleSeries::closeNeverRunnable($this->db, $this->undo, $userId, $id, GoogleSeries::CLOSED_KEPT);
+            // Its Review notice about Google access is no longer true: the calendar is its own now.
+            ReviewQueue::closeGoogleAccess($this->db, $userId, $id);
         });
         return $this->serializeById($userId, $id);
     }
@@ -530,6 +538,7 @@ final class Calendars
             // Never refused: a change half done at Google on it can never run once it is gone (a Google
             // calendar's delete can't be undone here), so it is closed with it.
             GoogleSeries::closeNeverRunnable($this->db, $this->undo, $userId, $id, GoogleSeries::CLOSED_DELETED);
+            ReviewQueue::closeGoogleAccess($this->db, $userId, $id);
             $next = null;
             $stored = null;
             if ($wasDefault) {

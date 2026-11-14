@@ -196,11 +196,15 @@ final class Driver
         $spec = $this->spec;
         // A start moved alone acts on the first occurrence with no day named, and lands on a later occurrence that is no
         // exception's day (the driver's pick, by the case's seed and number); it needs a rule in the drag table and a first
-        // occurrence that is no exception, else the vector's flag is dropped and the case is an ordinary edit.
+        // occurrence that is no exception, else the vector's flag is dropped and the case is an ordinary edit. The
+        // occurrence is one within the days the case draws from (19 years on, under the product's editing horizon): the
+        // edits stacked after it act on the new first day, and a sparse rule's next six days can lie past that horizon
+        // (a leap day's span 24 years), where an edit that names a day is refused.
         if (!empty($spec['vector']['startOnly'])) {
             $exAt = array_fill_keys(array_column($spec['exceptions'] ?? [], 'at'), true);
             $base = self::shownFrom($st);
-            $later = array_values(array_filter(array_keys($st['raw']), static fn(int $i): bool => $i > $base && $i <= $base + 6 && !isset($exAt[$i])));
+            $horizon = Clock::db((new \DateTimeImmutable('now', Clock::utc()))->modify('+19 years'));
+            $later = array_values(array_filter(array_keys($st['raw']), static fn(int $i): bool => $i > $base && $i <= $base + 6 && !isset($exAt[$i]) && $st['raw'][$i]['key'] < $horizon));
             if ($st['shape']->supported() && !isset($exAt[0]) && $later !== []) {
                 $spec['acted'] = 0;
                 $spec['startTo'] = $later[crc32('start:' . ($spec['seed'] ?? 0) . ':' . ($spec['n'] ?? 0)) % count($later)];
@@ -330,6 +334,20 @@ final class Driver
             Prof::mark('undo');
             if (!Product::$seriesUndo && $this->checkHeldBack(Product::seriesChanged($s0['events'], $s1['events']))) {
                 // The product's default in 1.5.5: a whole-series change on a Google calendar stays.
+                return $this->result($path);
+            }
+            // An undo that switches the series back between timed and all-day where Google would hide days is refused with
+            // the same sentence as the change itself would be (the harness's own reading: GoogleStand::hidesOnSwitch).
+            $gid = (string) $this->db->scalar('SELECT google_event_id FROM events WHERE id = ?', [$id]);
+            if ($gid !== '' && ($before['row'] ?? []) !== [] && $this->google->hidesOnSwitch($gid, $before['row'])) {
+                try {
+                    $this->undo->undoLatest($this->userId);
+                    $this->fail('f-undo', 'an undo that would hide days at Google went through', []);
+                } catch (\Throwable $e) {
+                    $this->check('f-undo', $e instanceof HttpError && $e->errorCode === 'google_hidden_days', 'an undo that would hide days at Google is refused with google_hidden_days',
+                        ['error' => $e instanceof HttpError ? $e->errorCode : get_class($e)]);
+                    $this->same('f-undo', self::withoutEtags($s1), self::withoutEtags($this->snapshot()), 'a refused undo writes nothing');
+                }
                 return $this->result($path);
             }
             if ($this->undoLatest('f-undo', 'undo')) {
@@ -672,17 +690,8 @@ final class Driver
                     $in += ['start' => Clock::iso($local), 'end' => Clock::iso(Clock::plus($local, max(0, $l)))];
                 }
             }
-            try {
-                $this->events->patch($this->userId, $id, $in);
-            } catch (HttpError $e) {
-                if ($this->google !== null && $e->errorCode === 'google_all_day') {
-                    // A day of an all-day series given a clock time: Google can't hold one (probe 2.2a), and the
-                    // product refuses it before sending; the case goes on without that day.
-                    $this->na('a timed day in an all-day series: Google can\'t hold one (refused google_all_day)');
-                    continue;
-                }
-                throw $e;
-            }
+            // A day of an all-day series given a clock time is held at Google once its date is sent null (probe 3.38).
+            $this->events->patch($this->userId, $id, $in);
             $row = $this->db->one('SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$id, $occ['key']]);
             if (!Product::$plan) {
                 // A product before 1.5 keeps no own list (override_fields): the harness keeps what each "this event" edit
@@ -1219,24 +1228,6 @@ final class Driver
             $this->same('e-preview', $s0, $this->snapshot(), 'a preview writes nothing');
         }
         $google = $slot === 'edit' && !$replay && $v['scope'] === 'all' && $this->google === null && ($this->spec['n'] ?? 0) % 2 === 0 ? $this->googlePlan($target, $in, $choices) : null;
-        if ($google !== null && !isset($google['error']) && self::timedUnderAllDay($plan)) {
-            // What Google can hold, read from the local plans (invariant i), never from the Google plan's own reasoning:
-            // for each enabled option of each group, the rest as chosen, whether its local plan (the oracle checks it)
-            // keeps a timed day under an all-day series, which Google can't hold.
-            foreach ($plan['groups'] ?? [] as $grp) {
-                foreach ($grp['options'] as $o) {
-                    if (!empty($o['disabled'])) {
-                        continue;
-                    }
-                    try {
-                        $alt = $o['id'] === $grp['selected'] ? $plan : $preview([$grp['id'] => $o['id']] + $choices);
-                        $google['holdable'][$grp['id']][$o['id']] = !self::timedUnderAllDay($alt);
-                    } catch (HttpError) {
-                        $google['holdable'][$grp['id']][$o['id']] = false;
-                    }
-                }
-            }
-        }
         try {
             $this->events->patch($this->userId, $target, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices]]);
         } catch (HttpError $e) {

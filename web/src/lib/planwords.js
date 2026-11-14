@@ -878,7 +878,6 @@ const REFUSALS = {
   weekno: 'This repeat counts weeks of the year, so its days can’t follow a drag.',
   overlap: 'Two of its days are the same day in some months, so its days can’t follow a drag.',
   dayset: 'This repeat came from another app and picks its days in a way a drag can’t follow. Move only this one, or open the series to choose its days.',
-  googleAllDay: 'At Google, a day of an all-day series can’t have a time of its own, so this change can’t be made while an edited day keeps one. Give that day the series’ all-day setting first, or change only this one.',
   empty: 'This would leave the series with no events. Delete it instead?',
   member_taken: 'That day is already one of its days.',
   off_weeks: 'Those days would fall in weeks this repeat skips.',
@@ -890,14 +889,33 @@ const REFUSALS = {
 // from a day on: Series\Split::REASONS). Its plan carries scope 'following'.
 const SPLIT_REFUSALS = {
   shape: 'This repeat can’t be split on this day: started there, it wouldn’t give the same days. Change only this one, or all events.',
+  empty: 'This would leave no events from this day on. Delete this and following instead?',
 };
 // The same reason in one line, where a scope chooser leaves a scope out
 // (app/scopes.js): a scope refused for every occurrence of a calendar kind
 // is not offered there, and these say why in its place. None since 1.5.4:
 // a Google calendar takes every scope.
 const UNOFFERED = {};
-/** A refusal's sentence, by its code (and the plan's scope: a split's are its own). */
-export const refusalWords = (code, scope) => (scope === 'following' && SPLIT_REFUSALS[code]) || REFUSALS[code] || 'This change can’t be made to the series.';
+// A switch between timed and all-day that Google would hide days with (GoogleSeries::hiddenRefusal, whose words are
+// the same: change both together). Google's own fault, undocumented: it stops showing a day of the new form at the
+// instant of a day it holds a record for. Days nobody deleted are named as lost; days deleted here as ones Better-Cal
+// could no longer read back. Up to three named, the rest counted; the dates and the time in the person's formats.
+function hiddenWords(r) {
+  const deleted = new Set(r.deleted || []);
+  const named = (list) => { const d = list.map((x) => fmtDay(x)); return d.length > 3 ? d.slice(0, 3).join(', ') + ' and ' + (d.length - 3) + ' more' : andList(d); };
+  const live = (r.days || []).filter((d) => !deleted.has(d));
+  const gone = (r.days || []).filter((d) => deleted.has(d));
+  const clock = r.toAllDay ? '' : fmtClock(r.clock);
+  const when = r.toAllDay ? 'if this event became all-day at its current time' : 'if this event became timed at ' + clock;
+  const what = live.length > 0
+    ? 'Google would stop showing ' + (live.length === 1 ? 'one of its days' : 'some of its days') + ' (' + named(live) + '), though nothing deleted ' + (live.length === 1 ? 'it' : 'them')
+    : 'Google would lose track of ' + (gone.length === 1 ? 'a day' : 'days') + ' deleted from it (' + named(gone) + '), so Better-Cal could no longer tell ' + (gone.length === 1 ? 'it was' : 'they were') + ' deleted';
+  const way = r.toAllDay ? 'Move the event to another time first, then make it all-day.' : 'Make it timed at another time first, then change the time to ' + clock + '.';
+  return 'Google Calendar has a fault here: ' + when + ', ' + what + '. ' + way;
+}
+/** A refusal's sentence, by its code (and the plan's scope: a split's are its own); $r, the refusal itself, for one whose words carry its data. */
+export const refusalWords = (code, scope, r = null) => (code === 'googleHidden' && r ? hiddenWords(r) : null)
+  || (scope === 'following' && SPLIT_REFUSALS[code]) || REFUSALS[code] || 'This change can’t be made to the series.';
 /** Why a scope chooser leaves "This and following" out, by the split refusal's code. */
 export const unofferedWords = (code) => UNOFFERED[code] || null;
 

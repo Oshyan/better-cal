@@ -34,7 +34,9 @@ return static function (Db $db): void {
             $transport = static function (string $method, string $url, ?array $payload) use (&$calls, &$resource): array {
                 $calls[] = $method;
                 $resource = array_merge($resource, $payload ?? []);
-                return ['status' => 200, 'body' => json_encode($resource)];
+                // A write's first read is a list by the event's iCalUID, which states the account's level (the access probe, L1).
+                $list = $method === 'GET' && str_ends_with((string) parse_url($url, PHP_URL_PATH), '/events');
+                return ['status' => 200, 'body' => json_encode($list ? ['kind' => 'calendar#events', 'accessRole' => 'owner', 'items' => [$resource]] : $resource)];
             };
             return new Events($db, new BetterCal\Domain\Recurrence(), $d->undo, new BetterCal\Domain\Labels($db),
                 new BetterCal\Domain\Filters($db, $d->undo, new BetterCal\Infra\JobQueue($db)), new BetterCal\Domain\Trips($db, $d->undo), null,
@@ -146,14 +148,16 @@ return static function (Db $db): void {
             'start' => ['dateTime' => '2027-01-11T18:00:00+00:00', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2027-01-11T19:00:00+00:00', 'timeZone' => 'UTC']];
         $transport = static function (string $method, string $url, ?array $payload, array $headers = []) use ($t): array {
             $t->resource = array_merge($t->resource, $payload ?? []);
-            return ($t->answer)($method, $headers, $t->resource);
+            // A write's first read is a list by the event's iCalUID, which states the account's level (the access probe, L1).
+            $list = $method === 'GET' && str_ends_with((string) parse_url($url, PHP_URL_PATH), '/events');
+            return ($t->answer)($method, $headers, $list ? ['kind' => 'calendar#events', 'accessRole' => 'owner', 'items' => [$t->resource]] : $t->resource);
         };
         return new Events($db, new BetterCal\Domain\Recurrence(), $d->undo, new BetterCal\Domain\Labels($db),
             new BetterCal\Domain\Filters($db, $d->undo, new BetterCal\Infra\JobQueue($db)), new BetterCal\Domain\Trips($db, $d->undo), null,
             new GoogleWriter($db, ($t->auth)(), new Feeds($db), $transport));
     };
     $sync = static fn(object $t): GoogleSync => new GoogleSync($db, ($t->auth)(), new Feeds($db), static fn(string $url, array $headers): array
-        => ($t->answer)('LIST', $headers, ['kind' => 'calendar#events', 'nextSyncToken' => 'sample-sync-token', 'items' => [
+        => ($t->answer)('LIST', $headers, ['kind' => 'calendar#events', 'accessRole' => 'owner', 'nextSyncToken' => 'sample-sync-token', 'items' => [
             // The calendar's one event, as the rows hold it: a whole read listing nothing is not applied (an empty listing never deletes).
             ['id' => 'g-sample', 'iCalUID' => 'sample-meeting@google', 'status' => 'confirmed', 'summary' => 'Sample meeting', 'etag' => '"e1"',
                 'start' => ['dateTime' => '2027-01-11T18:00:00Z', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2027-01-11T19:00:00Z', 'timeZone' => 'UTC']],

@@ -23,8 +23,11 @@ declare(strict_types=1);
 // restated rule names it instead, and the first block asserts the sentence.)
 //
 // The second block is the same with the master write taken and its answer lost, where the day deleted at Google is
-// a day of the series as changed (Fri 8 Jan, the notes' new day, whose notes Google does not yet show): there the
-// deletion stands, and the contract says a day changed since in something the change touches "is kept and named".
+// a day of the series as changed (Fri 8 Jan, the notes' new day, whose notes Google does not yet show). Once the
+// series' own write has landed, what Google did to the days with it can't be told from a change made there since, so
+// Finish sets each day as the change has it and says what it replaced (decisions.md, "Finish sets the plan's days
+// where it can't tell its own change from another"): the day is back with its notes, and the answer says it was
+// deleted in Google Calendar and that Finish put it back. Until 1.5.6 the deletion stood and was named as kept.
 //
 // Expected values are written from the contract by date; nothing in server/src computes one. Invented data.
 
@@ -42,7 +45,7 @@ return static function (Db $db): void {
         return $t;
     };
     $drag = ['scope' => 'all', 'instanceStart' => '2027-01-04T10:00:00-08:00', 'start' => '2027-01-06T10:00:00-08:00', 'end' => '2027-01-06T11:00:00-08:00'];
-    $run = static function (string $name, string $knob, array $expect, string $says) use ($build, $drag, $la): void {
+    $run = static function (string $name, string $knob, array $expect, array $says) use ($build, $drag, $la): void {
         $t = $build();
         try {
             $t->s->knobs->writes = 0;
@@ -67,7 +70,7 @@ return static function (Db $db): void {
             $words = (array) ($out['differences'] ?? []);
             check("$name: the calendar by date", $now === $expect,
                 "\n   missing: " . implode("\n            ", array_diff($expect, $now)) . "\n   extra:   " . implode("\n            ", array_diff($now, $expect)) . "\n   the answer's differences: " . json_encode($words));
-            checkEq("$name: the answer names the deletion made at Google, once", [$says], $words);
+            checkEq("$name: the answer names the deletion made at Google, once", $says, $words);
         } finally {
             H::done($t);
         }
@@ -78,11 +81,12 @@ return static function (Db $db): void {
         'F3 (master write sent and not taken)', 'netAt',
         // The series Wed 6 to Wed 13 Jan whole; the notes on Fri 8 Jan; the deletion made at Google named as not kept.
         [$line('06'), $line('07'), $line('08', 'Notes A'), $line('09'), $line('10'), $line('11'), $line('12'), $line('13')],
-        'While this change was waiting to be finished, ' . $day('2027-01-08') . ' was deleted in Google Calendar. That was lost when the event moved to another day. Make it again there if you still want it.'));
+        ['While this change was waiting to be finished, ' . $day('2027-01-08') . ' was deleted in Google Calendar. That was lost when the event moved to another day. Make it again there if you still want it.']));
 
     scenario('F3 second block: the same, the master write taken and its answer lost', static fn() => $run(
         'F3 (master write taken, its answer lost)', 'loseAt',
-        // The day deleted at Google is Fri 8 Jan of the series as changed: it stays deleted, and the notes that were to show there go with it, named.
-        [$line('06'), $line('07'), $line('09'), $line('10'), $line('11'), $line('12'), $line('13')],
-        $day('2027-01-08') . ' was deleted in Google Calendar while this change was waiting to be finished; it stays deleted.'));
+        // The day deleted at Google is Fri 8 Jan of the series as changed, the day the notes move to: Finish puts it back with them, and says so.
+        [$line('06'), $line('07'), $line('08', 'Notes A'), $line('09'), $line('10'), $line('11'), $line('12'), $line('13')],
+        ['This change had stopped part way, and Google Calendar no longer held the event as it was left.',
+            $day('2027-01-08') . ' was deleted in Google Calendar; Finish put it back as this change has it (10:00 to 11:00).']));
 };

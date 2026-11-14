@@ -77,21 +77,144 @@ checkEq('google steps: a cancelled record the plan has no exception for is un-ca
     ['plain', 'smpl2weekly_20270405T170000Z', 'Sample weekly, renamed', '2027-04-05T10:00:00-07:00', 'confirmed'],
 ], array_map(static fn(array $s): array => [$s[0], $s[1], $s[2]['summary'] ?? null, $s[2]['start']['dateTime'] ?? null, $s[2]['status'] ?? null], $plain));
 
-// The words a difference gets, each naming the day.
+// ---- The record of a change: what landed (outcome), and its sentences (outcomeWords) ----
+// The read-back above against the plan: a moved day Google holds no record of, a day whose own title Google does not
+// hold, a deleted day that shows. Each sentence says what Google Calendar holds and what was asked, with the values.
 $year = (int) gmdate('Y');
 $d = static fn(int $m, int $day): string => BetterCal\Domain\Series\Words::date(BetterCal\Domain\Series\Cal::dn(2027, $m, $day), $year);
-checkEq('google differences: a day Google kept as an ordinary one, a title Google kept, a skip Google kept a day', [
-    'Google kept ' . $d(3, 15) . " as an ordinary day; this change had 'Sample weekly, renamed' on " . $d(3, 16) . ' at 10:00.',
-    "Google kept 'Sample weekly, renamed' on " . $d(3, 29) . "; this change had 'Sample weekly, special'.",
-    $d(4, 12) . ' is still on the calendar: this change deleted it, but Google Calendar kept it.',
-], GoogleSeries::differences($target, $items, $year));
-checkEq('google differences: none when the read-back equals the plan', [], GoogleSeries::differences([
-    'exceptions' => ['2027-03-29 17:00:00' => ['title' => 'Sample weekly, renamed'] + $own], 'skips' => ['2027-04-05 17:00:00'],
-] + $target, $items, $year));
-checkEq('google differences: a rule Google kept in another form is no difference; another rule is', [[], ['Google kept the rule FREQ=WEEKLY;COUNT=10; this change had FREQ=WEEKLY;COUNT=4.']], [
-    GoogleSeries::differences(['exceptions' => ['2027-03-29 17:00:00' => ['title' => 'Sample weekly, renamed'] + $own], 'skips' => ['2027-04-05 17:00:00'], 'master' => ['rrule' => 'FREQ=WEEKLY;INTERVAL=1;COUNT=10'] + $master] + $target, $items, $year),
-    GoogleSeries::differences(['exceptions' => ['2027-03-29 17:00:00' => ['title' => 'Sample weekly, renamed'] + $own], 'skips' => ['2027-04-05 17:00:00'], 'master' => ['rrule' => 'FREQ=WEEKLY;COUNT=4'] + $master] + $target, $items, $year),
+$said = static fn(array $t, array $items, ?array $was = null, string $mode = 'change'): array => GoogleSeries::outcomeWords(GoogleSeries::outcome($was, $t, $items), $t, $year, $mode);
+checkEq('google outcome: a day Google holds no record of, a title Google does not hold, a deleted day that shows', [
+    'Google Calendar does not hold ' . $d(3, 15) . ' as this change asked (' . $d(3, 16) . ' at 10:00 to 11:00).',
+    'On ' . $d(3, 29) . " Google Calendar holds the title 'Sample weekly, renamed'; this change asked for the title 'Sample weekly, special'.",
+    $d(4, 12) . ' is on the calendar in Google Calendar (10:00 to 11:00); this change deleted it.',
+], $said($target, $items));
+$asPlanned = ['exceptions' => ['2027-03-29 17:00:00' => ['title' => 'Sample weekly, renamed'] + $own], 'skips' => ['2027-04-05 17:00:00']] + $target;
+checkEq('google outcome: nothing when the last read is the plan', [], GoogleSeries::outcome(null, $asPlanned, $items));
+checkEq('google outcome: a rule Google holds in another order is no difference; another rule is, said as asked or, where the change asked nothing of it, as not changed', [
+    [],
+    ['Google Calendar holds the rule FREQ=WEEKLY;COUNT=10; this change asked for FREQ=WEEKLY;COUNT=4.'],
+    ["The event's rule is FREQ=WEEKLY;COUNT=10 in Google Calendar; it was FREQ=WEEKLY;COUNT=4, and this change did not change it."],
+], [
+    $said(['master' => ['rrule' => 'FREQ=WEEKLY;INTERVAL=1;COUNT=10'] + $master] + $asPlanned, $items),
+    $said(['master' => ['rrule' => 'FREQ=WEEKLY;COUNT=4'] + $master] + $asPlanned, $items),
+    $said(['master' => ['rrule' => 'FREQ=WEEKLY;COUNT=4'] + $master] + $asPlanned, $items, ['master' => ['rrule' => 'FREQ=WEEKLY;COUNT=4'] + $master, 'records' => [], 'cancelled' => [], 'skips' => [], 'etags' => [], 'ids' => []]),
 ]);
+checkEq('google outcome: a series Google no longer holds is said so, and nothing of its days', ["Google Calendar no longer holds 'Sample weekly, renamed'."], $said($target, []));
+
+// The exact check of the comparison's data (docs/design/google-series-read-back.md, "The Record"): over every
+// combination of what a day was, what was asked of it and what Google holds, an entry is made exactly where what
+// Google holds is not what was asked, it carries those three as they were given, and there is one sentence for it
+// that names the day and claims no cause. The expectation is this table, written from the model, not the function:
+// to a day asked deleted, deleted and no day are the same; to a day asked ordinary, no record and a record at the
+// series' own values are the same, and so is no day (the series' own difference says it); an edited day is as asked
+// only as a record with its fields. The inputs are three states and nothing else: no step is among them.
+$la = 'America/Los_Angeles';
+$wk0 = ['title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'start_utc' => '2027-01-04 18:00:00', 'end_utc' => '2027-01-04 19:00:00', 'all_day' => 0, 'tzid' => $la, 'url' => null, 'rrule' => 'FREQ=WEEKLY;COUNT=6'];
+$dayKey = '2027-01-18 18:00:00';
+$zoned = static fn(string $utc): array => ['dateTime' => (new DateTimeImmutable($utc, new DateTimeZone('UTC')))->setTimezone(new DateTimeZone($la))->format('Y-m-d\TH:i:sP'), 'timeZone' => $la];
+// A day as each side can have it: [its title, its start, its end] where a day shows.
+$shows = ['ordinary' => ['Sample series', $dayKey, '2027-01-18 19:00:00'], 'plain' => ['Sample series', $dayKey, '2027-01-18 19:00:00'], 'A' => ['Day A', $dayKey, '2027-01-18 19:00:00'], 'B' => ['Sample series', '2027-01-18 21:00:00', '2027-01-18 22:30:00']];
+$planOf = static function (string $asked) use ($wk0, $dayKey, $shows): array {
+    $x = isset($shows[$asked]) && $asked !== 'ordinary' ? ['title' => $shows[$asked][0], 'start_utc' => $shows[$asked][1], 'end_utc' => $shows[$asked][2], 'own' => $asked === 'A' ? ['title'] : ['time', 'length']] + $wk0 : null;
+    return ['uid' => 'smpl8@google.com', 'googleId' => 'smpl8', 'etag' => null, 'insert' => false, 'remove' => false, 'master' => $wk0, 'singles' => [],
+        'exceptions' => $x === null ? [] : [$dayKey => array_diff_key($x, ['rrule' => 1])], 'skips' => $asked === 'deleted' ? [$dayKey] : []];
+};
+$readOf = static function (string $holds) use ($zoned, $dayKey, $shows): array {
+    // "none": the series ends before the day (two events), so its key is no day of it.
+    $list = [['id' => 'smpl8', 'iCalUID' => 'smpl8@google.com', 'etag' => '"e1"', 'status' => 'confirmed', 'summary' => 'Sample series',
+        'start' => $zoned('2027-01-04 18:00:00'), 'end' => $zoned('2027-01-04 19:00:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=' . ($holds === 'none' ? 2 : 6)]]];
+    $record = ['id' => 'smpl8_20270118T180000Z', 'iCalUID' => 'smpl8@google.com', 'etag' => '"e1"', 'recurringEventId' => 'smpl8', 'originalStartTime' => $zoned($dayKey)];
+    if ($holds === 'deleted') {
+        $list[] = ['status' => 'cancelled', 'start' => $zoned($dayKey), 'end' => $zoned('2027-01-18 19:00:00')] + $record;
+    } elseif (isset($shows[$holds]) && $holds !== 'ordinary') {
+        $list[] = ['status' => 'confirmed', 'summary' => $shows[$holds][0], 'start' => $zoned($shows[$holds][1]), 'end' => $zoned($shows[$holds][2])] + $record;
+    }
+    return $list;
+};
+$asAsked = [
+    'deleted' => ['deleted', 'none'], 'ordinary' => ['ordinary', 'plain', 'none'], 'A' => ['A'], 'B' => ['B'],
+];
+$cause = '/was \w+( \w+){0,3} in Google Calendar|while this change|[Ss]omeone|another (app|client|person)/';
+$wrong = [];
+foreach (['ordinary', 'deleted', 'A'] as $was) {
+    foreach (['ordinary', 'deleted', 'A', 'B'] as $asked) {
+        foreach (['none', 'deleted', 'ordinary', 'plain', 'A', 'B'] as $holds) {
+            $case = "was $was, asked $asked, holds $holds";
+            $plan = $planOf($asked);
+            $entries = GoogleSeries::outcome(GoogleSeries::held($readOf($was), 'smpl8'), $plan, $readOf($holds));
+            $days = array_values(array_filter($entries, static fn(array $e): bool => $e['of'] === 'day'));
+            $differs = !in_array($holds, $asAsked[$asked], true);
+            if (count($days) !== ($differs ? 1 : 0)) {
+                $wrong[] = "$case: " . count($days) . ' entries';
+                continue;
+            }
+            // The series' own difference (the rule, where the series ends before the day) is one entry of its own, and no other.
+            if (count($entries) - count($days) !== ($holds === 'none' ? 1 : 0)) {
+                $wrong[] = "$case: " . (count($entries) - count($days)) . ' series entries';
+            }
+            $words = GoogleSeries::outcomeWords($entries, $plan, 2027);
+            if (count($words) !== count($entries) || array_filter($words, static fn(string $w): bool => preg_match($cause, $w) === 1) !== []) {
+                $wrong[] = "$case: sentences " . json_encode($words);
+            }
+            if (!$differs) {
+                continue;
+            }
+            $e = $days[0];
+            $seen = static fn(array $side): array => isset($side['start_utc']) ? [$side['title'], $side['start_utc'], $side['end_utc']] : [$side['state']];
+            $given = static fn(string $s): array => $shows[$s] ?? [$s];
+            if ($e['key'] !== $dayKey || $seen($e['asked']) !== $given($asked) || $seen($e['holds']) !== $given($holds) || $seen($e['was']) !== $given($was)) {
+                $wrong[] = "$case: the entry " . json_encode([$seen($e['was']), $seen($e['asked']), $seen($e['holds'])]);
+            }
+            $sentence = $words[count($words) - 1];
+            if (!str_contains($sentence, 'Mon 18 Jan')) {
+                $wrong[] = "$case: the day is not named: $sentence";
+            }
+        }
+    }
+}
+checkEq('google outcome, every state a day was in, was asked to be in and is held in (72): an entry exactly where what is held is not what was asked, carrying the three as given, with one sentence that names the day and no cause', [], $wrong);
+// The same for the series' own fields: an entry exactly where Google holds another value than was asked, said as asked
+// for, or, where the change asked what was held before, as not changed by it.
+$wrong = [];
+$fieldItem = static fn(array $over): array => $over + ['id' => 'smpl8', 'iCalUID' => 'smpl8@google.com', 'etag' => '"e1"', 'status' => 'confirmed', 'summary' => 'Sample series',
+    'start' => $zoned('2027-01-04 18:00:00'), 'end' => $zoned('2027-01-04 19:00:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']];
+foreach ([
+    'title' => ['title', ['summary' => 'Title b'], ['title' => 'Title b']],
+    'notes' => ['description', ['description' => 'Notes b'], ['description' => 'Notes b']],
+    'place' => ['location', ['location' => 'Sample Hall'], ['location' => 'Sample Hall']],
+    'time' => ['when', ['start' => $zoned('2027-01-04 23:00:00'), 'end' => $zoned('2027-01-05 00:00:00')], ['start_utc' => '2027-01-04 23:00:00', 'end_utc' => '2027-01-05 00:00:00']],
+    'rule' => ['rule', ['recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=3']], ['rrule' => 'FREQ=WEEKLY;COUNT=3']],
+] as $word => [$group, $itemB, $colsB]) {
+    foreach ([[false, false], [true, false], [false, true], [true, true]] as [$askedB, $holdsB]) {
+        foreach ([false, true] as $wasB) {
+            $plan = ['master' => ($askedB ? $colsB : []) + $wk0] + $planOf('ordinary');
+            $entries = GoogleSeries::outcome(GoogleSeries::held([$fieldItem($wasB ? $itemB : [])], 'smpl8'), $plan, [$fieldItem($holdsB ? $itemB : [])]);
+            $words = GoogleSeries::outcomeWords($entries, $plan, 2027);
+            $ok = $askedB === $holdsB
+                ? $entries === []
+                : count($entries) === 1 && $entries[0]['of'] === 'series' && $entries[0]['field'] === $group && count($words) === 1 && preg_match($cause, $words[0]) !== 1
+                    && str_contains($words[0], 'did not change it') === ($wasB === $askedB);
+            if (!$ok) {
+                $wrong[] = "$word: was " . ($wasB ? 'b' : 'a') . ', asked ' . ($askedB ? 'b' : 'a') . ', holds ' . ($holdsB ? 'b' : 'a') . ': ' . json_encode($words);
+            }
+        }
+    }
+}
+checkEq('google outcome, each of the series\' own fields as it was, was asked and is held (40): an entry exactly where what is held is not what was asked, said as not changed where the change asked nothing of it', [], $wrong);
+// An answer to an invitation asks nothing of any day, and its sentences say what was held before it.
+$answerPlan = ['exceptions' => [$dayKey => ['description' => 'Own notes for the day', 'start_utc' => $dayKey, 'end_utc' => '2027-01-18 19:00:00', 'own' => ['description']] + array_diff_key($wk0, ['rrule' => 1])]] + $planOf('ordinary');
+checkEq('google outcome: after an answer, a day held without the notes it had is said as what it held before the answer',
+    ["On Mon 18 Jan 2027 Google Calendar holds no notes; before your answer it held the notes 'Own notes for the day'."],
+    GoogleSeries::outcomeWords(GoogleSeries::outcome(null, $answerPlan, $readOf('plain')), $answerPlan, 2026, 'answer'));
+// What Finish replaced: from the read it began with and its last read alone, a line for each day held otherwise.
+$firstRead = $readOf('B');
+$firstRead[] = ['id' => 'smpl8_20270125T180000Z', 'iCalUID' => 'smpl8@google.com', 'etag' => '"e1"', 'recurringEventId' => 'smpl8', 'originalStartTime' => $zoned('2027-01-25 18:00:00'), 'status' => 'cancelled',
+    'start' => $zoned('2027-01-25 18:00:00'), 'end' => $zoned('2027-01-25 19:00:00')];
+checkEq('google replaced: a day at another time and a deleted day, each as it was held and as Finish set it; a day held the same in both reads is not spoken of', [
+    'On Mon 18 Jan 2027 Google Calendar held 13:00 to 14:30; Finish set 10:00 to 11:00, as this change has it.',
+    'Mon 25 Jan 2027 was deleted in Google Calendar; Finish put it back as this change has it (10:00 to 11:00).',
+], GoogleSeries::replacedWords(GoogleSeries::replaced($firstRead, $readOf('plain'), 'smpl8'), $planOf('ordinary'), 2026));
+checkEq('google replaced: nothing where the two reads hold every day the same', [], GoogleSeries::replaced($readOf('A'), $readOf('A'), 'smpl8'));
 
 // The master's body: the fields that differ, the start and end together, the rule as the one RRULE line whenever anything differs.
 $before = ['rrule' => 'FREQ=WEEKLY;COUNT=10', 'title' => 'Sample weekly'] + $master;
@@ -187,9 +310,12 @@ checkEq('google after a master write, probe 3.16: a skip held as an EXDATE line 
     $gKeys(GoogleSeries::afterMaster($gh($m0, $probeRecords, [], [$k6]), $m0, $gm(['title' => 'Sample weekly renamed']))));
 checkEq('google after a master write: nothing changed, nothing sent, the series as it was', $h0, GoogleSeries::afterMaster($h0, $m0, $m0));
 // What the probe has not seen keep records is predicted dropped (decisions.md): wrong that way costs a refused Put back, never a day.
+// The zone alone at the same moments and a link set keep every record (3.17, 3.32; 3.52 to 3.61, 2026-11-13), the link written into each.
+checkEq('google after a master write, probe 3.17 and 3.54: the zone alone, no instant moved, keeps every record and skip', $whole, $gKeys(GoogleSeries::afterMaster($h0, $m0, $gm(['tzid' => 'America/Denver']))));
+$linked = GoogleSeries::afterMaster($h0, $m0, $gm(['url' => 'https://example.test/sample']));
+checkEq('google after a master write, probe 3.32 and 3.52: a link set keeps every record and skip, the link written into each record', [$whole, ['https://example.test/sample']],
+    [$gKeys($linked), array_values(array_unique(array_column($linked['records'], 'url')))]);
 foreach ([
-    ['the zone alone, no instant moved (10:00 Los Angeles to 11:00 Denver; probe case 3.17 not answered yet)', ['tzid' => 'America/Denver']],
-    ['the link (Google\'s source has no probe case)', ['url' => 'https://example.test/sample']],
     ['a new frequency that leaves the days where they were (weekly to daily; no probe case)', ['rrule' => 'FREQ=DAILY;COUNT=70']],
     ['a new interval that leaves some days where they were (every week to every second week; no probe case)', ['rrule' => 'FREQ=WEEKLY;INTERVAL=2;COUNT=10']],
 ] as [$class, $change]) {
@@ -240,14 +366,16 @@ $sent = static fn(array $steps): array => array_map(static fn(array $s): array =
 checkEq('google steps: over a list that lags a change to all-day, the edited day and the skip go to the date-form ids',
     [['exception', 'smpl3_20270111'], ['skip', 'smpl3_20270118']], $sent(GoogleSeries::stepsFor($dayTarget, [$dayM, $timedRecord, $timedSkip])));
 checkEq('google steps: a day Google holds as the plan has it, under its date-form id, is not sent again', [], $sent(GoogleSeries::stepsFor($dayTarget, [$dayM, $dayRecord, $daySkip, $timedRecord, $timedSkip])));
-checkEq('google steps: an id is in the form of the master as read, never the target\'s (a timed master read for an all-day target: run() sends no step then)',
-    [['exception', 'smpl3_20270111T000000Z']], $sent(GoogleSeries::stepsFor(['skips' => []] + $dayTarget, [$timedM])));
+checkEq('google steps: a master read in another form than the plan\'s has none of the plan\'s days (an id carries its form), so nothing is sent to it',
+    [], $sent(GoogleSeries::stepsFor(['skips' => []] + $dayTarget, [$timedM])));
+checkEq('google days: under such a master the plan\'s edited day and its deleted day are no days; the deleted one is as planned, nothing showing there',
+    [['none', false], ['none', true]], array_values(array_map(static fn(array $d): array => [$d['has'], $d['same']], GoogleSeries::days($dayTarget, [$timedM, $timedRecord, $timedSkip]))));
 
 // ---- The change over what Google holds now (rebase), across a change of form ----
-// With nothing changed at Google since, each day Google holds is as it was before, as the master write leaves it, or
-// as the plan has it, so the plan stands whole: the edited day with its own notes, the skip where the plan has it. At
-// each clock, both directions, and at each point a change can be read at: before its master write landed, right after
-// it, and once every step has.
+// With nothing changed at Google since, the plan stands whole: the edited day with its own notes, the skip where the
+// plan has it. At each clock, both directions, and at each point a change can be read at: before its master write
+// landed (nothing is carried by its key across a new form), right after it, and once every step has (the write has
+// landed, so the days are the plan's).
 $rowOf = static fn(array $master, int $id, string $key): array => ['id' => $id, 'recurrence_instance_utc' => $key, 'description' => 'Own notes for the day.', 'override_fields' => '["description"]',
     'start_utc' => $key, 'end_utc' => gmdate('Y-m-d H:i:s', strtotime($key . ' UTC') + (strtotime($master['end_utc'] . ' UTC') - strtotime($master['start_utc'] . ' UTC')))] + $master;
 $seriesOf = static fn(array $master, string $edited, string $skipped): array => GoogleSeries::stateOf(
@@ -270,23 +398,25 @@ foreach ($forms as $clock => [$timed, $timedKeys, $day, $dayKeys]) {
         }
     }
 }
-// A change made at Google since, on a day whose row the plan carries: matched by the row, not by the key, so it lands
-// on that day at every clock. The day's title is changed at Google right after the master write (the new form); the
-// plan does not change the title, so Google's stays, with the day's own notes from the plan.
+// A change made at Google since, read once the series' own write has landed (the new form). What Google did to the
+// days with that write can't be told from a change made there since, so nothing Google holds for a day is kept on a
+// guess: the days are the plan's (decisions.md, "Finish sets the plan's days where it can't tell its own change from
+// another"), at every clock, and finish() says what the run replaced. Before 1.5.6 each of these was kept as Google
+// had it, on the prediction of what the write itself does there.
 foreach ($forms as $clock => [$timed, $timedKeys, $day, $dayKeys]) {
     $before = $seriesOf($gm($timed), $timedKeys[0], $timedKeys[1]);
     $target = $seriesOf($gm($day), $dayKeys[0], $dayKeys[1]);
     $now = $nowOf($target, false);
     $now['records'][$dayKeys[0]] = ['title' => 'Renamed at Google', 'start_utc' => $dayKeys[0], 'end_utc' => gmdate('Y-m-d H:i:s', strtotime($dayKeys[0] . ' UTC') + 86400)] + $target['master'];
-    [$rebased, $words] = GoogleSeries::rebase($before, $target, $now, $year);
+    [$rebased, $words, $conflicts, $landed] = GoogleSeries::rebase($before, $target, $now, $year);
     $x = $rebased['exceptions'][$dayKeys[0]] ?? [];
-    checkEq("google rebase: timed to all-day at $clock, the edited day renamed at Google since: it keeps Google's title and its own notes, on its own day, and the skip stands",
-        ['Renamed at Google', 'Own notes for the day.', [$dayKeys[1]], []], [$x['title'] ?? null, $x['description'] ?? null, $rebased['skips'], $words]);
+    checkEq("google rebase: timed to all-day at $clock, landed, the edited day renamed at Google since: the day is the plan's (its series' title, its own notes), the skip stands, and the write is known to have landed",
+        ['Sample weekly', 'Own notes for the day.', [$dayKeys[1]], [], [], true], [$x['title'] ?? null, $x['description'] ?? null, $rebased['skips'], $words, $conflicts, $landed]);
 }
 
-// A change made at Google since on a day the plan has no row for, across a change to all-day west of UTC (daily at
-// 19:00 New York, so the timed key of one day is the date key of the next). The day before it was skipped in the old
-// form on that very key; that skip is another instance, another day, and says nothing about this one.
+// The same on a day the plan has no row for, across a change to all-day west of UTC (daily at 19:00 New York, so the
+// timed key of one day is the date key of the next): renamed, or deleted, at Google since the write landed. The plan
+// has the day as ordinary, and so it stays in the plan; the plan's own skip stands on its own day.
 $nyTimed = $gm($forms['19:00 New York, daily'][0]);
 $nyDay = $gm($forms['19:00 New York, daily'][2]);
 $bare = static fn(array $master, array $skips): array => GoogleSeries::stateOf(['id' => 1, 'uid' => 'smpl5@google.com', 'google_event_id' => 'smpl5', 'exdates_json' => json_encode($skips)] + $master, []);
@@ -295,28 +425,26 @@ $target = $bare($nyDay, ['2027-01-06 00:00:00']);   // all-day 6 Jan, skipped; 7
 $now = $nowOf($target, false);
 $now['records']['2027-01-07 00:00:00'] = ['title' => 'Renamed at Google', 'start_utc' => '2027-01-07 00:00:00', 'end_utc' => '2027-01-08 00:00:00'] + $target['master'];
 [$rebased, $words] = GoogleSeries::rebase($before, $target, $now, $year);
-checkEq('google rebase: made all-day west of UTC, the day after a skipped day renamed at Google since: it keeps Google\'s title (the plan changes nothing of that day), and the skip stands on its own day',
-    [['2027-01-07 00:00:00' => 'Renamed at Google'], ['2027-01-06 00:00:00'], []], [array_column($rebased['exceptions'], 'title', 'start_utc'), $rebased['skips'], $words]);
+checkEq('google rebase: made all-day west of UTC, landed, the day after a skipped day renamed at Google since: the plan has it ordinary, and the skip stands on its own day',
+    [[], ['2027-01-06 00:00:00'], []], [array_column($rebased['exceptions'], 'title', 'start_utc'), $rebased['skips'], $words]);
 $now = $nowOf($target, false);
 $now['cancelled']['2027-01-07 00:00:00'] = $now['skips']['2027-01-07 00:00:00'] = true;
 [$rebased, $words] = GoogleSeries::rebase($before, $target, $now, $year);
-checkEq('google rebase: made all-day west of UTC, the day after a skipped day deleted at Google since: it stays deleted, beside the plan\'s own skip',
-    [[], ['2027-01-06 00:00:00', '2027-01-07 00:00:00'], []], [$rebased['exceptions'], $rebased['skips'], $words]);
-// The same day skipped before and in the plan (00:00 UTC, the keys coincide and are one day), renamed at Google after
-// the master write brought it back: the plan's skip would overwrite a change made elsewhere, so it is kept and named.
+checkEq('google rebase: made all-day west of UTC, landed, the day after a skipped day deleted at Google since: the plan has it ordinary; only the plan\'s own skip is a skip',
+    [[], ['2027-01-06 00:00:00'], []], [$rebased['exceptions'], $rebased['skips'], $words]);
+// The same day skipped before and in the plan (00:00 UTC, the keys coincide and are one day), live with another title
+// at Google once the write has landed: the plan's skip stands.
 $before = $bare($gm($forms['00:00 UTC, weekly'][0]), ['2027-01-18 00:00:00']);
 $target = $bare($gm($forms['00:00 UTC, weekly'][2]), ['2027-01-18 00:00:00']);
 $now = $nowOf($target, false);
 $now['records']['2027-01-18 00:00:00'] = ['title' => 'Renamed at Google', 'start_utc' => '2027-01-18 00:00:00', 'end_utc' => '2027-01-19 00:00:00'] + $target['master'];
 [$rebased, $words, $conflicts] = GoogleSeries::rebase($before, $target, $now, $year);
-checkEq('google rebase: made all-day at 00:00 UTC, a skipped day renamed at Google since the master write: kept as Google has it and named, never skipped over',
-    [['2027-01-18 00:00:00' => 'Renamed at Google'], [], [BetterCal\Domain\Series\Words::date(BetterCal\Domain\Series\Cal::dn(2027, 1, 18), $year) . " was changed in Google Calendar while this change was waiting to be finished; Google's version of that day was kept."], [['2027-01-18 00:00:00', 'day']]],
-    [array_column($rebased['exceptions'], 'title', 'start_utc'), $rebased['skips'], $words, $conflicts]);
+checkEq('google rebase: made all-day at 00:00 UTC, landed, a skipped day live and renamed at Google: the plan\'s skip stands, nothing kept and nothing said here',
+    [[], ['2027-01-18 00:00:00'], [], []], [array_column($rebased['exceptions'], 'title', 'start_utc'), $rebased['skips'], $words, $conflicts]);
 
-// A write of an unproven class is read against both answers. The link changed with the length (an hour to ninety
-// minutes) over a day with its own time and length: if Google kept the record, its end followed the new length (probe
-// 3.2), which is the write's own effect, not a change made since; if it dropped it, the day is ordinary. Either way
-// the day's own time and length are the plan's.
+// The link changed with the length (an hour to ninety minutes) over a day with its own time and length, read once the
+// write has landed: Google kept the record, its end following the new length (probe 3.2). Whatever Google holds for
+// the day, its own time and length are the plan's.
 $wk = $gm();
 $ownRow = ['id' => 2, 'recurrence_instance_utc' => $k4, 'start_utc' => '2027-03-22 22:00:00', 'end_utc' => '2027-03-23 00:30:00', 'override_fields' => '["time","length"]'] + $wk;
 $before = GoogleSeries::stateOf(['id' => 1, 'uid' => 'smpl6@google.com', 'google_event_id' => 'smpl6', 'exdates_json' => json_encode([$k6])] + $wk, [$ownRow]);
@@ -325,7 +453,8 @@ $target = GoogleSeries::stateOf(['id' => 1, 'uid' => 'smpl6@google.com', 'google
 $kept = $nowOf($target, false);
 $kept['records'][$k4] = ['start_utc' => '2027-03-22 22:00:00', 'end_utc' => '2027-03-22 23:30:00'] + $wk;
 $kept['cancelled'][$k6] = $kept['skips'][$k6] = true;
-foreach (['Google kept the record, its end following the new length' => $kept, 'Google dropped the record and the skip' => $nowOf($target, false)] as $answer => $now) {
+// The link is proven since (3.32, 3.52): Google keeps the record, so that is the one answer read here.
+foreach (['Google kept the record, its end following the new length' => $kept] as $answer => $now) {
     [$rebased, $words, $conflicts] = GoogleSeries::rebase($before, $target, $now, $year);
     checkEq("google rebase: the link and the length changed together, $answer: the day keeps its own time and length, the skip stands, nothing said",
         [['2027-03-22 22:00:00', '2027-03-23 00:30:00', ['length', 'time']], [$k6], [], []],
@@ -445,29 +574,31 @@ $now['cancelled']['2027-01-04 18:00:00'] = $now['skips']['2027-01-04 18:00:00'] 
 checkEq('google rebase: a shorter series, its master write not yet at Google: a rename on the day it drops is named as not kept and no day is made of it; a deletion on a day it keeps is carried',
     [['2027-01-11 18:00:00'], ['2027-01-04 18:00:00', '2027-01-18 18:00:00'], ['While this change was waiting to be finished, ' . $dateWords(25) . ' was renamed in Google Calendar. That was lost when this change ended the event before that day. Make it again there if you still want it.']],
     [array_keys($rebased['exceptions']), $rebased['skips'], $words]);
-[, $words] = GoogleSeries::rebase($laBefore, $shorter, $now, $year, 'while this change was waiting to be finished', false, true);
+[, $words] = GoogleSeries::rebase($laBefore, $shorter, $now, $year, 'while this change was waiting to be finished', true);
 checkEq('google rebase: the same where the series is shorter because the change split it there (a series follows): the day is still there, and the reason says so',
     ['While this change was waiting to be finished, ' . $dateWords(25) . ' was renamed in Google Calendar. That was lost when this change split the event before that day. Make it again there if you still want it.'], $words);
 [$rebased, $words] = GoogleSeries::rebase($laBefore, $shorter, $nowOf($shorter, true), $year);
 checkEq('google rebase: the shorter series once its master write landed (Google dropped what was past the end itself): the plan whole, nothing said',
     [$daysOf($shorter), []], [$daysOf($rebased), $words]);
 // A drag a week along the pattern that landed (its answer lost): 11 Jan edited and 25 Jan skipped before, so the plan has
-// the edited day on 18 Jan and the skip on 1 Feb. Google kept the old record and the old skip at their old keys (probe
-// 3.5), which is the write's own effect. And the day the plan moves the edited day onto, 18 Jan, was deleted at Google
-// since: the deletion stands, and since the plan put an edited day there it is named, not kept in silence.
+// the edited day on 18 Jan and the skip on 1 Feb. Google holds the old record and the old skip at their old keys (probe
+// 3.5), and 18 Jan, the day the plan moves the edited day onto, deleted. Which of that is the write's own and which was
+// done at Google since can't be told once the write has landed, so the days are the plan's: the edited day on 18 Jan,
+// the skip on 1 Feb, nothing kept and nothing said here (finish() says what the run then replaced). Before 1.5.6 the
+// deletion was kept and named, on the prediction that the old record and skip were the write's own.
 $dragBefore = $seriesOf($laMaster, '2027-01-11 18:00:00', '2027-01-25 18:00:00');
 $dragged = $seriesOf($gm(['start_utc' => '2027-01-11 18:00:00', 'end_utc' => '2027-01-11 19:00:00'] + $forms['10:00 Los Angeles, weekly'][0]), '2027-01-18 18:00:00', '2027-02-01 18:00:00');
 $now = ['master' => $dragged['master'], 'records' => ['2027-01-11 18:00:00' => $dragBefore['exceptions']['2027-01-11 18:00:00']],
     'cancelled' => ['2027-01-25 18:00:00' => true, '2027-01-18 18:00:00' => true], 'skips' => ['2027-01-25 18:00:00' => true, '2027-01-18 18:00:00' => true], 'etags' => [], 'ids' => []];
-[$rebased, $words, $conflicts] = GoogleSeries::rebase($dragBefore, $dragged, $now, $year);
-checkEq('google rebase: a drag that landed, the day the edited day moves onto deleted at Google since: it stays deleted and is named; the old skip Google kept at its old key is the write\'s own',
-    [[], ['2027-01-18 18:00:00', '2027-02-01 18:00:00'], [$dateWords(18) . ' was deleted in Google Calendar while this change was waiting to be finished; it stays deleted.'], [['2027-01-18 18:00:00', 'day']]],
-    [array_keys($rebased['exceptions']), $rebased['skips'], $words, $conflicts]);
+[$rebased, $words, $conflicts, $landed] = GoogleSeries::rebase($dragBefore, $dragged, $now, $year);
+checkEq('google rebase: a drag that landed, the day the edited day moves onto deleted at Google: the days are the plan\'s, nothing kept, and the write is known to have landed',
+    [['2027-01-18 18:00:00'], ['2027-02-01 18:00:00'], [], [], true],
+    [array_keys($rebased['exceptions']), $rebased['skips'], $words, $conflicts, $landed]);
 
 // ---- What the condition believes a record holds of a field the day does not own (sameAsStored) ----
-// The series was given a link. It is not proven that Google writes a series' link into its records, so an edited
-// day's record holding either the series' link or the link it held before (none) is as stored; under each answer
-// Google may give, the series is no "changed at Google", and the steps send the day its link where it lacks it.
+// The series was given a link. Google writes a series' link into its records (3.32, 2026-11-10; 3.52, 3.58, 3.61,
+// 2026-11-13), so an edited day's record holding the series' link is as stored, and one left without it reads as
+// changed at Google.
 $linkUrl = 'https://example.test/sample';
 $linkMaster = ['id' => 1, 'uid' => 'smpl7@google.com', 'google_event_id' => 'smpl7', 'title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'url' => $linkUrl,
     'start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-04 01:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=4', 'exdates_json' => null];
@@ -479,10 +610,8 @@ $linkItem = ['id' => 'smpl7', 'iCalUID' => 'smpl7@google.com', 'etag' => '"e3"',
 $linkRecord = static fn(?string $url): array => ['id' => 'smpl7_20270111T000000Z', 'iCalUID' => 'smpl7@google.com', 'etag' => '"e3"', 'status' => 'confirmed', 'summary' => 'Sample series',
     'description' => 'Own notes for the day.', 'recurringEventId' => 'smpl7', 'originalStartTime' => $utc('2027-01-11T00:00:00Z'), 'start' => $utc('2027-01-11T00:00:00Z'), 'end' => $utc('2027-01-11T01:00:00Z')] + $source($url);
 $linkTarget = GoogleSeries::stateOf($linkMaster, [$linkRow]);
-checkEq('google condition: a series given a link, Google leaving the edited day\'s record without it: as stored, and the day is sent its link',
-    [true, [['exception', 'smpl7_20270111T000000Z', $linkUrl]]],
-    [GoogleSeries::sameAsStored([$linkItem, $linkRecord(null)], 'smpl7', $linkMaster, [$linkRow]),
-        array_map(static fn(array $s): array => [$s[0], $s[1], $s[2]['source']['url'] ?? null], GoogleSeries::stepsFor($linkTarget, [$linkItem, $linkRecord(null)]))]);
+checkEq('google condition: a series given a link, the edited day\'s record without it: not as stored (Google writes the link into its records)',
+    false, GoogleSeries::sameAsStored([$linkItem, $linkRecord(null)], 'smpl7', $linkMaster, [$linkRow]));
 checkEq('google condition: Google having written the link into the record: as stored, nothing to send',
     [true, []], [GoogleSeries::sameAsStored([$linkItem, $linkRecord($linkUrl)], 'smpl7', $linkMaster, [$linkRow]), GoogleSeries::stepsFor($linkTarget, [$linkItem, $linkRecord($linkUrl)])]);
 $droppedRecord = ['id' => 'smpl7_20270111T000000Z', 'iCalUID' => 'smpl7@google.com', 'etag' => '"e3"', 'status' => 'cancelled', 'summary' => 'Sample series'];

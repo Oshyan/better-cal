@@ -14,7 +14,15 @@
 // time on an all-day series' instance, a GET that can lag, and (the probe of
 // 2026-11-10, 3.18 to 3.31) a PATCH's start and end merged into the held ones,
 // a field sent as null removed and 400 "Invalid start time." for a start or
-// end that would hold a date and a clock time at once.
+// end that would hold a date and a clock time at once. And (the second and
+// third runs of 2026-11-13): a switch between timed and all-day hides each day
+// of the new form at the instant of a record of the old (3.48 to 3.51, 3.63 to
+// 3.65); a master write that leaves out the notes clears every kept record's
+// own notes on a series with none (3.52 to 3.61); a rule change that leaves
+// only deleted days cancels the series for good (3.62). And (the access probe of
+// 2026-11-13, workfolder/google-access/access-a49ac66229.md) the account's level,
+// $role: every list answer states it, any change of it makes an earlier sync token
+// answer 410 fullSyncRequired, and each level answers as the probe saw (role()).
 //
 // Occurrences come from $expand when the caller gives one (the harness's
 // own evaluator; the database suite's tests the product's expander, since
@@ -41,12 +49,18 @@ final class FakeGoogle
     /** The request with this number is handled, and its answer is lost on the way back (the network drops it once). */
     public ?int $loseAnswerAt = null;
     public bool $primary = false;
+    /** The account's level for the calendar: owner, writer, reader, freeBusyReader, or none (sharing removed). */
     public string $role = 'owner';
     public string $zone = 'America/Los_Angeles';
     public string $owner = 'owner@example.com';
     /** The bearer token accepted; null accepts any. */
     public ?string $token = 'fake-token';
-    /** fn(array $master): list<\DateTimeImmutable>, the starts of a master's occurrences in its zone, 730 at most; null uses the built-in reading. */
+    /**
+     * fn(array $master, ?\DateTimeImmutable $through = null): list<\DateTimeImmutable>, the starts of a master's occurrences
+     * in its zone: 730 at most as a listing (no $through), or every one up to $through when it is given (whether a
+     * date is a day of the rule is not a matter of the listing's length). Null uses the built-in reading. A caller's
+     * function that takes no $through answers as a listing, and days past its end are then no days, as before.
+     */
     public ?\Closure $expand = null;
 
     /**
@@ -70,6 +84,16 @@ final class FakeGoogle
     public int $orderSeed = 0;
     public bool $listDropped = true;
     public string $zoneAlone = 'kept';
+    /**
+     * A test's own effect on each record a master write keeps or revives: fn(array $record, array $before, array $master): array,
+     * given the record as this write leaves it by the rules above, the record as it was held before the write, and the
+     * master as written; it returns the record as held from then on. For a check that asks what the app does with an
+     * effect of Google's that no rule here names (one nobody has seen included). Null, the default, changes nothing.
+     * Never a claim about Google.
+     */
+    public ?\Closure $masterEffect = null;
+    /** The label Google adds to a colour set on one day (10.6, 2026-11-13); invented, the form of the one seen. */
+    public const LABEL = '00000000-0000-4000-8000-00000000c010';
 
     private int $seq = 0;
     private int $etags = 0;
@@ -80,6 +104,15 @@ final class FakeGoogle
     private array $lagLeft = [];
     /** @var array<string,true> records dropped by a zone change under zoneAlone 'dropped': their id names an occurrence again, which lists as the series' own */
     private array $zoneDropped = [];
+    /** @var array<string,array{start:array,end:array}> instance ids that were once days of a series, by what they were (the cancelled stub, find) */
+    private array $wereDays = [];
+    /** @var array<string,true> instance ids a switch between timed and all-day hid (hidden(): 3.48 to 3.51, 3.63 to 3.65) */
+    private array $hidden = [];
+    /** @var array<string,true> masters Google cancelled because a rule change left them only deleted days (3.62) */
+    private array $emptied = [];
+    /** The level answered last, and the change sequence at which it last changed (tokens from before it answer 410). */
+    private string $roleSeen = 'owner';
+    private int $roleSince = 0;
 
     public function __construct(public readonly string $calendarId)
     {
@@ -193,7 +226,16 @@ final class FakeGoogle
         if ($auth === [] || $n === $this->unauthorizedAt) {
             return self::error(401, 'Invalid Credentials');
         }
-        $answer = $this->route($method, $path, $query, $headers, $payload);
+        // Any change of the account's level invalidates every sync token given before it (the access probe, row 4d: 410
+        // at every stage after a change, 200 at the second run of a stage with no change between).
+        if ($this->role !== $this->roleSeen) {
+            $this->roleSeen = $this->role;
+            $this->roleSince = ++$this->seq;
+        }
+        $answer = $this->role($method, $path, $query) ?? $this->shapedAnswer($method, $this->route($method, $path, $query, $headers, $payload));
+        if ($this->role === 'freeBusyReader' && $answer['status'] === 200) {
+            $answer = $this->busyOnly($answer);
+        }
         // The status the stand-in answered, beside the request: a write it refused (4xx) took nothing. A lost answer was
         // taken, so its status is recorded before the answer is lost.
         $this->requests[$n - 1]['status'] = (int) $answer['status'];
@@ -201,6 +243,94 @@ final class FakeGoogle
             throw new \RuntimeException('HTTP error for the fake: the answer was lost');
         }
         return $answer;
+    }
+
+    /**
+     * What a level below writer answers in place of the request, as the access probe of 2026-11-13 saw each (stage and
+     * row named), or null to answer it as a writer is answered. Proven: reader reads 200 (rows 1 to 4, 6a to 6c, 6g),
+     * an insert 403 requiredAccessLevel (row 5), each PATCH 403 forbidden (6d to 6h); freeBusyReader lists 200 (3, 4),
+     * reads a single event, a day and another's event 200 with no title (6a, 6c, 6g; busyOnly), a series' main record
+     * 404 on read and PATCH (6b, 6e), other PATCHes 403 forbidden (6d, 6f, 6h), an insert 403 requiredAccessLevel (5);
+     * none (sharing removed) 404 on the calendar list entry, the calendar, every list and an insert (1 to 5), every read
+     * and PATCH 404 (6b, 6c, 6e to 6h), except a single event this account made: it reads 200 (6a) and its PATCH with
+     * If-Match answers 412 (6d). Not probed, answered as the nearest proven request: a DELETE (as a PATCH of the same
+     * target), a series' instances list (as a list).
+     */
+    private function role(string $method, string $path, array $query): ?array
+    {
+        if (self::writes($this->role)) {
+            return null;
+        }
+        $prefix = '/calendars/' . rawurlencode($this->calendarId);
+        $rest = str_starts_with($path, $prefix) ? substr($path, strlen($prefix)) : null;
+        $notFound = self::googleError(404, 'notFound', 'Not Found');
+        $forbidden = self::googleError(403, 'forbidden', 'Forbidden');
+        // 'none' answers a calendar no longer shared and one deleted alike: the second round's stage deleted (2026-11-14)
+        // answered every list (the delta from an earlier token too: 404, not 410), the calendar, every read, an insert and
+        // every PATCH 404, but the account's own single event's PATCH with If-Match 412, as at not shared.
+        if ($this->role === 'none') {
+            // UNPROVEN, and contradicted: the first round read the account's own single event 200 and its PATCH 412 (rows
+            // 6a, 6d); the second (2026-11-14) read that event 404 with its PATCH still 412, and the series 200. Kept as the
+            // first round saw it; no product path depends on it (a write refused at any level asks the small list).
+            // A DELETE at not shown answers 404 for every target (round 2, rows D1 to D4), the account's own included.
+            if ($rest !== null && preg_match('#^/events/([^/]+)$#', $rest, $m) === 1 && in_array($method, ['GET', 'PATCH'], true)) {
+                $e = $this->events[rawurldecode($m[1])] ?? null;
+                $own = $e !== null && ($e['creator']['email'] ?? '') === $this->owner && empty($e['recurrence']) && empty($e['recurringEventId']) && !isset($e['originalStartTime']);
+                if ($own) {
+                    return $method === 'GET' ? null : self::googleError(412, 'failedPrecondition', 'Precondition check failed.');
+                }
+            }
+            return $notFound;
+        }
+        if ($rest === '/events' && $method === 'POST') {
+            return self::googleError(403, 'requiredAccessLevel', 'You need to have writer access to this calendar.');
+        }
+        if ($rest !== null && preg_match('#^/events/([^/]+)$#', $rest, $m) === 1) {
+            $id = rawurldecode($m[1]);
+            $master = !empty($this->events[$id]['recurrence']);
+            // A series' main record at busy times only: 404 to a read and a PATCH (round 1, rows 6b, 6e); a DELETE is
+            // 403 forbidden like every DELETE at view only and busy times only (round 2, rows D1 to D4).
+            if ($this->role === 'freeBusyReader' && $master && in_array($method, ['GET', 'PATCH'], true)) {
+                return $notFound;
+            }
+            if ($method === 'PATCH' || $method === 'DELETE') {
+                return $forbidden;
+            }
+        }
+        return null;
+    }
+
+    /** Does a level let the account write? */
+    private static function writes(string $role): bool
+    {
+        return in_array($role, ['writer', 'owner'], true);
+    }
+
+    /**
+     * An answer at busy times only. A read leaves out the title (the access probe, stage freebusy, rows 6a, 6c, 6g). A
+     * list's items carry only end, etag, htmlLink, iCalUID, id, kind, start, status, updated and visibility (the second
+     * round, 2026-11-14, stage freebusy).
+     */
+    private function busyOnly(array $answer): array
+    {
+        $body = json_decode((string) $answer['body'], true);
+        if (!is_array($body)) {
+            return $answer;
+        }
+        if (isset($body['items']) && is_array($body['items'])) {
+            // A list item carries only these (round 2, stage freebusy, rows 4, U1, U2).
+            $keep = array_flip(['end', 'etag', 'htmlLink', 'iCalUID', 'id', 'kind', 'start', 'status', 'updated', 'visibility']);
+            $body['items'] = array_map(static fn(array $e): array => array_intersect_key($e, $keep), $body['items']);
+        } elseif (($body['kind'] ?? '') === 'calendar#event') {
+            unset($body['summary']);
+        }
+        return ['status' => $answer['status'], 'body' => (string) json_encode($body, JSON_UNESCAPED_SLASHES)];
+    }
+
+    /** An error with Google's reason and wording, as the access probe recorded it. */
+    private static function googleError(int $status, string $reason, string $message): array
+    {
+        return ['status' => $status, 'body' => (string) json_encode(['error' => ['errors' => [['domain' => 'global', 'reason' => $reason, 'message' => $message]], 'code' => $status, 'message' => $message]], JSON_UNESCAPED_SLASHES)];
     }
 
     private function route(string $method, string $path, array $query, array $headers, ?array $payload): array
@@ -293,6 +423,7 @@ final class FakeGoogle
             'organizer' => ['email' => $this->calendarId, 'displayName' => 'Probe calendar', 'self' => true],
             'creator' => ['email' => $this->owner],
         ];
+        self::allDayOnce($this->events[$id]);
         $this->lagLeft[$id] = $this->lagGets;
         $this->bump($id);
         return self::ok($this->events[$id]);
@@ -310,8 +441,16 @@ final class FakeGoogle
 
     private function patch(string $id, array $body, ?string $ifMatch): array
     {
-        $e = $this->find($id);
+        $e = $this->find($id, true);
         if ($e === null) {
+            // A day a switch hid: a write with an If-Match is 412, one without is 404 (3.48). A dropped record, under an
+            // id that names no day now, refuses being made live with 400 (3.48, "revive dropped").
+            if (isset($this->hidden[$id]) && $ifMatch !== null) {
+                return self::error(412, 'Precondition Failed');
+            }
+            if (isset($this->events[$id]) && $this->isDropped($this->events[$id])) {
+                return self::error(400, 'Bad Request');
+            }
             return self::error(404, 'Not Found');
         }
         if ($ifMatch !== null && $ifMatch !== '*' && $ifMatch !== $e['etag']) {
@@ -326,11 +465,14 @@ final class FakeGoogle
             return self::error(400, 'Invalid start time.');
         }
         $master = $seriesId !== $id ? ($this->events[$seriesId] ?? null) : null;
+        // A day that already holds a record (live, cancelled or revived): its write moves its own etag alone.
+        $hadRecord = $master !== null && isset($this->events[$id]['originalStartTime']);
+        if (array_key_exists('colorId', $body) && $body['colorId'] !== null && !isset($e['eventLabelId'])) {
+            $body['eventLabelId'] = self::LABEL; // Google adds a label of its own to a colour set on one day (10.6, 2026-11-13)
+        }
         if ($master !== null) {
-            // An instance of an all-day series can't be given a clock time (probe 2.2a).
-            if (isset($master['start']['date']) && isset($body['start']['dateTime'])) {
-                return self::error(400, 'Invalid start time.');
-            }
+            // An instance of an all-day series takes a clock time once its date is sent as null (3.38, 2026-11-13); sent
+            // without it, the merge above already refuses it as holding a date and a clock time (2.2a, 3.30).
             unset($body['recurrence']); // an instance never carries a rule
         } elseif (isset($body['recurrence'])) {
             $why = self::recurrenceError((array) $body['recurrence'], isset(($body['start'] ?? $e['start'])['date']));
@@ -339,10 +481,23 @@ final class FakeGoogle
             }
         }
         $e = array_replace($e, $body);
+        // A day's record whose times name no zone (a UTC series' records after its start moved, replay round 5, cause
+        // 8) takes the calendar's zone on a write that sends no times: replay round 6,
+        // google-undo-of-a-move-onto-a-skipped-day-date-only request 16 and -with-a-status-change request 15, a PATCH of
+        // status cancelled answered with start, end and originalStartTime in America/Los_Angeles, the calendar's zone,
+        // where the read before named none. Whether a later list shows the zone too is not yet seen.
+        if ($master !== null) {
+            foreach (['start', 'end'] as $k) {
+                if (isset($e[$k]['dateTime']) && !isset($e[$k]['timeZone'])) {
+                    $e[$k]['timeZone'] = $this->zone;
+                }
+            }
+        }
         $e['updated'] = gmdate('Y-m-d\TH:i:s.000\Z');
+        self::allDayOnce($e);
         $this->events[$id] = $e;
         unset($this->zoneDropped[$id]);
-        $this->bump($seriesId);
+        $master !== null ? $this->bumpDay($seriesId, $id, $hadRecord) : $this->bump($seriesId);
         return self::ok($this->events[$id]);
     }
 
@@ -354,7 +509,11 @@ final class FakeGoogle
      * end) and while no EXDATE line names it (3.16). A kept record follows a
      * changed start onto the pattern's time (3.5), takes a field or status
      * set on the master (3.12 to 3.15, a cancelled record un-cancelled by a
-     * status), and its end follows a changed length (3.2); a pattern change
+     * status) and a link set on it (3.32: `source` written into every kept
+     * record, the cancelled one included), and its end follows a changed
+     * length (3.2). A zone change that moves no instant (3.17) resets a kept
+     * record's start to the pattern's in the new zone and leaves its end
+     * where it was, in the new zone; a pattern change
      * drops the cancelled records it would keep (3.7). A dropped record
      * stays readable as a cancelled item with no originalStartTime, which
      * the next delta lists (3.1).
@@ -374,17 +533,50 @@ final class FakeGoogle
             }
         }
         $id = (string) $old['id'];
+        foreach ($this->generate($old) as $inst) {
+            $this->wereDays[(string) $inst['id']] = ['start' => $inst['start'], 'end' => $inst['end']];
+        }
+        self::allDayOnce($new);
         $oldLen = self::lengthOf($old);
         $newLen = self::lengthOf($new);
         $startChanged = json_encode($old['start']) !== json_encode($new['start']);
         $patternChanged = self::pattern($old) !== self::pattern($new);
-        $fields = array_intersect_key($body, array_flip(['summary', 'description', 'location', 'status']));
+        // A series Google cancelled because a rule change left it only deleted days stays cancelled: a later status sent
+        // is taken and changes nothing (3.62).
+        $emptied = isset($this->emptied[(string) $old['id']]);
+        if ($emptied) {
+            unset($body['status']);
+            $new['status'] = 'cancelled';
+        }
+        $fields = array_intersect_key($body, array_flip(['summary', 'description', 'location', 'status', 'source']));
+        // A series with no notes, written without them: every kept record's own notes are cleared (3.52 to 3.57; and
+        // with no recurrence sent, 3.68, 2026-11-14; with notes of its own, or its empty notes sent, they stay: 3.58 to
+        // 3.61).
+        $clearNotes = !array_key_exists('description', $body) && (string) ($old['description'] ?? '') === '';
+        // Those empty notes sent to a series that has none change nothing and are written into no record (3.61).
+        if (($fields['description'] ?? null) === '' && (string) ($old['description'] ?? '') === '') {
+            unset($fields['description']);
+        }
         $exdates = self::exdateKeys($new);
+        // A switch between timed and all-day hides each day of the new form whose instant is a record's (live or
+        // cancelled, with its originalStartTime) under the old: not listed, not readable, not writable (3.48 to 3.51,
+        // 3.65), whatever the record holds; a dropped record there hides nothing (3.63, 3.64).
+        if ($allDay !== isset($old['start']['date'])) {
+            $this->hide($old, $new);
+        }
         // The zone alone changed (both timed, another timeZone): under the 'dropped' setting every record goes (Q2).
         $zoneAlone = isset($old['start']['dateTime'], $new['start']['dateTime']) && ($old['start']['timeZone'] ?? null) !== ($new['start']['timeZone'] ?? null);
         $dropAll = $zoneAlone && $this->zoneAlone === 'dropped';
+        // And moved no instant, the length unchanged (3.17; replay of 2026-11-13, D): each kept record's end stays where
+        // it was. With the length changed too, the ends follow the new length as before (no live case shows otherwise).
+        $sameInstants = $zoneAlone && $newLen === $oldLen
+            && (new \DateTimeImmutable((string) $old['start']['dateTime']))->getTimestamp() === (new \DateTimeImmutable((string) $new['start']['dateTime']))->getTimestamp();
+        // Whether a record's day is still a day of the master as changed is read from the rule through the latest
+        // record held, not from the listing: a listing stops at 730 occurrences (7.3), and a record past that of an
+        // unbounded rule is still a day of it (D1 says kept "while still a day of the master"; nothing seen ties that
+        // to the listing's length).
         $occ = [];
-        foreach ($this->occurrences($new) as $start) {
+        foreach ($this->occurrences($new, $this->latestRecord($id)) as $start) {
             $occ[self::keyOfStart($start, $allDay)] = $start;
         }
         foreach ($this->events as $rid => $r) {
@@ -393,7 +585,8 @@ final class FakeGoogle
             }
             $key = self::keyOf($r['originalStartTime'], $r['start']['timeZone'] ?? $this->zone);
             $cancelled = ($r['status'] ?? '') === 'cancelled';
-            if ($dropAll || !isset($occ[$key]) || isset($exdates[$key]) || ($patternChanged && $cancelled)) {
+            // Kept exactly while still a day of the master as changed, a cancelled record too, whatever the rule change (D1: 3.42 to 3.47, 2026-11-13; 3.7's cancelled day went because it fell past the new end).
+            if ($dropAll || !isset($occ[$key]) || isset($exdates[$key])) {
                 // Gone: a cancelled item under its id, no originalStartTime.
                 unset($r['recurringEventId'], $r['originalStartTime']);
                 $r['status'] = 'cancelled';
@@ -404,24 +597,108 @@ final class FakeGoogle
                 }
                 continue;
             }
-            if ($startChanged) {
+            // The start changed and the length did not: a kept timed record's start goes onto its occurrence and its end
+            // stays at its instant, in the series' zone. Seen for the zone alone at the same moments (3.17, replay round 2
+            // D), for a start date moved along the pattern (3.5: no record's end reported changed) and for a zone and rule
+            // change put back (replay round 5, google-an-untouched-edited-day-keeps-its-own-list-after-a-zone-and-rule-change
+            // request 16: a day with its own 12:30 to 14:00 read back 13:00 to 14:00 under a 13:00 to 14:30 series), and
+            // for the first day dragged a week later (3.67, 2026-11-14: a day at its own 14:00 to 15:30 read 10:00 to 15:30).
+            // A timed day of an all-day series the same way, its start the occurrence's date at 00:00 UTC and neither
+            // end named in a zone (replay round 5, google-a-reading-keeping-a-timed-day-under-an-all-day-series-is-
+            // offered-as-locally request 9: a day at 09:00 to 10:00 Berlin read 00:00 UTC to 10:00 Berlin, no timeZone).
+            if (($sameInstants || ($startChanged && $newLen === $oldLen)) && isset($r['end']['dateTime'])) {
+                if ($allDay) {
+                    $r['start'] = ['dateTime' => $occ[$key]->format('Y-m-d') . 'T00:00:00+00:00'];
+                    $r['end'] = ['dateTime' => (new \DateTimeImmutable((string) $r['end']['dateTime']))->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i:sP')];
+                } else {
+                    $tz = (string) $new['start']['timeZone'];
+                    [$r['start']] = $this->span($occ[$key], $newLen, $allDay, $tz);
+                    $r['end'] = ['dateTime' => (new \DateTimeImmutable((string) $r['end']['dateTime']))->setTimezone(new \DateTimeZone($tz))->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz];
+                    // A series in UTC: the record's start and end come back with no zone named (replay round 5,
+                    // google-undo-of-a-move-onto-a-skipped-day-date-only request 14 and -with-a-status-change request 13:
+                    // a live and a cancelled record of a UTC series after its start moved a day; the records' times
+                    // named UTC before that write). The answer then names none for originalStartTime either (shaped).
+                    if ($tz === 'UTC') {
+                        unset($r['start']['timeZone'], $r['end']['timeZone']);
+                    }
+                }
+            } elseif ($startChanged) {
                 [$r['start'], $r['end']] = $this->span($occ[$key], $newLen, $allDay, (string) ($new['start']['timeZone'] ?? $this->zone));
             } elseif ($newLen !== $oldLen) {
                 // In the record's own form: an all-day day of a timed series keeps whole days.
                 $r['end'] = $this->endOf($r['start'], $newLen, isset($r['start']['date']));
             }
             foreach ($fields as $k => $v) {
+                if ($v === null) {
+                    unset($r[$k]); // a link cleared (a PATCH's null removes a field)
+                    continue;
+                }
                 $r[$k] = $v;
             }
-            $this->events[$rid] = $r;
+            if ($clearNotes) {
+                unset($r['description']);
+            }
+            $this->events[$rid] = $this->masterEffect !== null ? ($this->masterEffect)($r, $this->events[$rid], $new) : $r;
         }
-        if ($startChanged || $patternChanged || isset($fields['status'])) {
+        // A record an earlier master change dropped, whose id is a day of the master again (a clock or form changed back,
+        // a bound or split taken back): revived as a live record at the series' values (3.36, 3.37, 3.40, 10.2, 10.3,
+        // 2026-11-13), a day deleted before the first change live again, an edited day's own values gone.
+        $generated = [];
+        foreach ($this->generate($new) as $inst) {
+            $generated[(string) $inst['id']] = $inst;
+        }
+        foreach ($this->events as $rid => $r) {
+            if (isset($generated[$rid]) && !isset($this->zoneDropped[$rid]) && $this->isDropped($r) && $this->seriesIdOf((string) $rid) === $id) {
+                $revived = ['sequence' => (int) ($r['sequence'] ?? 0) + 1] + $generated[$rid];
+                $this->events[$rid] = $this->masterEffect !== null ? ($this->masterEffect)($revived, $r, $new) : $revived;
+            }
+        }
+        // A rule change that leaves the series no day but deleted ones: Google cancels the series (3.62).
+        if (!$emptied && ($new['status'] ?? 'confirmed') !== 'cancelled' && isset($body['recurrence'])) {
+            $live = false;
+            foreach ($this->generate($new) as $inst) {
+                $r = $this->events[(string) $inst['id']] ?? null;
+                if (!isset($this->hidden[(string) $inst['id']]) && ($r === null || !isset($r['originalStartTime']) || ($r['status'] ?? '') !== 'cancelled')) {
+                    $live = true;
+                    break;
+                }
+            }
+            if (!$live) {
+                $new['status'] = 'cancelled';
+                $this->emptied[$id] = true;
+            }
+        }
+        if ($startChanged || $patternChanged || isset($fields['status']) || isset($this->emptied[$id])) {
             $new['sequence'] = (int) ($old['sequence'] ?? 0) + 1;
         }
         $new['updated'] = gmdate('Y-m-d\TH:i:s.000\Z');
         $this->events[$id] = $new;
         $this->bump($id);
         return self::ok($this->events[$id]);
+    }
+
+    /**
+     * The days a switch between timed and all-day hides (3.48 to 3.51, 3.65): each occurrence of $new at the instant of
+     * a record of $old (live or cancelled, with its originalStartTime), an all-day day's instant being its date at 00:00
+     * UTC. Before the switch drops those records.
+     */
+    private function hide(array $old, array $new): void
+    {
+        $id = (string) $old['id'];
+        $instant = static fn(string $key): string => strlen($key) === 8 ? $key . 'T000000Z' : $key;
+        $held = [];
+        foreach ($this->events as $r) {
+            if (($r['recurringEventId'] ?? '') === $id && isset($r['originalStartTime'])) {
+                $held[$instant(self::keyOf($r['originalStartTime'], $r['start']['timeZone'] ?? $this->zone))] = true;
+            }
+        }
+        $allDay = isset($new['start']['date']);
+        foreach ($this->occurrences($new) as $s) {
+            $key = self::keyOfStart($s, $allDay);
+            if (isset($held[$instant($key)])) {
+                $this->hidden[$id . '_' . $key] = true;
+            }
+        }
     }
 
     /**
@@ -479,18 +756,36 @@ final class FakeGoogle
             return self::error(410, 'Resource has been deleted');
         }
         $e['status'] = 'cancelled';
+        $seriesId = $this->seriesIdOf($id);
+        $hadRecord = $seriesId !== $id && isset($this->events[$id]['originalStartTime']);
         $this->events[$id] = $e;
-        $this->bump($this->seriesIdOf($id));
+        if ($seriesId !== $id) {
+            $this->bumpDay($seriesId, $id, $hadRecord);
+            return ['status' => 204, 'body' => ''];
+        }
+        if (!empty($e['recurrence'])) {
+            // A master deleted takes its records with it: each reads cancelled, its originalStartTime kept (10.3, 10.4,
+            // 10.5, 2026-11-13); a PATCH to confirmed on the master brings them all back (the status written into every
+            // record, 3.15), a day cancelled before the master was included (10.4).
+            foreach ($this->events as $rid => $r) {
+                if (($r['recurringEventId'] ?? '') === $id && isset($r['originalStartTime'])) {
+                    $this->events[$rid]['status'] = 'cancelled';
+                }
+            }
+        }
+        $this->bump($seriesId);
         return ['status' => 204, 'body' => ''];
     }
 
     private function list(array $q): array
     {
-        $single = ($q['singleEvents'] ?? 'false') === 'true';
+        // At busy times only a series is listed as its occurrences, with no rule (round 2, stage freebusy, U2: 4 items
+        // where writer gets 2), whatever singleEvents asks.
+        $single = ($q['singleEvents'] ?? 'false') === 'true' || $this->role === 'freeBusyReader';
         $deleted = ($q['showDeleted'] ?? 'false') === 'true';
         if (isset($q['syncToken'])) {
-            if (preg_match('/^fake-sync-(\d+)$/', (string) $q['syncToken'], $m) !== 1) {
-                return self::error(410, 'Sync token is no longer valid, a full sync is required.');
+            if (preg_match('/^fake-sync-(\d+)$/', (string) $q['syncToken'], $m) !== 1 || (int) $m[1] < $this->roleSince) {
+                return self::googleError(410, 'fullSyncRequired', 'Sync token is no longer valid, a full sync is required.');
             }
             $since = (int) $m[1];
             $items = [];
@@ -518,6 +813,12 @@ final class FakeGoogle
                 }
             }
             if (!$deleted && ($e['status'] ?? '') === 'cancelled') {
+                // A cancelled day of a series is listed all the same, in a short form with the series' etag (replay of
+                // 2026-11-13, section A; 26 scenarios); a cancelled master or a dropped record is not.
+                if (!empty($e['recurringEventId']) && isset($e['originalStartTime'], $this->events[$e['recurringEventId']])) {
+                    $items[] = ['kind' => 'calendar#event', 'etag' => $this->events[$e['recurringEventId']]['etag'], 'id' => $e['id'], 'status' => 'cancelled',
+                        'recurringEventId' => $e['recurringEventId'], 'originalStartTime' => $e['originalStartTime']];
+                }
                 continue;
             }
             $items[] = $e;
@@ -540,10 +841,12 @@ final class FakeGoogle
         $size = min(2500, (int) ($q['maxResults'] ?? 250));
         $offset = (int) ($q['pageToken'] ?? 0);
         $slice = array_slice($items, $offset, $size);
-        $out = ['kind' => 'calendar#events', 'timeZone' => $this->zone, 'items' => $slice];
+        // Every list answer states the account's level (the access probe, rows 3, 4 and 4d, at every stage).
+        $out = ['kind' => 'calendar#events', 'timeZone' => $this->zone, 'accessRole' => $this->role, 'items' => $slice];
         if ($offset + $size < count($items)) {
             $out['nextPageToken'] = (string) ($offset + $size);
-        } else {
+        } elseif ($this->role !== 'freeBusyReader') {
+            // At busy times only Google gave no sync token (round 2, stage freebusy, row 4).
             $out['nextSyncToken'] = 'fake-sync-' . $this->seq;
         }
         return self::ok($out);
@@ -555,7 +858,7 @@ final class FakeGoogle
      * under it (a cancelled item with no originalStartTime) is no longer
      * what the id addresses.
      */
-    private function find(string $id): ?array
+    private function find(string $id, bool $forWrite = false): ?array
     {
         $masterId = $this->seriesIdOf($id);
         if (isset($this->events[$id]) && ($masterId === $id || isset($this->events[$id]['originalStartTime']))) {
@@ -565,11 +868,39 @@ final class FakeGoogle
             return null;
         }
         foreach ($this->generate($this->events[$masterId]) as $inst) {
-            if ($inst['id'] === $id) {
+            if ($inst['id'] === $id && !isset($this->hidden[$id])) {
                 return $inst;
             }
         }
+        // A dropped record under an id that names no day of the series now: a GET reads it as it is, cancelled with
+        // no originalStartTime (3.36, 3.37, 3.39, 2026-11-13). A write to it was never measured: no such day.
+        if ($forWrite) {
+            return null;
+        }
+        if (isset($this->events[$id])) {
+            return $this->events[$id];
+        }
+        // An id that was once a day of the series and names none now (the other form's, after a switch back): a GET
+        // answers a cancelled stub, as Google does (3.39, 2026-11-13, steps 21, 27 and 33), its dates the day's then.
+        if (isset($this->wereDays[$id])) {
+            $m = $this->events[$masterId];
+            return ['kind' => 'calendar#event', 'etag' => $m['etag'], 'id' => $id, 'status' => 'cancelled', 'created' => '0000-12-31T00:00:00.000Z', 'updated' => $m['updated'] ?? gmdate('Y-m-d\TH:i:s.000\Z'),
+                'summary' => 'CANCELLED', 'creator' => ['email' => $this->calendarId, 'self' => true], 'organizer' => ['email' => $this->calendarId, 'self' => true],
+                'start' => $this->wereDays[$id]['start'], 'end' => $this->wereDays[$id]['end'], 'iCalUID' => $m['iCalUID'] ?? '', 'sequence' => 1, 'reminders' => ['useDefault' => false]];
+        }
         return null;
+    }
+
+    /**
+     * Google's own reminders on a resource once it has been all-day: `useDefault` false, kept when it is timed again
+     * (replay of 2026-11-13, section F: 170 resources in probe cases 3.23 to 3.26, 3.29, 3.30, 3.36 to 3.40). A resource
+     * never all-day holds none, and its answers say `useDefault` true (shaped).
+     */
+    private static function allDayOnce(array &$e): void
+    {
+        if (isset($e['start']['date']) && !isset($e['reminders'])) {
+            $e['reminders'] = ['useDefault' => false];
+        }
     }
 
     /** @return list<array> the occurrences with exception records laid over them */
@@ -578,6 +909,9 @@ final class FakeGoogle
         $out = [];
         $seen = [];
         foreach ($this->generate($master) as $inst) {
+            if (isset($this->hidden[$inst['id']])) {
+                continue;
+            }
             $e = isset($this->zoneDropped[$inst['id']]) ? $inst : ($this->events[$inst['id']] ?? $inst);
             $seen[$inst['id']] = true;
             if ($deleted || ($e['status'] ?? '') !== 'cancelled') {
@@ -619,11 +953,37 @@ final class FakeGoogle
         return $out;
     }
 
-    /** @return list<\DateTimeImmutable> starts in the master's zone */
-    private function occurrences(array $master): array
+    /** The latest original start among a series' records (live or cancelled), a day past it; null with none. */
+    private function latestRecord(string $id): ?\DateTimeImmutable
+    {
+        $latest = null;
+        foreach ($this->events as $r) {
+            if (($r['recurringEventId'] ?? '') !== $id || !isset($r['originalStartTime'])) {
+                continue;
+            }
+            $o = $r['originalStartTime'];
+            $at = isset($o['date']) ? new \DateTimeImmutable($o['date'] . ' 00:00:00', new \DateTimeZone('UTC')) : new \DateTimeImmutable((string) $o['dateTime']);
+            if ($latest === null || $at > $latest) {
+                $latest = $at;
+            }
+        }
+        return $latest?->modify('+1 day');
+    }
+
+    /**
+     * A master's occurrences: as a listing, 730 at most; with $through, those and every later one up to $through.
+     *
+     * @return list<\DateTimeImmutable> starts in the master's zone
+     */
+    private function occurrences(array $master, ?\DateTimeImmutable $through = null): array
     {
         if ($this->expand !== null) {
-            return array_slice(($this->expand)($master), 0, 730);
+            $listed = array_slice(($this->expand)($master), 0, 730);
+            if ($through === null || $listed === [] || end($listed) >= $through) {
+                return $listed;
+            }
+            $all = ($this->expand)($master, $through);
+            return count($all) > count($listed) ? $all : $listed;
         }
         $rule = null;
         foreach ($master['recurrence'] ?? [] as $line) {
@@ -639,7 +999,8 @@ final class FakeGoogle
         $start = $allDay ? new \DateTimeImmutable($master['start']['date'], $tz) : (new \DateTimeImmutable($master['start']['dateTime']))->setTimezone($tz);
         $unit = ['DAILY' => 'day', 'WEEKLY' => 'week', 'MONTHLY' => 'month', 'YEARLY' => 'year'][$rule['FREQ'] ?? 'DAILY'] ?? 'day';
         $interval = max(1, (int) ($rule['INTERVAL'] ?? 1));
-        $count = min(730, (int) ($rule['COUNT'] ?? 730));
+        // A listing's length, or with $through the rule's own count and every day up to $through.
+        $count = $through === null ? min(730, (int) ($rule['COUNT'] ?? 730)) : (int) ($rule['COUNT'] ?? PHP_INT_MAX);
         $until = null;
         if (isset($rule['UNTIL'])) {
             $u = (string) $rule['UNTIL'];
@@ -657,8 +1018,11 @@ final class FakeGoogle
             sort($days);
         }
         $out = [];
-        for ($i = 0; count($out) < $count && $i < 2000; $i++) {
+        for ($i = 0; count($out) < $count && ($through === null ? $i < 2000 : $i < 200000); $i++) {
             $period = $start->modify('+' . ($i * $interval) . ' ' . $unit);
+            if ($through !== null && count($out) >= 730 && $period > $through) {
+                break;
+            }
             $candidates = [$period];
             if ($days !== []) {
                 $weekStart = $period->modify('monday this week');
@@ -775,6 +1139,35 @@ final class FakeGoogle
     }
 
     /**
+     * A write to one day of a series ($id, under $seriesId). Google gives each resource its own etag once a day has a
+     * record (2026-11-13): a write to a day that already held a record moves that record's etag alone, the master's and
+     * the others' staying as they were (3.36, 3.37 and 3.40 second changes, 10.2); a first write to an ordinary day
+     * answered once with an etag of its own while the master and the other records moved to another (3.37 first
+     * change), which is the reading kept here, the strictest seen. Dropped records keep theirs. The next delta lists
+     * the day, and the master when it moved (5.3), and every other record whose etag moved with it, unchanged (replay
+     * round 5, `app-series-deleted-whole` request 13: an ordinary day deleted on a series holding one renamed day, and
+     * Google's next delta listed the master, the deleted day and the renamed day as it was, all three on one etag).
+     * That is the only shape the live runs show: a first write to an ordinary day while another record is held. A
+     * write to a day that already holds a record lists that day alone; no live delta has said otherwise.
+     */
+    private function bumpDay(string $seriesId, string $id, bool $hadRecord): void
+    {
+        $seq = ++$this->seq;
+        $this->events[$id]['etag'] = '"' . (3000000000000000 + ++$this->etags) . '"';
+        $this->changed[$id] = $seq;
+        if ($hadRecord) {
+            return;
+        }
+        $other = '"' . (3000000000000000 + ++$this->etags) . '"';
+        foreach ($this->events as $rid => $e) {
+            if ($rid !== $id && ($rid === $seriesId || (($e['recurringEventId'] ?? '') === $seriesId && isset($e['originalStartTime'])))) {
+                $this->events[$rid]['etag'] = $other;
+                $this->changed[$rid] = $seq;
+            }
+        }
+    }
+
+    /**
      * A write to a series: a new etag for its master and every one of its
      * records (probe 5.2, 5.3: one value for all of them), each listed by
      * the next delta (7.2); a single event's its own.
@@ -794,6 +1187,79 @@ final class FakeGoogle
     private static function ok(array $body): array
     {
         return ['status' => 200, 'body' => (string) json_encode($body, JSON_UNESCAPED_SLASHES)];
+    }
+
+    /**
+     * Every answer as Google shapes it on the way out, the store left as it is (docs/design/research/google-series/
+     * replay-2026-11-13.md): each event resource (a single answer, or each item of a list) through shaped(), and an error
+     * with the reason and wording Google gives where a live answer has shown them.
+     */
+    private function shapedAnswer(string $method, array $answer): array
+    {
+        $body = json_decode((string) $answer['body'], true);
+        if (!is_array($body)) {
+            return $answer;
+        }
+        if (isset($body['error']['errors'][0]['domain'])) {
+            return $answer; // already in Google's shape (googleError)
+        }
+        if (isset($body['error'])) {
+            // As probed (2026-11-10 and 2026-11-13): reason and domain per status; a PATCH's 412 has its own wording and a status.
+            $reasons = [400 => 'invalid', 404 => 'notFound', 410 => 'deleted'];
+            $code = (int) $answer['status'];
+            if ($code === 412 && $method === 'PATCH') {
+                $body = ['error' => ['code' => 412, 'message' => 'Precondition check failed.', 'errors' => [['message' => 'Precondition check failed.', 'domain' => 'global', 'reason' => 'failedPrecondition']], 'status' => 'FAILED_PRECONDITION']];
+            } elseif (isset($reasons[$code])) {
+                $message = (string) $body['error']['message'];
+                $body = ['error' => ['errors' => [['domain' => 'global', 'reason' => $reasons[$code], 'message' => $message]], 'code' => $code, 'message' => $message]];
+            }
+            return ['status' => $answer['status'], 'body' => (string) json_encode($body, JSON_UNESCAPED_SLASHES)];
+        }
+        if (($body['kind'] ?? 'calendar#event') === 'calendar#event' && isset($body['id'])) {
+            $body = $this->shaped($body);
+        } elseif (isset($body['items']) && is_array($body['items'])) {
+            $body['items'] = array_map(fn(array $e): array => $this->shaped($e), $body['items']);
+        } else {
+            return $answer;
+        }
+        return ['status' => $answer['status'], 'body' => (string) json_encode($body, JSON_UNESCAPED_SLASHES)];
+    }
+
+    /**
+     * One event resource as Google returns it, as the live answers show (3,244 resources in the probe of 2026-11-13, the
+     * replay of the same day): no field held as null, no description or location held as "", no recurrence held as [];
+     * every dateTime (start, end, originalStartTime) written with the calendar's own offset at that instant, whatever
+     * zone the event names; reminders {useDefault: true} on a timed event and false on an all-day one when none are held;
+     * eventType "default" and kind "calendar#event" always.
+     */
+    private function shaped(array $e): array
+    {
+        $e = array_filter($e, static fn($v): bool => $v !== null);
+        foreach (['description', 'location'] as $k) {
+            if (($e[$k] ?? null) === '') {
+                unset($e[$k]);
+            }
+        }
+        if (($e['recurrence'] ?? null) === []) {
+            unset($e['recurrence']);
+        }
+        foreach (['start', 'end', 'originalStartTime'] as $k) {
+            if (isset($e[$k]['dateTime']) && is_string($e[$k]['dateTime'])) {
+                $e[$k]['dateTime'] = (new \DateTimeImmutable($e[$k]['dateTime']))->setTimezone(new \DateTimeZone($this->zone))->format('Y-m-d\TH:i:sP');
+            }
+        }
+        // originalStartTime names the zone the resource's own start names, none when that start is a date (3,472 of
+        // 3,472 resources in the probes of 2026-11-10 and 2026-11-13; replay round 2).
+        if (isset($e['originalStartTime']['dateTime'], $e['start'])) {
+            unset($e['originalStartTime']['timeZone']);
+            if (isset($e['start']['timeZone'])) {
+                $e['originalStartTime']['timeZone'] = $e['start']['timeZone'];
+            }
+        }
+        if (!isset($e['reminders']) && isset($e['start'])) {
+            $e['reminders'] = ['useDefault' => !isset($e['start']['date'])];
+        }
+        return $e + ['kind' => 'calendar#event', 'eventType' => 'default'];
     }
 
     private static function error(int $status, string $message): array

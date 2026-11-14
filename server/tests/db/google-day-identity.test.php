@@ -13,11 +13,11 @@ declare(strict_types=1);
 // suite's one definition of it (identityViolations in lib.php: raw SQL,
 // sharing nothing with the product). Google is the edit harness's stand-in
 // (GoogleStand); google_series_undo is off, as 1.5.5 ships it. The days
-// here are a row holding only a tag and a renamed day. The renamed day goes
-// through the whole-series change with its own title (the change keeps an
-// edited day's own fields: review R1), so the undo of its rename is not
-// stale: it goes through, to the date-form id alone, and the day is back
-// to the series' title. The undo of a tag given before the change is where
+// here are a row holding only a tag and a renamed day. The renamed day holds
+// a record at Google at the instant of its all-day day, so since the probe of
+// 2026-11-13 (3.48) the switch is refused on Google (it would hide the day
+// there), and the undo of its rename is an ordinary one, on the timed id.
+// The undo of a tag given before the change is where
 // the day's id now (GoogleUndo::dayAt) shows on its own: the undo finds the
 // day's row by that id. Invented data.
 
@@ -138,23 +138,18 @@ return static function (Db $db): void {
                 $e->patch($u, $id, ['scope' => 'this', 'instanceStart' => $day, 'title' => 'Sample weekly, renamed']);
                 $e->throwDeferred();
                 $rename = lastEntry($db, $u);
-                planned($e, $u, $id, $toAllDay);
-                $e->throwDeferred();
-                // The change keeps the renamed day: its own title, here and at Google, under the date-form id on the same key.
-                checkEq('undo across a flip: the change keeps the renamed day, on the date-form id here and at the stand-in',
-                    ['Sample weekly, renamed', $sid . '_20270111', 'Sample weekly, renamed'],
-                    [(string) ($dayRow($id)['title'] ?? ''), (string) ($dayRow($id)['google_event_id'] ?? ''), (string) ($s->fake->events[$sid . '_20270111']['summary'] ?? '')]);
-                checkEq('undo across a flip: I1 holds after the change', [], $i1($u));
+                // The renamed day holds a record at Google at 00:00 UTC, the instant of its all-day day: the switch would
+                // hide that day at Google (probe 2026-11-13, 3.48), so it is refused, naming it, and nothing is sent.
                 $s->fake->requests = [];
-                // The change did not touch the day's title, so the undo of the rename is not stale: it goes through,
-                // to the day's id now. Never a request to the timed id, which Google no longer answers.
+                $refused = $words(static function () use ($e, $u, $id, $toAllDay): void {
+                    planned($e, $u, $id, $toAllDay);
+                    $e->throwDeferred();
+                });
+                check('undo across a flip: the switch is refused, naming the renamed day, nothing sent', $refused !== null && $writes($s) === [], (string) $refused . ' ' . implode(', ', $writes($s)));
+                checkEq('undo across a flip: I1 holds after the refusal', [], $i1($u));
+                // So the undo of the rename is an ordinary one, on the timed id.
                 checkEq('undo across a flip: the undo goes through', null, $words(static fn() => $undo->undoById($u, $rename)));
-                $sent = $writes($s);
-                check('undo across a flip: nothing is sent to the timed id', !in_array('PATCH ' . $sid . '_20270111T000000Z', $sent, true), implode(', ', $sent));
-                checkEq('undo across a flip: it goes to the date-form id alone', ['PATCH ' . $sid . '_20270111'], $sent);
-                // Here the day holds nothing of its own once the title is back, so its row may go; where one stays it shows the series' title.
-                checkEq('undo across a flip: the day is back to the series\' title, here and at the stand-in',
-                    ['Sample weekly', 'Sample weekly'], [(string) ($dayRow($id)['title'] ?? 'Sample weekly'), (string) ($s->fake->events[$sid . '_20270111']['summary'] ?? '')]);
+                checkEq('undo across a flip: it goes to the timed id alone', ['PATCH ' . $sid . '_20270111T000000Z'], $writes($s));
                 checkEq('undo across a flip: I1 holds at the end', [], $i1($u));
             } finally {
                 GoogleStand::forget($db, $u);

@@ -5334,9 +5334,9 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     ['Change all events', 'Move only this one']);
 
   // Refusals and notes, by code.
-  const gRefused = planView({ hash: 'e1', rule: rule('FREQ=WEEKLY;BYDAY=TU', 'FREQ=WEEKLY;BYDAY=WE', '2027-01-05T19:00:00-08:00', '2027-01-06T19:00:00-08:00'), refusals: [{ code: 'googleAllDay', words: 'Server words' }] }, ctx());
+  const gRefused = planView({ hash: 'e1', rule: rule('FREQ=WEEKLY;BYDAY=TU', 'FREQ=WEEKLY;BYDAY=WE', '2027-01-05T19:00:00-08:00', '2027-01-06T19:00:00-08:00'), refusals: [{ code: 'empty', words: 'Server words' }] }, ctx());
   eq('series panel: a refused change says why by its code, and can\'t be confirmed', [gRefused.refused, gRefused.canConfirm, gRefused.change],
-    ['At Google, a day of an all-day series can’t have a time of its own, so this change can’t be made while an edited day keeps one. Give that day the series’ all-day setting first, or change only this one.', false, '']);
+    ['This would leave the series with no events. Delete it instead?', false, '']);
   const gNote = planView({ ...choir, notes: [{ kind: 'google', words: 'Server note' }] }, ctx());
   eq('series panel: the Google note says the change is sent to Google and read back, nothing about undo', gNote.notes, ['This change is sent to Google and read back from it: the calendar shows what Google stores.']);
   const gap = planView({ ...choir, notes: [{ kind: 'gap', date: '2027-03-14', clock: '02:30', at: '2027-03-14T03:30:00-07:00', tz: LA, words: 'Server note' }] }, ctx());
@@ -6668,6 +6668,16 @@ console.log('--- the scopes an occurrence has, one rule for every chooser (1.5.1
   const { changeSeriesScope, cancelSeriesChange } = await import('../src/app/serieschange.js');
   const { refusalWords, unofferedWords } = await import('../src/lib/planwords.js');
   const { planRefusal } = await import('../src/lib/seriesplan.js');
+  {
+    // A switch Google would hide days with: the client's words are the server's (GoogleSeries::hiddenWords), from the data.
+    const hidden = { code: 'googleHidden', days: ['2027-01-11', '2027-01-18'], deleted: ['2027-01-18'], toAllDay: true, clock: null };
+    const w = planRefusal({ scope: 'all', refusals: [hidden] });
+    assert('hidden switch: the refusal says it is Google Calendar\'s fault and names the day nobody deleted', w.startsWith('Google Calendar has a fault here: if this event became all-day at its current time, Google would stop showing one of its days (')
+      && !w.includes('18') && w.endsWith('though nothing deleted it. Move the event to another time first, then make it all-day.'));
+    const gone = refusalWords('googleHidden', 'all', { days: ['2027-01-18'], deleted: ['2027-01-18'], toAllDay: false, clock: '09:00' });
+    assert('hidden switch: only deleted days met, to timed: named as days Better-Cal could no longer read back, the time named', gone.includes('Google would lose track of a day deleted from it (')
+      && gone.includes('so Better-Cal could no longer tell it was deleted. Make it timed at another time first, then change the time to '));
+  }
   const { state: st, set: put } = await import('../src/app/store.js');
   const tick = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -6713,9 +6723,10 @@ console.log('--- the scopes an occurrence has, one rule for every chooser (1.5.1
   eq('scope row: Google offers This and following too', row(google).includes('This and following'), true);
 
   // The refusal panel's sentence for a split is the split's where it has one, else the change's.
-  eq('refusal words: a split\'s own refusal (its shape) has its own sentence; the all-day Google reason reads the same under either scope', [
-    planRefusal({ scope: 'following', refusals: [{ code: 'shape' }] }) !== refusalWords('shape'), planRefusal({ scope: 'following', refusals: [{ code: 'googleAllDay' }] }) === refusalWords('googleAllDay'),
-  ], [true, true]);
+  eq('refusal words: a split\'s own refusals (its shape, no events from its day on) have their own sentences; a change\'s own reason with no split sentence reads the same under either scope', [
+    planRefusal({ scope: 'following', refusals: [{ code: 'shape' }] }) !== refusalWords('shape'), planRefusal({ scope: 'following', refusals: [{ code: 'unreadable' }] }) === refusalWords('unreadable'),
+    planRefusal({ scope: 'following', refusals: [{ code: 'empty' }] }), refusalWords('empty'),
+  ], [true, true, 'This would leave no events from this day on. Delete this and following instead?', 'This would leave the series with no events. Delete it instead?']);
 
   // Delete following and an answer from a day on carry "Change scope".
   let asked = 0;

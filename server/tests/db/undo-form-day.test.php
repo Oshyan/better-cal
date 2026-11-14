@@ -24,6 +24,17 @@ declare(strict_types=1);
 // rows are read by SQL and Google by the stand-in's own store. Nothing in
 // server/src computes an expectation. Google is the edit harness's
 // stand-in. Invented data.
+//
+// Since the probe of 2026-11-13 (3.48 to 3.51, 3.63 to 3.65): where a day's
+// timed and all-day keys meet (00:00 UTC; 19:00 New York for a daily series)
+// a switch hides at Google every day that holds a record there, so on a
+// Google calendar it is refused before anything is sent (google-hidden-
+// switch). West of UTC the series here is at 20:00 New York (01:00 UTC the
+// day after), which keeps this file's subject, a key whose UTC date is not
+// its local one, without the meeting. At 00:00 UTC, where the meeting is the
+// subject, a switch made here over a day Google holds a record for expects
+// the refusal; the same switch made at Google is Google's own fault, which
+// the app does not make up for (filed), so those cases are not run.
 
 use BetterCal\Domain\Feeds;
 use BetterCal\Domain\Ics;
@@ -43,12 +54,13 @@ return static function (Db $db): void {
     $first = 'Notes of the sixth';
     // A zone, the series' clock there, and the zone's offset in January.
     $zones = [
-        '19:00 New York' => ['America/New_York', '19:00', '-05:00'],
+        '20:00 New York' => ['America/New_York', '20:00', '-05:00'],
         '07:00 Tokyo' => ['Asia/Tokyo', '07:00', '+09:00'],
         '00:00 UTC' => ['UTC', '00:00', '+00:00'],
         '10:00 Los Angeles' => ['America/Los_Angeles', '10:00', '-08:00'],
     ];
     $tokyoEvening = ['Asia/Tokyo', '19:00', '+09:00'];
+    $ny19 = ['America/New_York', '19:00', '-05:00'];
     // The key of day $d of January under a form: its date at 00:00 UTC, or its clock in its zone as a UTC instant.
     $keyOf = static function (bool $allDay, int $d, array $z) use ($utc): string {
         return $allDay ? sprintf('2027-01-%02d 00:00:00', $d)
@@ -205,6 +217,20 @@ return static function (Db $db): void {
                 $step($do);
             }
             $chosen = true;
+            if (($c['expect']['result'] ?? '') === 'switch refused') {
+                // Google would hide days a record holds at the meeting key: the switch is refused before anything is sent.
+                $was = $tables($u);
+                $s->fake->requests = [];
+                $code = null;
+                try {
+                    $step($c['change'] . ':' . $c['by']);
+                } catch (HttpError $thrown) {
+                    $code = $thrown->errorCode;
+                }
+                checkEq("$name: the switch is refused on Google, nothing sent and every table as it was", [true, [], true],
+                    [in_array($code, ['series_refused', 'google_hidden_days'], true), array_values(array_filter(array_map(static fn(array $r): string => $r['method'], $s->fake->requests), static fn(string $m): bool => $m !== 'GET')), $was === $tables($u)]);
+                return;
+            }
             if (($c['change'] ?? 'none') !== 'none') {
                 $step($c['change'] . ':' . $c['by']);
             }
@@ -299,11 +325,14 @@ return static function (Db $db): void {
                     $case('notes given and undone, newer notes given to the same day, then the first redone', ['notes', 'undo'],
                         $refused(['6 Jan' => [[], 'Newer notes', false]], 'the newer notes stand on 6 January'), ['newer-notes']),
                 ];
-                // West of UTC an old key is the string of the neighbouring day's new key: that day's notes stay its own.
-                if ($zoneName === '19:00 New York') {
-                    $other = $to ? 7 : 5;
-                    $cases[] = $case("notes given and undone, notes given to $other January whose new key is the old key of the 6th, then the first redone", ['notes', 'undo'],
-                        $refused([$other . ' Jan' => [[], 'Notes of another day', false]], "the other day's notes are on $other January, and 6 January holds none"), ["other-day-notes:$other"]);
+                // At 00:00 UTC the two forms' keys meet: a day Google holds a record for (any day given notes, deleted, or
+                // put back to the series' values: a record at the series' values is hidden too, 3.65) makes the switch
+                // refused here; made at Google, it is Google's own fault, not run (filed).
+                if ($zoneName === '00:00 UTC') {
+                    $recorded = static fn(array $before): bool => array_intersect($before, ['notes', 'delete', 'notes-back']) !== [];
+                    $cases = $by === 'app'
+                        ? array_map(static fn(array $c): array => $recorded($c['before']) ? ['expect' => ['result' => 'switch refused']] + $c : $c, $cases)
+                        : array_values(array_filter($cases, static fn(array $c): bool => !$recorded($c['before'])));
                 }
                 foreach ($cases as $c) {
                     scenario('undo form day, ' . $c['name'], fn() => $google($c));
@@ -312,9 +341,20 @@ return static function (Db $db): void {
         }
     }
 
+    // West of UTC at 19:00 New York (00:00 UTC the day after) an old key is the string of the neighbouring day's new
+    // key: that was this case's subject, and there a switch made here over the day's own record is refused on Google
+    // now (made at Google, it is Google's own fault: filed, not run).
+    foreach (['made all-day' => false, 'made timed' => true] as $direction => $startsAllDay) {
+        $other = $startsAllDay ? 5 : 7;
+        $c = ['name' => "19:00 New York $direction here, notes given and undone, notes given to $other January whose new key is the old key of the 6th, then the first redone",
+            'z' => $ny19, 'allDay' => $startsAllDay, 'before' => ['notes', 'undo', "other-day-notes:$other"], 'change' => 'form', 'by' => 'app', 'expect' => ['result' => 'switch refused']];
+        scenario('undo form day, ' . $c['name'], fn() => $google($c));
+    }
+
     // The neighbour: the series kept timed and moved to another zone at the same clock time (19:00 New York to
     // 19:00 Tokyo). 6 January at 19:00 Tokyo is 10:00 UTC on the 6th.
-    $ny = $zones['19:00 New York'];
+    $ny = $ny19;
+    $ny20 = $zones['20:00 New York'];
     $sixthTokyo = $suffixOf(false, $keyOf(false, 6, $tokyoEvening));
     foreach (['here' => 'app', 'at Google' => 'poll'] as $where => $by) {
         $case = static fn(string $what, array $before, array $expect, array $between = []): array => [
@@ -333,8 +373,9 @@ return static function (Db $db): void {
         }
     }
 
-    // Shapes of a day and of the journal beyond the plain ones, 19:00 New York.
-    $sixthDay = $suffixOf(true, $keyOf(true, 6, $ny));
+    // Shapes of a day and of the journal beyond the plain ones, 19:00 New York for a zone change and 20:00 New York
+    // (01:00 UTC the day after) for a change of form, where 19:00's meeting keys are not the subject.
+    $sixthDay = $suffixOf(true, $keyOf(true, 6, $ny20));
     $shapes = [
         // A day with a time, a form or a date of its own, its change undone (so it has no row), then the series moved: refused like any other.
         ['name' => 'a day given a time and a zone of its own and that undone, the series moved to Tokyo here, then redone', 'z' => $ny, 'allDay' => false,
@@ -348,22 +389,22 @@ return static function (Db $db): void {
         // A recorded move, then a change with no record: the tagged day's notes are undone, the series' clock moves an
         // hour here (the row is carried and its move recorded), the tag goes back to the series (the row goes), then
         // Google makes the series all-day. The first change is followed; the second holds nothing for the day.
-        ['name' => 'notes undone on a tagged day, the clock moved here, the tag given back, made all-day at Google, then the notes redone', 'z' => $ny, 'allDay' => false,
+        ['name' => 'notes undone on a tagged day, the clock moved here, the tag given back, made all-day at Google, then the notes redone', 'z' => $ny20, 'allDay' => false,
             'before' => ['tag', 'notes', 'undo', 'clock', 'tag-back'], 'change' => 'form', 'by' => 'poll', 'expect' => $refused()],
         // Two changes of form in a row leave the series as it was, and still nothing recorded where the day went through them.
-        ['name' => 'notes given and undone, made all-day here and timed again here, then redone', 'z' => $ny, 'allDay' => false,
+        ['name' => 'notes given and undone, made all-day here and timed again here, then redone', 'z' => $ny20, 'allDay' => false,
             'before' => ['notes', 'undo'], 'change' => 'form', 'by' => 'app', 'between' => ['form:app'], 'expect' => $refused()],
-        ['name' => 'notes given and undone, made all-day at Google and timed again at Google, then redone', 'z' => $ny, 'allDay' => false,
+        ['name' => 'notes given and undone, made all-day at Google and timed again at Google, then redone', 'z' => $ny20, 'allDay' => false,
             'before' => ['notes', 'undo'], 'change' => 'form', 'by' => 'poll', 'between' => ['form:poll'], 'expect' => $refused()],
-        ['name' => 'a tag given and undone, made all-day at Google, then made 19:00 Tokyo at Google, then redone', 'z' => $ny, 'allDay' => false,
+        ['name' => 'a tag given and undone, made all-day at Google, then made 20:00 Tokyo at Google, then redone', 'z' => $ny20, 'allDay' => false,
             'before' => ['tag', 'undo'], 'change' => 'form', 'by' => 'poll', 'between' => ['form:poll', 'zone:poll'], 'expect' => $refused()],
         // An answer to an invitation for one day is about that day's row: the row is still there, carried with the series.
-        ['name' => 'an invitation answered for one day with notes, made all-day here, then the answer undone', 'z' => $ny, 'allDay' => false, 'guests' => true,
+        ['name' => 'an invitation answered for one day with notes, made all-day here, then the answer undone', 'z' => $ny20, 'allDay' => false, 'guests' => true,
             'before' => ['notes', 'answer'], 'change' => 'form', 'by' => 'app',
             'expect' => ['result' => 'done', 'sent' => [['PATCH', $sixthDay]], 'rows' => ['6 Jan' => $notes], 'says' => 'the notes stay on 6 January, where the answer was']],
     ];
     foreach ($shapes as $c) {
-        scenario('undo form day, 19:00 New York, ' . $c['name'], fn() => $google($c));
+        scenario('undo form day, ' . ($c['z'] === $ny20 ? '20:00' : '19:00') . ' New York, ' . $c['name'], fn() => $google($c));
     }
 
     // An ICS feed's calendar: an undo there acts on the row it names, and records nothing to redo. A tag given to

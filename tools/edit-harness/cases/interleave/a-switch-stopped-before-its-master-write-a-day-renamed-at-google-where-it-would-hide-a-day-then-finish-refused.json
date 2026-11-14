@@ -1,0 +1,48 @@
+{
+    "about": "The hidden-days rule at Finish: a weekly Monday and Tuesday series at 19:00 New York in January (00:00 UTC the next day), a later Tuesday given its own notes, every event made all-day with the network down at its first write (half done), then Monday 18 January renamed at Google, whose record sits at the instant of Tuesday 19 January's all-day day. Finish is refused with google_hidden_days, which the harness's own reading of the stand-in says the switch would cause: an accepted outcome, nothing sent, the change left in Review (x-finish, x-day). The dead end this leaves (Put back refused as changed at Google since) is a known limit, not this case's subject.",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "weekly_list",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO,TU",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/New_York",
+        "start": "2027-01-18 19:00",
+        "length": 60,
+        "flipZone": "America/New_York",
+        "flipClock": 68400,
+        "otherZone": "Asia/Tokyo"
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.848,
+            "what": "description",
+            "mark": "e"
+        },
+        {
+            "do": "f-net",
+            "pick": 0,
+            "k": 1,
+            "write": "w-all",
+            "what": "flip"
+        },
+        {
+            "do": "r-day-rename",
+            "pick": 0.028,
+            "mark": "g"
+        },
+        {
+            "do": "finish",
+            "pick": 0,
+            "judge": {
+                "mark": "g",
+                "expect": "stopped"
+            }
+        }
+    ]
+}

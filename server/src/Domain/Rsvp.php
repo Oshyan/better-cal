@@ -402,8 +402,10 @@ final class Rsvp
         };
         $check(false);
         // Google replaces the whole guest list on a write, so send back the
-        // list it has now (not our copy) with only our own answer changed.
-        $current = $this->google->get($calendar, $googleId);
+        // list it has now (not our copy) with only our own answer changed:
+        // read as every write's first read is (GoogleWriter::readNow, the list
+        // by the iCalendar UID, whose level decides before anything is sent).
+        [$current, $items] = $this->google->readNow($calendar, $googleId, fn() => $check(false));
         $attendees = (array) ($current['attendees'] ?? []);
         $was = null; // my answer before, for its undo
         foreach ($attendees as $i => $a) {
@@ -420,19 +422,29 @@ final class Rsvp
         // Conditional on the version just read, once it is the event as
         // stored here (GoogleWriter's one condition), so a change at Google
         // since the last poll or between the read and the write is refused.
-        $resp = $this->google->patch($calendar, $googleId, ['attendees' => array_values($attendees)], fn() => $check(false), $current);
+        // An answer for all events is a write to the series, and any write to a series can change the days Google
+        // keeps of it: the series is read back and every day not as it was is sent (GoogleSeries::writeBesideDays).
+        $series = new GoogleSeries($this->db, $this->google, new Feeds($this->db));
+        $sent = $series->writeBesideDays($calendar, $googleId, ['attendees' => array_values($attendees)], fn() => $check(false), $current, $items);
+        $resp = $sent['resource'];
         $etag = static fn(array $r): ?string => isset($r['etag']) && is_string($r['etag']) ? $r['etag'] : null;
         $google = GoogleUndo::details(GoogleUndo::ANSWER, $calendar, $googleId, null, $etag($current), $etag($resp),
             ['responseStatus' => $was, 'attendance' => (string) ($row['attendance'] ?? 'none')]);
-        (new Undo($this->db))->write((int) $row['user_id'], function () use ($check, $calendar, $resp, $row, $journal, $google): void {
+        (new Undo($this->db))->write((int) $row['user_id'], function () use ($check, $calendar, $resp, $row, $journal, $google, $series, $sent): void {
             $check(true);
-            // The answer sent the guest list alone: Google's answer says nothing of the series' skipped days.
-            $this->google->apply($calendar, [$resp], false);
+            if ($sent['readback'] !== null) {
+                // The series as read after the answer: the rows here are what Google holds.
+                $series->store($calendar, [(string) $sent['uid'] => $sent['readback']], [$sent['plan']]);
+            } else {
+                // The answer sent the guest list alone: Google's answer says nothing of the series' skipped days.
+                $this->google->apply($calendar, [$resp], false);
+            }
             // The answer decides Planned or Maybe again (Events::relationship),
             // over any choice made by hand since the last answer.
             $this->db->run("UPDATE events SET attendance = 'none' WHERE id = ? AND attendance IN ('going', 'interested')", [(int) $row['id']]);
             $journal(google: $google);
         });
+        ReviewQueue::holdGoogleAnswerLines($this->db, (int) $row['user_id'], (int) $row['id'], (string) $row['title'], (string) $calendar['name'], $sent['lines']);
         return ['sent' => true, 'reason' => null, 'message' => null];
     }
 }

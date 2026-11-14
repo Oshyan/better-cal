@@ -1,0 +1,22 @@
+{
+    "about": "Issue 252: a daily series on Monday, Tuesday and Sunday at 02:30 Europe/Berlin asked to start on 24 March 2027, so its first real day (28 March) falls in the hour the spring clock change skips and it is stored from the rule's day before, that day a hidden skip, held at Google as an EXDATE line. Its notes are changed for all events: the master write carries the EXDATE line with the rule, so the hidden day stays skipped at Google and here and no extra first day appears (x-write-asked: the change of notes changes no skip at Google). Before, the write sent the rule alone, Google brought the day back, and the read-back stored it here. From seed 76016 case 5, shrunk to its one step.",
+    "series": {
+        "family": "daily_byday",
+        "rrule": "FREQ=DAILY;BYDAY=MO,TU,SU",
+        "import": false,
+        "bound": "until",
+        "boundAt": 11,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2027-03-24 02:30",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-all",
+            "pick": 0.493,
+            "what": "description"
+        }
+    ]
+}

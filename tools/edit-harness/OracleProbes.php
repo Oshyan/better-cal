@@ -181,6 +181,10 @@ final class OracleProbes
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => false, 'error' => 'google_write_failed', 'message' => 'Sample refusal'] + $out, $s0, $s0];
                 }],
+            ['check' => 'x-undo-fields', 'what' => 'an undo refused as one Google would hide days with, where no day would be hidden', 'case' => 'two-days-titled-then-one-undone', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'google_hidden_days', 'message' => 'Sample refusal'] + $out, $s0, $s0];
+                }],
             ['check' => 'x-undo-bare', 'what' => 'the bare Undo leaves the entry it should take not undone', 'case' => 'two-changes-then-the-bare-undo-twice', 'step' => 3,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     $this->db->run('UPDATE mutations SET undone = 0 WHERE id = ?', [(int) $out['entry']]);
@@ -240,11 +244,13 @@ final class OracleProbes
                     }
                     return [$out, $s0, $s1];
                 }],
-            ['check' => 'x-readback', 'what' => 'a day renamed at Google during the write is put back to the series without a word', 'case' => 'a-day-renamed-at-google-during-a-series-write-is-kept', 'step' => 1,
+            ['check' => 'x-readback', 'what' => 'a day renamed at Google during the write keeps that title with nothing said', 'case' => 'a-day-renamed-at-google-during-a-series-write-is-the-changes-again', 'step' => 1,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     if ($this->raced !== null) {
-                        [$g, $k] = $this->raced;
-                        unset($s1['g']['digest'][$g]['records'][$k]);
+                        [$g, $k, $title] = $this->raced;
+                        $rec = $s1['g']['digest'][$g]['records'][$k] ?? [null];
+                        $rec[0] = $title;
+                        $s1['g']['digest'][$g]['records'][$k] = $rec;
                         $s1['differs'] = $s0['differs'];
                     }
                     return [$out, $s0, $s1];
@@ -252,11 +258,11 @@ final class OracleProbes
             // x-day: the day a redo acted on moved to its neighbour (the undo fault's own symptom), and the change made at Google
             // while a flip was stopped carried by Finish onto a neighbouring day.
             // The gate removed: a day with no row and no skip when its series was made all-day, its redo answered as done.
-            ['check' => 'x-day', 'what' => 'the redo of a change to a day with no recorded place goes through', 'case' => 'a-day-notes-redone-after-a-daily-19-new-york-series-made-all-day', 'step' => 4,
+            ['check' => 'x-day', 'what' => 'the redo of a change to a day with no recorded place goes through', 'case' => 'a-day-notes-redone-after-a-daily-20-new-york-series-made-all-day', 'step' => 4,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => true, 'error' => null] + $out, $s0, $s1];
                 }],
-            ['check' => 'x-day', 'what' => "a redone day's notes are on the next day instead of its own", 'case' => 'a-tagged-day-notes-redone-after-a-daily-19-new-york-series-made-all-day', 'step' => 5,
+            ['check' => 'x-day', 'what' => "a redone day's notes are on the next day instead of its own", 'case' => 'a-tagged-day-notes-redone-after-a-daily-20-new-york-series-made-all-day', 'step' => 5,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     foreach ($s1['rows'] as $id => $r) {
                         if ($r['recurrence_parent_id'] !== null && str_starts_with((string) $r['description'], 'Sample notes')) {
@@ -280,22 +286,39 @@ final class OracleProbes
                     }
                     return [$out, $s0, $this->reshape($s1)];
                 }],
+            // The hidden-days rule (decisions.md, "A switch between timed and all-day that Google would hide days with is refused";
+            // interleaving-invariants.md, x-day, x-finish, x-undo-fields). A switch refused for hidden days re-places nothing, so a
+            // redo after it is judged as a placed day's: refused, it fails. (A switch that goes through is still judged by the
+            // gate: the probe above, at 20:00 New York.)
+            ['check' => 'x-day', 'what' => 'the redo after a switch refused for hidden days is refused though nothing was re-placed', 'case' => 'a-day-notes-redone-after-a-switch-refused-for-hidden-days-at-19-new-york', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'not_undoable', 'message' => 'Sample probe refusal'] + $out, $s0, $s1];
+                }],
+            // Finish refused for hidden days is accepted only where the harness's own reading says the switch would hide a day.
+            ['check' => 'x-finish', 'what' => 'Finish refused for hidden days where the switch hides none', 'case' => 'a-daily-10-los-angeles-series-made-all-day-its-master-write-not-taken-the-edited-day-notes-changed-at-google-then-finished', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'google_hidden_days', 'message' => 'Sample probe refusal'] + $out, $s0, $s1];
+                }],
+            // A switch made at Google where no day is hidden (10:00 Los Angeles): the day is judged as before, by x-day and
+            // x-undo-fields, so a redo refused as deleted at Google fails both.
+            ['check' => 'x-day', 'what' => 'a redo refused as deleted at Google after a switch made there that hid no day', 'case' => 'a-day-notes-redone-after-a-switch-made-at-google-at-10-los-angeles', 'step' => 6,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'google_deleted', 'message' => 'Sample probe refusal'] + $out, $s0, $s1];
+                }],
+            ['check' => 'x-undo-fields', 'what' => 'a redo refused as deleted at Google after a switch made there that hid no day, nothing changed since', 'case' => 'a-day-notes-redone-after-a-switch-made-at-google-at-10-los-angeles', 'step' => 6,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'google_deleted', 'message' => 'Sample probe refusal'] + $out, $s0, $s1];
+                }],
             // The retention rule after an undo: a row its entry only changed goes only when what the undo leaves owns nothing.
             ['check' => 'x-undo-fields', 'what' => 'an undo of a day\'s notes removes the row, which still owns its tag', 'case' => 'a-tagged-day-given-notes-then-the-notes-undone-keeps-the-row-for-its-tag', 'step' => 3,
                 'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {
                     unset($s1['rows'][$row($s1, $owns('tags'))]);
                     return [$out, $s0, $this->reshape($s1)];
                 }],
-            // A4 by the stand-in's state when Finish runs: a remote title no later step superseded is still kept.
-            ['check' => 'x-finish', 'what' => 'Finish drops a title given at Google since that no later step superseded', 'case' => 'a-split-stopped-then-a-day-given-an-exception-at-google-then-finished-keeps-it', 'step' => 3,
+            // A4 by the stand-in's state when Finish runs: a remote title Finish replaces is said, with what Google held.
+            ['check' => 'x-finish', 'what' => 'Finish replaces a title given at Google since with nothing said', 'case' => 'a-split-stopped-then-a-day-given-an-exception-at-google-then-finished-is-replaced-and-named', 'step' => 3,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
-                    foreach ($s1['g']['digest'] as $g => $d) {
-                        foreach ((array) ($d['records'] ?? []) as $k => $rec) {
-                            if (str_contains((string) $rec[0], 'remote')) {
-                                unset($s1['g']['digest'][$g]['records'][$k]);
-                            }
-                        }
-                    }
+                    $out['answer']['differences'] = [];
                     return [$out, $s0, $s1];
                 }],
             // Changed since counts from the failure: a change at Google after it still refuses Put back.

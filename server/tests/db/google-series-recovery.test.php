@@ -780,33 +780,48 @@ return static function (Db $db): void {
         }
     });
 
-    scenario('google recovery sweep F2: Finish of a rename whose answer was lost keeps what changed elsewhere on days the rename did not change', function () use ($setup, $lostRename, $elsewhereAtGoogle, $recover, $day, $rowAt, $pending, $db): void {
+    // Once the series' own write has landed, what Google did to the days with it can't be told from a change made there
+    // since, so Finish sets each day as the change has it and says what it replaced, with what Google held and what it set
+    // (decisions.md, "Finish sets the plan's days where it can't tell its own change from another"). Until 1.5.6 a change
+    // made elsewhere on a day the rename did not change was kept, on a prediction of what the write itself does to the days.
+    $lead = 'This change had stopped part way, and Google Calendar no longer held the event as it was left.';
+    $on = static fn(string $ymd): string => (new DateTimeImmutable($ymd))->format(substr($ymd, 0, 4) === gmdate('Y') ? 'D j M' : 'D j M Y');
+    scenario('google recovery sweep F2: Finish of a rename whose answer was lost sets each day as the change has it, and says what it replaced of a change made elsewhere', function () use ($setup, $lostRename, $elsewhereAtGoogle, $recover, $day, $rowAt, $pending, $db, $lead, $on): void {
         $s = $setup();
         $lostRename($s);
         $elsewhereAtGoogle($s, 'smpl3weekly_20270308T180000Z', ['description' => 'Sample remote note']);
         $out = $recover($s, 'finish');
         $here = $rowAt($s, '2027-03-08 18:00:00');
-        checkEq('a note added elsewhere to the ordinary 8 March: kept at Google with the new title, and here; no difference named; no pending row',
-            [true, [], ['Sample pending rename', 'confirmed', 'Sample remote note'], ['Sample pending rename', 'Sample remote note'], []],
+        checkEq('a note added elsewhere to the ordinary 8 March: the day is an ordinary one again at Google, with the new title and the series\' notes, and has no row here; what Finish replaced is said, day by day; no pending row',
+            [true, [$lead,
+                'On ' . $on('2027-03-08') . " Google Calendar held the notes 'Sample remote note'; Finish set the notes 'Sample notes', as this change has it.",
+                'On ' . $on('2027-03-29') . " Google Calendar held the title 'Sample pending rename'; Finish set the title 'Sample weekly, special', as this change has it."],
+                ['Sample pending rename', 'confirmed', 'Sample notes'], [null, null], []],
             [$out['ok'], $out['differences'], array_slice($day($s, '20270308T180000Z') ?? [], 0, 3), [$here['title'] ?? null, $here['description'] ?? null], $pending($s)]);
 
         $s = $setup();
         $lostRename($s);
         $elsewhereAtGoogle($s, 'smpl3weekly_20270329T170000Z', ['location' => 'Sample remote room']);
         $out = $recover($s, 'finish');
-        checkEq('a place changed elsewhere on the edited 29 March: kept, with the day\'s own title; the series renamed', [true, [], 'Sample weekly, special', 'Sample remote room', 'Sample pending rename'],
+        checkEq('a place changed elsewhere on the edited 29 March: the day has its own title and the series\' place again, and Finish says what it replaced; the series renamed',
+            [true, [$lead, 'On ' . $on('2027-03-29') . " Google Calendar held the title 'Sample pending rename' and the place 'Sample remote room'; Finish set the title 'Sample weekly, special' and the place 'Sample room 1', as this change has it."],
+                'Sample weekly, special', 'Sample room 1', 'Sample pending rename'],
             [$out['ok'], $out['differences'], $day($s, '20270329T170000Z')[0] ?? null, $day($s, '20270329T170000Z')[3] ?? null, $s->fake->events['smpl3weekly']['summary']]);
     });
 
-    scenario('google recovery sweep F3: a day deleted here while a rename was half done stays deleted through Finish', function () use ($unguarded, $setup, $lostRename, $recover, $day, $masterId, $iso, $db): void {
+    // The same rule for a day deleted while the rename was half done (by a path the gate did not stop): Finish can't tell
+    // that delete from what the change's own write did, so the day is the change's again, an ordinary day, and is named.
+    scenario('google recovery sweep F3: a day deleted while a rename was half done is the change\'s again after Finish, and named', function () use ($unguarded, $setup, $lostRename, $recover, $day, $masterId, $iso, $db, $lead, $on): void {
         $s = $setup();
         $lostRename($s);
         $unguarded($s, fn() => $s->events->deleteEvent($s->u, $masterId($s), 'this', $iso('2027-03-08 10:00')));
         $s->events->throwDeferred();
         $out = $recover($s, 'finish');
-        checkEq('Finish ok; 8 March cancelled at Google and skipped here; the rename landed', [true, 'cancelled', true, 'Sample pending rename'],
+        checkEq('Finish ok; 8 March live at Google and not skipped here; the rename landed; Finish says it put the day back',
+            [true, 'confirmed', false, 'Sample pending rename', true],
             [$out['ok'], $day($s, '20270308T180000Z')[1] ?? null, in_array('2027-03-08 18:00:00', Recurrence::decodeExdates($db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$masterId($s)])), true),
-                $s->fake->events['smpl3weekly']['summary']]);
+                $s->fake->events['smpl3weekly']['summary'],
+                in_array($lead, $out['differences'], true) && in_array($on('2027-03-08') . ' was deleted in Google Calendar; Finish put it back as this change has it (10:00 to 11:00).', $out['differences'], true)]);
     });
 
     scenario('google recovery sweep F4: a split whose insert answer was lost, then any field of the new series changed elsewhere: Put back cancels nothing', function () use ($setup, $masterId, $refused, $iso): void {
@@ -953,8 +968,10 @@ return static function (Db $db): void {
             [1, $before, 1], [(int) $db->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = ? AND title = ? AND deleted_at IS NULL', [$s->calendarId, 'Pizza night']), $series($rows($s)), count($listed($s))]);
         $out = $recover($s, 'finish');
         $here = $rowAt($s, '2027-03-08 18:00:00');
-        checkEq('Finish rebases over what Google holds: ok; the note made elsewhere kept at Google and here with the new title; the series renamed here',
-            [true, ['Sample pending rename', 'confirmed', 'Sample remote note'], ['Sample pending rename', 'Sample remote note'], 'Sample pending rename', []],
+        // The rename's own write had landed, so the note made elsewhere since can't be told from what that write did: the
+        // day is the change's, an ordinary day with the new title and the series' notes, and has no row here.
+        checkEq('Finish, the series\' write landed: ok; the day with the note made elsewhere is an ordinary one again at Google, with the new title, and has no row here; the series renamed here',
+            [true, ['Sample pending rename', 'confirmed', 'Sample new notes'], [null, null], 'Sample pending rename', []],
             [$out['ok'], array_slice($day($s, '20270308T180000Z') ?? [], 0, 3), [$here['title'] ?? null, $here['description'] ?? null], $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), $listed($s)]);
         checkEq('once finished, a write to the series goes through', null, refusal(fn() => $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'tagNames' => ['Sample tag']])));
     });

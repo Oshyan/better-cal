@@ -42,7 +42,7 @@ if ($calendarId === '' || strtolower($calendarId) === 'primary') {
 $only = isset($opts['only']) ? array_values(array_filter(array_map('trim', explode(',', (string) $opts['only'])))) : null;
 foreach ($only ?? [] as $g) {
     if (!isset(Probe::GROUPS[$g])) {
-        fwrite(STDERR, "--only takes group numbers 1 to 9, comma-separated; '$g' is not one.\n");
+        fwrite(STDERR, '--only takes group numbers 1 to ' . count(Probe::GROUPS) . ", comma-separated; '$g' is not one.\n");
         exit(2);
     }
 }

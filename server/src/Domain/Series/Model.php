@@ -66,9 +66,10 @@ final class Model
         'weekno' => 'This repeat counts weeks of the year, so its days can\'t follow a drag.',
         'overlap' => 'Two of its days are the same day in some months, so its days can\'t follow a drag.',
         'dayset' => 'This repeat came from another app and picks its days in a way a drag can\'t follow. Move only this one, or open the series to choose its days.',
-        'googleAllDay' => 'At Google, a day of an all-day series can\'t have a time of its own, so this change can\'t be made while an edited day keeps one. Give that day the series\' all-day setting first, or change only this one.',
         'empty' => 'This would leave the series with no events. Delete it instead?',
     ];
+    /** The same for a split's part (this and following): the days before stay, so only the part would be left with none. */
+    public const EMPTY_FROM_DAY = 'This would leave no events from this day on. Delete this and following instead?';
 
     public const GOOGLE_NOTE = 'This change is sent to Google and read back from it: the calendar shows what Google stores. It can\'t be undone yet.';
 
@@ -678,7 +679,7 @@ final class Model
                     // is disabled with the refusal's reason, never offered
                     // with a refused plan's empty data behind it.
                     $r = $alt['plan']['refusals'][0] ?? ['code' => 'refused', 'words' => ''];
-                    $plan['groups'][$gi]['options'][$oi] += ['disabled' => true, 'code' => (string) $r['code'], 'reason' => (string) $r['words']];
+                    $plan['groups'][$gi]['options'][$oi] += ['disabled' => true, 'code' => (string) $r['code'], 'reason' => (string) $r['words']] + array_diff_key($r, array_flip(['code', 'words', 'group', 'option']));
                     continue;
                 }
                 $alts[$oi] = $alt;
@@ -768,15 +769,15 @@ final class Model
 
     /**
      * One rule for every group (api-contract, series_refused): a selected
-     * option whose own plan is refused (a timed day kept under an all-day
-     * series at Google) is disabled, and the selection moves to the group's
+     * option whose own plan is refused is disabled, and the selection moves to the group's
      * first enabled option in the group's order, as a reading's does (pick()
      * passes over a disabled one). The change is refused only when every
      * option is. A named option that is refused moves too, so its plan shows
      * it disabled; committing it is refused (SeriesPlans::checkedPlan).
      * This covers the groups picked before the mapping (the zone, the
-     * adoptions); mapHeld() the ones the mapping picks. A plan that leaves
-     * no events is the readings' own refusal (Bounds), not moved here.
+     * adoptions). The groups the mapping picks (bound, edge, outside, moved
+     * days, own fields) are never refused by map(): its plan is refused only
+     * as leaving no events, the readings' own refusal (Bounds), not moved here.
      */
     private function selectedEnabled(array $choices, array $refused): array
     {
@@ -1294,45 +1295,28 @@ final class Model
                 $reading = $r;
             }
         }
-        $out = $this->mapHeld($reading, $land, false);
+        $out = $this->map($reading, $land, false);
         if ($out === null) {
             return $this->refused('empty');
         }
-        return $out;
-    }
-
-    /**
-     * map() with the one rule for every group (selectedEnabled): when the
-     * plan under the current choices is refused, each group the mapping
-     * picked (the bound, the edge, the days outside, the moved days, the own
-     * fields) moves, in the plans' order, to its first other enabled option
-     * whose plan holds. So a reading's own plan (merged()) is its plan with
-     * those selections moved, never refused for a default another option
-     * avoids. Nothing moves in the mapping of one option's own plan
-     * (run()), though its readings are still judged by their own plans.
-     */
-    private function mapHeld(array $reading, array $land, bool $probe): ?array
-    {
-        $saved = [$this->groups, $this->refusals, $this->notes, $this->choices];
-        $out = $this->map($reading, $land, $probe);
-        if (($this->hold && !$probe) || $out === null || $out['writes'] !== null) {
-            return $out;
-        }
-        foreach (array_slice($this->groups, count($saved[0])) as $g) {
-            foreach ($g['options'] as $o) {
-                if (!empty($o['disabled']) || $o['id'] === $g['selected']) {
-                    continue;
-                }
-                [$this->groups, $this->refusals, $this->notes] = [$saved[0], $saved[1], $saved[2]];
-                $this->choices = [$g['id'] => $o['id']] + $saved[3];
-                $alt = $this->map($reading, $land, $probe);
-                if ($alt !== null && $alt['writes'] !== null) {
-                    return $alt;
+        // On Google, a switch between timed and all-day that would hide days there (decisions.md, "A switch between
+        // timed and all-day that Google would hide days with is refused"): the days Google holds a record for, by the
+        // rows here (every edited day holding a field Google holds, every deleted day). Only where the series Google holds
+        // changes form: a split's part is inserted at Google under a new id, holding no record of the old series, so
+        // nothing of it can be hidden (the second independent read, F3).
+        if ($this->google && !isset($this->opts['splitDay']) && $out['writes'] !== null) {
+            $keys = $this->exdates;
+            foreach ($this->rows as $row) {
+                if (!empty($row['recurrence_instance_utc']) && OwnFields::googleHeld(OwnFields::stored($row)) !== []) {
+                    $keys[] = (string) $row['recurrence_instance_utc'];
                 }
             }
+            $hidden = \BetterCal\Domain\GoogleSeries::hiddenRefusal($this->master, $out['writes']['master'] + $this->master, $keys, $this->exdates, $this->thisYear);
+            if ($hidden !== null) {
+                return $this->refused('googleHidden', $hidden['words'], array_diff_key($hidden, ['words' => true]));
+            }
         }
-        [$this->groups, $this->refusals, $this->notes, $this->choices] = $saved;
-        return $this->map($reading, $land, $probe);
+        return $out;
     }
 
     /**
@@ -1445,9 +1429,16 @@ final class Model
     }
 
     /** A refusal of the whole edit, with the series as it is. */
-    private function refused(string $code, ?string $words = null): array
+    /** A plan that leaves no events, in words for its reach: the whole series, or a split's part from its day on. */
+    private function emptyWords(): string
     {
-        $this->refusals[] = ['code' => $code, 'words' => $words ?? self::REASONS[$code] ?? $code];
+        return isset($this->opts['splitDay']) ? self::EMPTY_FROM_DAY : self::REASONS['empty'];
+    }
+
+    private function refused(string $code, ?string $words = null, array $data = []): array
+    {
+        $words ??= $code === 'empty' ? $this->emptyWords() : null;
+        $this->refusals[] = ['code' => $code, 'words' => $words ?? self::REASONS[$code] ?? $code] + $data;
         $before = Words::rule($this->r0, $this->allDay0 ? null : $this->clock0);
         return [
             'plan' => [
@@ -1968,7 +1959,7 @@ final class Model
 
     /**
      * Readings whose whole plans are equal merge into the first (Finding the Readings); one whose plan leaves no events
-     * is refused, and so is one whose own plan map() refuses (a timed day kept under an all-day series at Google): it
+     * is refused, and so is one whose own plan map() refuses: it
      * has no writes to compare, so it is disabled with that refusal's reason, as a refused option of any other group is.
      */
     private function merged(array $readings, array $land): array
@@ -1986,11 +1977,11 @@ final class Model
             $saved = [$this->groups, $this->refusals, $this->notes, $this->choices];
             $this->groups = [];
             $this->choices = [];
-            $m = $this->mapHeld($r, $land, true);
+            $m = $this->map($r, $land, true);
             [$this->groups, $this->refusals, $this->notes, $this->choices] = $saved;
             if ($m === null) {
                 // Nothing left (Bounds): refused, and the rest of the plan stands.
-                $out[] = ['disabled' => true, 'code' => 'empty', 'reason' => self::REASONS['empty']] + $r;
+                $out[] = ['disabled' => true, 'code' => 'empty', 'reason' => $this->emptyWords()] + $r;
                 continue;
             }
             if ($m['writes'] === null) {
@@ -2629,13 +2620,6 @@ final class Model
         $people = isset($this->changed['people']) ? ['master' => $this->changed['people']['ids']] : [];
         $title = (string) ($this->master['title'] ?? '');
         $seriesTime = $this->seriesTimeChanged();
-        // At Google an instance of an all-day series can't be given a clock
-        // time (probe 2.2a): a day that stays timed under an all-day master
-        // can't be carried there, so the change is refused with its reason.
-        $timedUnderAllDay = [];
-        if ($this->google && $this->allDay1 && $createEdited !== null && (int) $createEdited['all_day'] === 0) {
-            $timedUnderAllDay[] = 0;
-        }
         $edited = array_merge(array_keys($this->changed), array_keys(array_filter([
             'date' => $landedDn !== $this->actedDn0,
             'time' => $clock1 !== $this->clock0 || Time::normalizeTzid($this->tz1) !== Time::normalizeTzid($this->tz0),
@@ -2665,9 +2649,6 @@ final class Model
             $put('end_utc', Time::toDb($end));
             $put('all_day', $allDay ? 1 : 0);
             $put('tzid', $tz);
-            if ($this->google && $this->allDay1 && !$allDay) {
-                $timedUnderAllDay[] = $id;
-            }
             $ownAfter = $own;
             foreach ($this->changed as $field => $fcols) {
                 // The occurrence acted on takes the request's values (Own
@@ -2772,9 +2753,6 @@ final class Model
                 + array_intersect_key($sides['after'], ['at' => true, 'tz' => true]) + $said + [
                 'kept' => OwnFields::normalize($ownAfter), 'takes' => OwnFields::normalize(array_diff($edited, $ownAfter))];
         }
-        if ($timedUnderAllDay !== []) {
-            return $this->refused('googleAllDay');
-        }
         // The day acted on as an event of its own, where the plan's days
         // say it shows ('separate', whichever way it got that outcome): what
         // `next` lists for it, so the two parts of the plan agree. Other days
@@ -2846,6 +2824,11 @@ final class Model
                 if (isset($skipSet[$k]) && !isset($genKeys[$k])) {
                     $personSkipped++;
                 }
+            }
+            // A series left with no day but deleted ones has no events (decisions.md, "A plan that leaves no undeleted
+            // day is refused as leaving no events"; Google cancels such a series for good, probe 3.62).
+            if ($allKeys !== [] && array_diff($allKeys, $newExdates) === []) {
+                return null;
             }
         }
         // Losses: old occurrences whose image isn't in the new series. One

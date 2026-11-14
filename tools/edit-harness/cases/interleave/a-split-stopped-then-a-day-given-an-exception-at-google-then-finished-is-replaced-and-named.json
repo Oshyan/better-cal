@@ -1,5 +1,5 @@
 {
-    "about": "This and following with tags stopped before its second write, then a day given an exception at Google with a title and notes, then Finish: the day keeps the title and notes Google holds, since no later step superseded them (x-finish A4, judged against the stand-in's state when Finish runs). Its oracle probe drops the day's record from what Google holds after Finish, which must be caught.",
+    "about": "This and following with tags stopped before its second write, then a day given an exception at Google with a title and notes, then Finish: the old series' own write (its new end) had been taken, so Finish can't tell what that write did to the days from a change made there since; the day is the change's again and Finish's answer says what it replaced, with the title and notes Google held (x-finish A4, judged against the stand-in's state when Finish runs). Until 1.5.6 the day kept them. Its oracle probe empties the answer's list, which must be caught.",
     "series": {
         "family": "daily",
         "rrule": "FREQ=DAILY",

@@ -438,6 +438,21 @@ final class GoogleUndo
      */
     public function undo(array $mutation, ?RequestAuthority $authority = null, bool $force = false): array
     {
+        try {
+            return $this->undoOne($mutation, $authority, $force);
+        } catch (HttpError $e) {
+            // The access rule refused it (GoogleWriter::admit, recheck): said as an undo's refusal.
+            if (GoogleWriter::isReadOnly($e) && is_string($e->extra['access'] ?? null)) {
+                $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) ($e->extra['calendarId'] ?? 0)]) ?? [];
+                throw GoogleWriter::readOnly(['google_access_role' => $e->extra['was'] ?? null] + $calendar, (string) $e->extra['access'], true); // the level stored before the refusal
+            }
+            throw $e;
+        }
+    }
+
+    /** @return array{entity:string,op:string} */
+    private function undoOne(array $mutation, ?RequestAuthority $authority, bool $force): array
+    {
         $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
         if (!self::carries(is_array($details) ? $details : null)) {
             throw HttpError::badRequest('This entry has nothing to send back to Google', 'not_undoable');
@@ -448,9 +463,11 @@ final class GoogleUndo
             return $this->undoSeries($mutation, $g, $authority, $force);
         }
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $g['calendarId'], $userId]);
-        if ($calendar === null || !GoogleWriter::writable($calendar)) {
+        if ($calendar === null || !GoogleWriter::bound($calendar)) {
             throw HttpError::badRequest("That calendar no longer writes to Google from here, so this change can't be undone", 'not_undoable');
         }
+        // Stored below writer: Google is asked first, and the undo goes on if it now says writer.
+        $calendar = $this->writer()->recheck($calendar, $authority === null ? null : fn() => $authority->assertValid($this->db, false), true);
         // A day is where its series has it now (dayAt): a later change may have carried it. Its id
         // and its occurrence there are the day's identity for the whole undo, at Google and here
         // alike; the occurrence the entry recorded is never read past this point.
@@ -484,20 +501,21 @@ final class GoogleUndo
                 $dayKey = GoogleWriter::instanceOf($googleId)['key'] ?? null;
                 $at = static fn(?array $r): ?array => $r === null || $dayKey === null || ($r['recurrence_instance_utc'] ?? null) === null ? $r : array_merge($r, ['recurrence_instance_utc' => (string) $dayKey]);
                 $send = self::inverse($this->beforeOver($g['before'], $at($wasRow), $row ?? $at($leftRow)), $changed);
-                // What the edit itself is refused, its undo and redo are refused, before anything is sent: a day of a
-                // series that is all-day now can't be given a clock time at Google (Events::refuseTimedUnderAllDay).
-                $of = GoogleWriter::instanceOf($googleId);
-                $series = $of === null ? null : $writer->rowByGoogleId((int) $calendar['id'], $of['series']);
-                if ($series !== null && isset($send['start']['dateTime'])) {
-                    Events::refuseTimedUnderAllDay($series, 0);
-                }
                 // The event as it is now: its row, or, a day with no row
                 // here (the edit made it ordinary, or an undo removed the row
                 // the edit made), as Google shows it, read just before and
                 // sent back conditional on that read.
-                $current = $row === null && $send !== [] ? $writer->get($calendar, $googleId) : null;
+                // Read as every write's first read is: the list by the iCalendar UID, whose level decides (readNow).
+                [$current, $items] = $row === null && $send !== [] ? $writer->readNow($calendar, $googleId, $beforeSend) : [null, null];
                 $parsed = $current !== null ? GoogleSync::toParsed($current) : null;
                 if ($current !== null && (!is_array($parsed) || !empty($parsed['cancelled']))) {
+                    // A day reads cancelled under a series deleted at Google (probe 10.5, 2026-11-13): that is what
+                    // happened, and the sentence says so and what to do, not that the day changed.
+                    $of = GoogleWriter::instanceOf($googleId);
+                    $series = $of === null ? null : $writer->get($calendar, $of['series']);
+                    if (is_array($series) && (string) ($series['status'] ?? '') === 'cancelled') {
+                        throw new HttpError('google_deleted', self::SERIES_DELETED, 409, ['googleStatus' => 410]);
+                    }
                     throw self::conflict();
                 }
                 $now = $row !== null ? self::bodyOf($row) : ($parsed !== null ? self::bodyOf($parsed) : []);
@@ -513,7 +531,7 @@ final class GoogleUndo
                 if ($local) {
                     $this->undo->checkRestore($mutation, true);
                 }
-                $resp = $send === [] ? null : self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $send, $beforeSend, $current));
+                $resp = $send === [] ? null : self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $send, $beforeSend, $current, items: $items));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $send, $googleId, $now, $row, $rowId, $changed, $userId, $summary, $mutation, $local): void {
                     $was = $this->rowTables($rowId);
                     // The row put back first (made again under its id, or
@@ -537,8 +555,11 @@ final class GoogleUndo
 
             case self::DELETE:
                 // Deleted at Google, the resource stays readable under its id
-                // (probe 6.1); one that is live again came back since.
-                $current = $writer->get($calendar, $googleId);
+                // (probe 6.1), and listed cancelled by its iCalUID with showDeleted (the
+                // probe of 2026-11-13, stage listread L5); one that is live again came back since.
+                // An event in no series no longer here is listed by the iCalendar UID its row had (the entry's snapshot).
+                $uidWas = json_decode((string) ($mutation['before_json'] ?? ''), true)['tables']['events'][0]['uid'] ?? null;
+                [$current, $items] = $writer->readNow($calendar, $googleId, $beforeSend, is_string($uidWas) ? $uidWas : null);
                 if ((string) ($current['status'] ?? '') !== 'cancelled') {
                     throw self::conflict();
                 }
@@ -561,7 +582,7 @@ final class GoogleUndo
                 if (is_array($current['start'] ?? null)) {
                     $body = GoogleWriter::overForm($body, isset($current['start']['date']));
                 }
-                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $body, $beforeSend, $current));
+                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $body, $beforeSend, $current, items: $items));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $body, $googleId, $userId, $summary, $mutation, $removed): void {
                     if ($removed) {
                         $this->undo->restoreSnapshots($mutation);
@@ -619,7 +640,7 @@ final class GoogleUndo
                 }
                 // Google replaces the whole guest list on a write: the list
                 // as it is now, with only my answer put back.
-                $current = $writer->get($calendar, $googleId);
+                [$current, $items] = $writer->readNow($calendar, $googleId, $beforeSend);
                 $attendees = (array) ($current['attendees'] ?? []);
                 $was = null;
                 foreach ($attendees as $i => $a) {
@@ -631,11 +652,20 @@ final class GoogleUndo
                 if ($was === null) {
                     throw HttpError::badRequest('Google no longer lists this account as a guest of the event', 'not_undoable');
                 }
-                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['attendees' => array_values($attendees)], $beforeSend, $current));
-                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $row, $googleId, $userId, $summary, $was, $current, $g, $mutation): void {
+                // A write to the series when the answer was for all events: read back, and every day not as it was sent
+                // (GoogleSeries::writeBesideDays), as the answer itself is.
+                $series = new GoogleSeries($this->db, $writer, new Feeds($this->db));
+                $sent = self::refusingConflict(fn() => $series->writeBesideDays($calendar, $googleId, ['attendees' => array_values($attendees)], $beforeSend, $current, $items));
+                $resp = $sent['resource'];
+                $this->commit($mutation, $calendar, $authority, function () use ($writer, $series, $sent, $calendar, $resp, $row, $googleId, $userId, $summary, $was, $current, $g, $mutation): void {
                     $attendance = $row['attendance'] ?? null;
-                    // The guest list alone was sent back: the answer says nothing of the series' skipped days.
-                    $writer->apply($calendar, [$resp], false);
+                    if ($sent['readback'] !== null) {
+                        // The series as read after the write: the rows here are what Google holds.
+                        $series->store($calendar, [(string) $sent['uid'] => $sent['readback']], [$sent['plan']]);
+                    } else {
+                        // The guest list alone was sent back: the answer says nothing of the series' skipped days.
+                        $writer->apply($calendar, [$resp], false);
+                    }
                     if (is_string($g['attendance'] ?? null)) {
                         $this->db->run('UPDATE events SET attendance = ? WHERE id = ?', [$g['attendance'], (int) $row['id']]);
                     }
@@ -644,6 +674,7 @@ final class GoogleUndo
                             ['responseStatus' => $was, 'attendance' => is_string($attendance) ? $attendance : null, 'undoes' => (int) $mutation['id']]),
                         array_map(static fn(string $col) => [Undo::keyOf('events', ['id' => (int) $row['id']]), $col], ['invite_json', 'status', 'attendance']));
                 });
+                ReviewQueue::holdGoogleAnswerLines($this->db, $userId, (int) $row['id'], (string) $row['title'], (string) $calendar['name'], $sent['lines'], true);
                 return ['entity' => 'event', 'op' => 'update'];
         }
         throw HttpError::badRequest('This entry has nothing to send back to Google', 'not_undoable');
@@ -690,9 +721,11 @@ final class GoogleUndo
     {
         $userId = (int) $mutation['user_id'];
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $g['calendarId'], $userId]);
-        if ($calendar === null || !GoogleWriter::writable($calendar)) {
+        if ($calendar === null || !GoogleWriter::bound($calendar)) {
             throw HttpError::badRequest("That calendar no longer writes to Google from here, so this change can't be undone", 'not_undoable');
         }
+        // Stored below writer: Google is asked first, and the undo goes on if it now says writer.
+        $calendar = $this->writer()->recheck($calendar, $authority === null ? null : fn() => $authority->assertValid($this->db, false), true);
         $summary = self::undoSummary((string) $mutation['summary'], (string) ($mutation['details_json'] ?? ''));
         $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
         $series = new GoogleSeries($this->db, $this->writer(), new Feeds($this->db));
@@ -1099,6 +1132,9 @@ final class GoogleUndo
     }
 
     /** Changed at Google since: the stale-undo words and the conflict's sentence. */
+    /** Why an undo of one day is refused when its repeating event was deleted at Google. */
+    public const SERIES_DELETED = 'The repeating event this day belongs to was deleted in Google Calendar, so this change can\'t be undone here. Refresh to see the calendar as Google has it; if you want the event back, make it again or restore it in Google Calendar.';
+
     public static function conflict(): HttpError
     {
         return new HttpError('google_conflict', 'Newer changes exist for this item; undoing would overwrite them. This event changed at Google since you last saw it.', 409);

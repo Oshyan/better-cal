@@ -26,6 +26,9 @@ declare(strict_types=1);
 // the series does not have when all-day was made timed, and a day given
 // its own time left the change failing with a 400 at every Finish.
 //
+// West of UTC the series is at 20:00 New York, 01:00 UTC the day after: at 19:00 (00:00 UTC) the switch would hide
+// days at Google and is refused there since the probe of 2026-11-13 (google-hidden-switch covers it).
+//
 // Each block is a scenario(). Google is the edit harness's stand-in. Every
 // expected value is written from the calendar by date; nothing in
 // server/src computes one. Invented data.
@@ -47,12 +50,12 @@ return static function (Db $db): void {
     // the suffix of its id in the old form and by its date; `edited` the plan's edited day the same way; `planned`
     // where that edited day is once the change is done: its id's suffix in the new form and its key here.
     $shapes = [
-        'daily 19:00 New York made all-day' => [
-            'create' => ['start' => '2027-01-04T19:00:00-05:00', 'end' => '2027-01-04T20:00:00-05:00', 'tzid' => 'America/New_York', 'rrule' => 'FREQ=DAILY;COUNT=8'],
-            'edit' => '2027-01-06T19:00:00-05:00',
-            'flip' => ['scope' => 'all', 'instanceStart' => '2027-01-04T19:00:00-05:00', 'start' => '2027-01-04', 'end' => '2027-01-05', 'allDay' => true],
+        'daily 20:00 New York made all-day' => [
+            'create' => ['start' => '2027-01-04T20:00:00-05:00', 'end' => '2027-01-04T21:00:00-05:00', 'tzid' => 'America/New_York', 'rrule' => 'FREQ=DAILY;COUNT=8'],
+            'edit' => '2027-01-06T20:00:00-05:00',
+            'flip' => ['scope' => 'all', 'instanceStart' => '2027-01-04T20:00:00-05:00', 'start' => '2027-01-04', 'end' => '2027-01-05', 'allDay' => true],
             'allDay' => true, 'why' => 'became all-day',
-            'day' => ['20270109T000000Z', '2027-01-08'], 'edited' => ['20270107T000000Z', '2027-01-06'], 'planned' => ['20270106', '2027-01-06 00:00:00'],
+            'day' => ['20270109T010000Z', '2027-01-08'], 'edited' => ['20270107T010000Z', '2027-01-06'], 'planned' => ['20270106', '2027-01-06 00:00:00'],
             'retime' => [['start' => ['dateTime' => '2027-01-08T15:00:00-05:00', 'timeZone' => 'America/New_York'], 'end' => ['dateTime' => '2027-01-08T16:00:00-05:00', 'timeZone' => 'America/New_York']], 'given another time'],
         ],
         'weekly 10:00 Los Angeles made all-day' => [

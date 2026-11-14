@@ -34,9 +34,9 @@ require_once dirname(__DIR__, 3) . '/tools/edit-harness/lib.php';
 
 return static function (Db $db): void {
     $zone = 'America/New_York';
-    $first = '2027-07-19T20:00:00-04:00';
+    $first = '2027-07-19T21:00:00-04:00';
     $day = '2027-07-23'; // the day that holds things
-    $dayAt = '2027-07-23T20:00:00-04:00';
+    $dayAt = '2027-07-23T21:00:00-04:00';
     $notes = 'Bring the sample checklist';
 
     /** The series' row and its days' rows by the date each shows on (the series' zone, or its dates when all-day). */
@@ -88,14 +88,14 @@ return static function (Db $db): void {
 
     // The changes for all events a scenario stops part way.
     $changes = [
-        'an hour later' => ['scope' => 'all', 'instanceStart' => $first, 'start' => '2027-07-19T21:00:00-04:00', 'end' => '2027-07-19T22:00:00-04:00'],
+        'an hour later' => ['scope' => 'all', 'instanceStart' => $first, 'start' => '2027-07-19T22:00:00-04:00', 'end' => '2027-07-19T23:00:00-04:00'],
         'made all-day' => ['scope' => 'all', 'instanceStart' => $first, 'start' => '2027-07-19', 'end' => '2027-07-20', 'allDay' => true],
         'a new place' => ['scope' => 'all', 'instanceStart' => $first, 'location' => 'Sample Annex'],
         'three events' =>['scope' => 'all', 'instanceStart' => $first, 'rrule' => 'FREQ=DAILY;COUNT=3'],
     ];
 
     /**
-     * A daily series at 20:00 New York, eight of them, at 'Sample Hall' with a tag and a person. $c['give'] gives the
+     * A daily series at 21:00 New York (01:00 UTC the day after; at 20:00, 00:00 UTC, Google would hide days on the switch to all-day, which is refused there), eight of them, at 'Sample Hall' with a tag and a person. $c['give'] gives the
      * day what it holds (fn(object $s, int $seriesId): void). Then $c['change'], stopped at $c['stop'] ('after its
      * master write': the write Google would take next is refused; 'its answer lost': Google takes the master write and
      * its answer never comes), $c['between'] (what happens here while it is half done), and $c['then'] (finish, putBack).
@@ -108,7 +108,7 @@ return static function (Db $db): void {
         try {
             $e = $s->events;
             $id = (int) $e->create($u, ['calendarId' => $s->calendarId, 'title' => 'Sample series', 'location' => 'Sample Hall', 'description' => 'Sample notes',
-                'start' => $first, 'end' => '2027-07-19T21:00:00-04:00', 'tzid' => $zone, 'rrule' => 'FREQ=DAILY;COUNT=8', 'tagNames' => ['sample'], 'personNames' => ['Alex Example']])['eventId'];
+                'start' => $first, 'end' => '2027-07-19T22:00:00-04:00', 'tzid' => $zone, 'rrule' => 'FREQ=DAILY;COUNT=8', 'tagNames' => ['sample'], 'personNames' => ['Alex Example']])['eventId'];
             $ctx = (object) ['u' => $u, 'd' => $d, 'events' => $e, 'stand' => $s, 'db' => $db];
             ($c['give'])($ctx, $id);
             $e->throwDeferred();

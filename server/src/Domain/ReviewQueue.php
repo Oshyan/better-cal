@@ -44,6 +44,10 @@ final class ReviewQueue
     public const KIND_GOOGLE_DIFFERS = 'google_differs';
     /** A whole read of a Google calendar that listed nothing while the calendar holds rows (GoogleSync): not applied, a notice. */
     public const KIND_GOOGLE_EMPTY = 'google_empty';
+    /** A Google calendar whose level moved to view only or busy times only (GoogleWriter::settleAccess): read-only here until editing is restored, a notice. */
+    public const KIND_GOOGLE_READ_ONLY = 'google_read_only';
+    /** A Google calendar Google no longer shows to the account (its lists answer 404): read-only and no longer updating, a notice. */
+    public const KIND_GOOGLE_NOT_SHOWN = 'google_not_shown';
     /** A series change that stopped half way at Google (google_pending): Finish or Put back. */
     public const KIND_GOOGLE_HALF = 'google_half';
 
@@ -897,23 +901,13 @@ final class ReviewQueue
     /** Dismiss an informational aggregate; it never mutates the calendar. */
     public function dismissMailLimit(int $userId, int $id): array
     {
-        $row = $this->requireOpen($userId, $id);
-        if ((string) $row['kind'] !== self::KIND_MAIL_LIMIT) {
-            throw HttpError::notFound('No such email-limit review item');
-        }
-        $this->close((int) $row['id'], 'dismissed');
-        return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
+        return $this->dismissNotice($userId, $id, [self::KIND_MAIL_LIMIT], 'No such email-limit review item');
     }
 
     /** Dismiss an informational prompt-filter capacity notice. */
     public function dismissModelLimit(int $userId, int $id): array
     {
-        $row = $this->requireOpen($userId, $id);
-        if ((string) $row['kind'] !== self::KIND_MODEL_LIMIT) {
-            throw HttpError::notFound('No such model-limit review item');
-        }
-        $this->close((int) $row['id'], 'dismissed');
-        return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
+        return $this->dismissNotice($userId, $id, [self::KIND_MODEL_LIMIT], 'No such model-limit review item');
     }
 
     /**
@@ -1371,10 +1365,7 @@ final class ReviewQueue
 
     public function dismissMailError(int $userId, int $id): array
     {
-        $row = $this->requireOpen($userId, $id);
-        if ($row['kind'] !== self::KIND_MAIL_ERROR) throw HttpError::notFound('No such unreadable email notice');
-        $this->close($id, 'dismissed');
-        return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
+        return $this->dismissNotice($userId, $id, [self::KIND_MAIL_ERROR], 'No such unreadable email notice');
     }
 
     /**
@@ -1397,39 +1388,242 @@ final class ReviewQueue
         });
     }
 
+    // ---- Notices that report a state: one rule for holding, ending and dismissing ----------------------------------
+    //
+    // The owner's rule: every Review item can be dismissed, and a dismiss means "I acknowledge this", not "this is dealt
+    // with". So a notice that reports a state (a calendar listing nothing, a calendar read-only at Google, a feed whose
+    // updates are paused) is one row per subject (its source_key) and state: dismissed, it stays dismissed while the
+    // state it reports stays the same; it comes back when that state changes (a new row for the new state), or when an
+    // action the person takes is refused because of that state (reopenState). Dismissing changes nothing but the item.
+
+    /**
+     * Hold a notice that $key is in $state: nothing when the key's open or
+     * dismissed notice already reports this kind and state, else whatever it
+     * had ends (endState) and a new open one says the state now. Called
+     * inside the caller's write.
+     *
+     * @param array{title:string, summary:string, payload:array} $notice
+     */
+    public static function holdState(Db $db, int $userId, string $kind, string $key, string $state, array $notice): void
+    {
+        $now = $db->one("SELECT kind, payload_json FROM review_items WHERE user_id = ? AND source_key = ? AND status IN ('open', 'dismissed') ORDER BY id DESC LIMIT 1", [$userId, $key]);
+        if ($now !== null && (string) $now['kind'] === $kind && (string) (self::payload($now)['state'] ?? '') === $state) {
+            return;
+        }
+        self::endState($db, $userId, $key);
+        $db->insert('review_items', [
+            'user_id' => $userId, 'kind' => $kind, 'source_key' => $key, 'event_id' => null,
+            'title' => mb_substr($notice['title'], 0, 300),
+            'summary' => mb_substr($notice['summary'], 0, 1000),
+            'payload_json' => json_encode($notice['payload'] + ['state' => $state], JSON_INVALID_UTF8_SUBSTITUTE),
+        ]);
+    }
+
+    /** The state a key's notice reported is over: its open or dismissed notice is closed as gone. */
+    public static function endState(Db $db, int $userId, string $key): void
+    {
+        $db->run("UPDATE review_items SET status = 'gone', decided_at = ? WHERE user_id = ? AND source_key = ? AND status IN ('open', 'dismissed')",
+            [Time::nowDb(), $userId, $key]);
+    }
+
+    /** An action the person took was refused because of the state a key's notice reports: a dismissed one is open again. */
+    public static function reopenState(Db $db, int $userId, string $key): void
+    {
+        $db->run("UPDATE review_items SET status = 'open', decided_at = NULL WHERE user_id = ? AND source_key = ? AND status = 'dismissed'", [$userId, $key]);
+    }
+
+    /** reopenState once the refusing request's transaction is over (the refusal rolls it back), in a write of its own. */
+    public static function reopenAfter(Db $db, int $userId, string $key): void
+    {
+        $db->whenTxEnds(static function () use ($db, $userId, $key): void {
+            RequestAuthority::checkedTx($db, static fn() => self::reopenState($db, $userId, $key));
+        });
+    }
+
+    /**
+     * An answer to a repeating invitation (or its undo) after which Google holds a day of the event otherwise than
+     * before it, and would not take the day back as it was (GoogleSeries::writeBesideDays): the same notice, saying
+     * that. $lines are GoogleSeries::outcomeWords', each from what Google holds; none, no notice.
+     *
+     * @param list<string> $lines
+     */
+    public static function holdGoogleAnswerLines(Db $db, int $userId, ?int $eventId, string $title, string $calendarName, array $lines, bool $takenBack = false): void
+    {
+        if ($lines === []) {
+            return;
+        }
+        (new Undo($db))->write($userId, static function () use ($db, $userId, $eventId, $title, $calendarName, $lines, $takenBack): void {
+            $db->insert('review_items', [
+                'user_id' => $userId, 'kind' => self::KIND_GOOGLE_DIFFERS, 'source_key' => 'google:' . ($eventId ?? 0) . ':' . bin2hex(random_bytes(4)), 'event_id' => $eventId,
+                'title' => mb_substr($title, 0, 300),
+                'summary' => mb_substr("Your answer to '" . $title . "' on calendar '" . $calendarName . "' was " . ($takenBack ? 'taken back' : 'saved') . '. Google Calendar holds some days of the event otherwise than before. The calendar shows what Google holds.', 0, 1000),
+                'payload_json' => json_encode(['lines' => array_values(array_map(static fn(string $l): string => mb_substr($l, 0, 500), $lines)), 'calendarName' => $calendarName], JSON_INVALID_UTF8_SUBSTITUTE),
+            ]);
+        });
+    }
+
     /**
      * A Google calendar whose whole read listed nothing while it holds rows
-     * here (GoogleSync, "an empty listing never deletes"): one open notice
-     * per calendar, closed when a whole read lists its events again.
+     * here (GoogleSync, "an empty listing never deletes"): its state notice,
+     * ended when a whole read lists its events again.
      */
     public static function holdGoogleEmpty(Db $db, int $userId, array $calendar): void
     {
-        $key = 'google-empty:' . (int) $calendar['id'];
-        if ($db->scalar("SELECT id FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open'", [$userId, self::KIND_GOOGLE_EMPTY, $key]) !== null) {
-            return;
-        }
-        $db->insert('review_items', [
-            'user_id' => $userId, 'kind' => self::KIND_GOOGLE_EMPTY, 'source_key' => $key, 'event_id' => null,
-            'title' => mb_substr((string) $calendar['name'], 0, 300),
-            'summary' => mb_substr("Google listed no events for '" . (string) $calendar['name'] . "', so nothing was removed here and each poll asks again."
-                . ' If the account lost access to it, check the calendar is still shared with it at Google; if you emptied it at Google on purpose, remove it here and add it again.', 0, 1000),
-            'payload_json' => json_encode(['calendarId' => (int) $calendar['id'], 'calendarName' => (string) $calendar['name']], JSON_INVALID_UTF8_SUBSTITUTE),
+        self::holdState($db, $userId, self::KIND_GOOGLE_EMPTY, 'google-empty:' . (int) $calendar['id'], 'empty', [
+            'title' => (string) $calendar['name'],
+            'summary' => "Google listed no events for '" . (string) $calendar['name'] . "', so nothing was removed here and each poll asks again."
+                . ' If the account lost access to it, check the calendar is still shared with it at Google; if you emptied it at Google on purpose, remove it here and add it again.',
+            'payload' => ['calendarId' => (int) $calendar['id'], 'calendarName' => (string) $calendar['name']],
         ]);
     }
 
     /** A whole read listed the calendar's events again: its empty-listing notice is no longer true. */
     public static function closeGoogleEmpty(Db $db, int $userId, int $calendarId): void
     {
-        $db->run("UPDATE review_items SET status = 'gone', decided_at = ? WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open'",
-            [Time::nowDb(), $userId, self::KIND_GOOGLE_EMPTY, 'google-empty:' . $calendarId]);
+        self::endState($db, $userId, 'google-empty:' . $calendarId);
     }
+
+    /**
+     * A Google calendar's access level moved to another tier
+     * (GoogleWriter::settleAccess): its state notice says the tier it is in
+     * now (read-only: view only or busy times only, each its own state; or no
+     * longer shown), none while it is editable.
+     *
+     * @param string $tier 'edit', 'view', 'busy' or 'none' (GoogleWriter::tier)
+     */
+    public static function holdGoogleAccess(Db $db, int $userId, array $calendar, string $tier, string $words): void
+    {
+        $key = self::accessKey((int) $calendar['id']);
+        if ($tier === 'edit') {
+            self::endState($db, $userId, $key);
+            return;
+        }
+        self::holdState($db, $userId, $tier === 'none' ? self::KIND_GOOGLE_NOT_SHOWN : self::KIND_GOOGLE_READ_ONLY, $key, $tier, [
+            'title' => (string) $calendar['name'],
+            'summary' => $words,
+            'payload' => ['calendarId' => (int) $calendar['id'], 'calendarName' => (string) $calendar['name'], 'access' => (string) $calendar['google_access_role']],
+        ]);
+    }
+
+    /** The source key of a calendar's access notice. */
+    public static function accessKey(int $calendarId): string
+    {
+        return 'google-access:' . $calendarId;
+    }
+
+    /** A calendar's access notice is no longer true (editable again, kept as a calendar of its own, removed). */
+    public static function closeGoogleAccess(Db $db, int $userId, int $calendarId): void
+    {
+        self::endState($db, $userId, self::accessKey($calendarId));
+    }
+
+    /**
+     * The feeds whose updates are paused for the owner's decision
+     * (Calendars::subscriptionsAwaitingReview), each held as a state notice
+     * (its reason is its state) and those no longer paused ended; returned
+     * with each one's notice row, so Review lists the open ones and Dismiss
+     * reaches them.
+     *
+     * @param list<array{id:int, name:string, subscriptionAuthorization:array}> $paused
+     * @return array<int, array{row:int, status:string}> calendar id => its notice
+     */
+    public function subscriptionNotices(int $userId, array $paused): array
+    {
+        return RequestAuthority::checkedTx($this->db, function () use ($userId, $paused): array {
+            $keys = [];
+            foreach ($paused as $c) {
+                $key = 'subscription:' . (int) $c['id'];
+                $keys[$key] = (int) $c['id'];
+                $reason = (string) ($c['subscriptionAuthorization']['reason'] ?? '');
+                self::holdState($this->db, $userId, 'subscription', $key, hash('sha256', $reason), [
+                    'title' => (string) $c['name'], 'summary' => $reason, 'payload' => ['calendarId' => (int) $c['id']],
+                ]);
+            }
+            foreach ($this->db->all("SELECT DISTINCT source_key FROM review_items WHERE user_id = ? AND kind = 'subscription' AND status IN ('open', 'dismissed')", [$userId]) as $r) {
+                if (!isset($keys[(string) $r['source_key']])) {
+                    self::endState($this->db, $userId, (string) $r['source_key']);
+                }
+            }
+            $out = [];
+            foreach ($this->db->all("SELECT id, source_key, status FROM review_items WHERE user_id = ? AND kind = 'subscription' AND status IN ('open', 'dismissed')", [$userId]) as $r) {
+                if (isset($keys[(string) $r['source_key']])) {
+                    $out[$keys[(string) $r['source_key']]] = ['row' => (int) $r['id'], 'status' => (string) $r['status']];
+                }
+            }
+            return $out;
+        });
+    }
+
+    /**
+     * The series changes half done at Google, each held as a state notice
+     * (its state is its pending row: one notice per change, open until
+     * dismissed, ended when Finish or Put back completes it or it is closed
+     * otherwise), returned with each one's notice row. The notice is only
+     * the Review item: the pending row and the series are untouched by it.
+     *
+     * @return array<int, array{row:int, status:string, half:array}> pending id => its notice and its halfDoneOf entry
+     */
+    public function halfDoneNotices(int $userId): array
+    {
+        $half = GoogleSeries::halfDoneOf($this->db, $userId);
+        return RequestAuthority::checkedTx($this->db, function () use ($userId, $half): array {
+            $byKey = [];
+            foreach ($half as $h) {
+                $key = self::halfKey((int) $h['id']);
+                $byKey[$key] = $h;
+                self::holdState($this->db, $userId, self::KIND_GOOGLE_HALF, $key, 'half', [
+                    'title' => (string) $h['title'], 'summary' => (string) $h['summary'], 'payload' => ['pendingId' => (int) $h['id'], 'calendarId' => (int) $h['calendarId']],
+                ]);
+            }
+            $out = [];
+            foreach ($this->db->all("SELECT id, source_key, status FROM review_items WHERE user_id = ? AND kind = ? AND status IN ('open', 'dismissed')", [$userId, self::KIND_GOOGLE_HALF]) as $r) {
+                $h = $byKey[(string) $r['source_key']] ?? null;
+                if ($h === null) {
+                    self::endState($this->db, $userId, (string) $r['source_key']);
+                    continue;
+                }
+                $out[(int) $h['id']] = ['row' => (int) $r['id'], 'status' => (string) $r['status'], 'half' => $h];
+            }
+            return $out;
+        });
+    }
+
+    /** The source key of a half-done change's notice. */
+    public static function halfKey(int $pendingId): string
+    {
+        return 'google-half:' . $pendingId;
+    }
+
+    /** Open a dismissed notice again, at the person's asking (the event's own line about it). */
+    public function reopenNotice(int $userId, int $id): array
+    {
+        $row = $this->db->one('SELECT * FROM review_items WHERE id = ? AND user_id = ?', [$id, $userId]);
+        if ($row === null || !in_array((string) $row['kind'], self::NOTICE_KINDS, true)) {
+            throw HttpError::notFound('No such notice');
+        }
+        RequestAuthority::checkedTx($this->db, fn() => self::reopenState($this->db, $userId, (string) $row['source_key']));
+        return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
+    }
+
+    /**
+     * Dismiss a notice: the one dismissal of every stored notice kind
+     * ($kinds: the kinds the caller's route takes). Only the item changes.
+     */
+    public function dismissNotice(int $userId, int $id, array $kinds = self::NOTICE_KINDS, string $notFound = 'No such notice'): array
+    {
+        $row = $this->requireOpen($userId, $id);
+        if (!in_array((string) $row['kind'], $kinds, true)) throw HttpError::notFound($notFound);
+        $this->close($id, 'dismissed');
+        return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
+    }
+
+    /** The stored kinds a dismiss only acknowledges (a decision's kinds, invite_new and invite_change, have their own). */
+    public const NOTICE_KINDS = [self::KIND_MAIL_LIMIT, self::KIND_MODEL_LIMIT, self::KIND_MAIL_ERROR, self::KIND_GOOGLE_DIFFERS, self::KIND_GOOGLE_EMPTY,
+        self::KIND_GOOGLE_READ_ONLY, self::KIND_GOOGLE_NOT_SHOWN, 'subscription', self::KIND_GOOGLE_HALF];
 
     public function dismissGoogleDifferences(int $userId, int $id): array
     {
-        $row = $this->requireOpen($userId, $id);
-        if (!in_array($row['kind'], [self::KIND_GOOGLE_DIFFERS, self::KIND_GOOGLE_EMPTY], true)) throw HttpError::notFound('No such Google notice');
-        $this->close($id, 'dismissed');
-        return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
+        return $this->dismissNotice($userId, $id, [self::KIND_GOOGLE_DIFFERS, self::KIND_GOOGLE_EMPTY, self::KIND_GOOGLE_READ_ONLY, self::KIND_GOOGLE_NOT_SHOWN], 'No such Google notice');
     }
 
     /**

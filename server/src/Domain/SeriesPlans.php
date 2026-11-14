@@ -143,8 +143,11 @@ trait SeriesPlans
         if (empty($event['rrule']) || !empty($event['recurrence_parent_id']) || !in_array($scope, ['all', 'following'], true)) {
             throw HttpError::badRequest('preview is for changes to all events, or this and following, of a repeating series', 'preview_unavailable');
         }
-        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
-        if ($event['source'] === 'feed' && $google === null) {
+        // A preview asks Google exactly where its commit would refuse for access (patchLocked: a change to what Google
+        // holds, googleKeys), and nowhere else: what is held here alone (tags, people, reminders) is refused by neither.
+        $editKeys = self::googleKeys($in);
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id'], $editKeys !== []) : null;
+        if ($event['source'] === 'feed' && $editKeys !== [] && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
         }
         if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
@@ -188,7 +191,12 @@ trait SeriesPlans
      */
     private function previewSplit(int $userId, array $event, array $in, string $mode): array
     {
-        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+        // Asks Google exactly where the commit would refuse for access: a delete from a day on (deleteEventLocked asks)
+        // and an edit of what Google holds (patchLocked, googleKeys); an answer or attendance mark is held here alone,
+        // and its commit never refuses for access, so its preview asks nothing.
+        $google = $event['source'] === 'feed'
+            ? $this->googleCalendarFor((int) $event['calendar_id'], $mode === Split::DELETE || ($mode === Split::EDIT && self::googleKeys($in) !== []))
+            : null;
         $choices = is_array($in['plan']['choices'] ?? null) ? $in['plan']['choices'] : [];
         unset($in['plan'], $in['preview']);
         [$master, $rows, $edit, $opts] = $this->seriesInput($userId, $event, $in, false, $google !== null);
@@ -1297,6 +1305,18 @@ trait SeriesPlans
                 throw HttpError::notFound('No such half-done Google change');
             }
             $calendar = CalendarMoveGuard::lockCalendar($this->db, (int) $row['calendar_id']);
+            // A refusal for access stored below writer is preceded by asking Google (GoogleWriter::recheck): access
+            // given back lets Finish and Put back run at once; still below, the refusal says the level Google gave.
+            if ($calendar !== null && GoogleWriter::bound($calendar) && !GoogleWriter::writable($calendar) && ($calendar['google_access_role'] ?? null) !== null) {
+                try {
+                    $calendar = $this->google()->recheck($calendar, $this->googleBeforeSend($authority));
+                } catch (HttpError $e) {
+                    if (!GoogleWriter::isReadOnly($e)) {
+                        throw $e;
+                    }
+                    $calendar = ['google_access_role' => (string) $e->extra['access']] + $calendar;
+                }
+            }
             if (($why = GoogleSeries::unrecoverable($calendar)) !== null) {
                 throw HttpError::conflict('google_calendar_gone', $why);
             }

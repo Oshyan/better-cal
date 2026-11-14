@@ -4,7 +4,7 @@
 
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { state, set, toast, insertOccurrence, useStore } from './store.js';
-import { api, afterUndo } from './api.js';
+import { api, afterUndo, undoFailedWords } from './api.js';
 import { jumpToDate, openDetail } from './actions.js';
 import { occDayKey } from '../lib/dates.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
@@ -135,7 +135,7 @@ export function ActivityPage() {
           return undoEntry(entry, true);
         }
       } else {
-        toast('Undo failed: ' + e.message, { error: true });
+        toast(undoFailedWords(e), { error: true });
       }
     } finally {
       setBusyId(null);

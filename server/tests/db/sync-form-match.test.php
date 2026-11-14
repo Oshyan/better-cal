@@ -139,7 +139,18 @@ return static function (Db $db): void {
         'at UTC (00:00, the control: an equal key is the same day)' => ['UTC', '00:00'],
         'east of UTC (09:00 Tokyo, the control: an equal key is the same day)' => ['Asia/Tokyo', '09:00'],
     ];
+    // In every zone here a day of the new form sits at the instant of a day of the old (west of UTC the neighbouring
+    // day's), and Google hides such a day for good when a record of the old form is there (probe 2026-11-13, 3.48 to
+    // 3.51, 3.65). So no day holds a record at Google when the form changes (the tag and the reminder are held here
+    // alone), and the notes are entered at Google after it; the rule this file checks, a record matched to its own day
+    // and not the row at an equal key, is the same. What Google does with a record at the meeting key is Google's own
+    // fault, filed and not asserted here.
+    $controlMarks = static function (Events $events, int $u, int $masterId, Closure $at): void {
+        $events->patch($u, $masterId, ['scope' => 'this', 'instanceStart' => $at(6), 'tagNames' => ['sample-day']]);
+        $events->patch($u, $masterId, ['scope' => 'this', 'instanceStart' => $at(7), 'reminders' => [['minutes' => 10]]]);
+    };
     foreach ($zones as $where => [$zone, $clock]) {
+        $control = true;
         foreach (['timed made all-day' => true, 'all-day made timed' => false] as $direction => $toAllDay) {
             foreach (['a delta poll' => false, 'a whole read' => true] as $read => $whole) {
                 // The form changes at Google and nothing else: Google drops
@@ -147,15 +158,15 @@ return static function (Db $db): void {
                 // change), so the notes of 5 and 8 January are gone there,
                 // and those days hold nothing here alone.
                 scenario("sync form match, $where, $direction at Google, $read: the tag and the reminder stay on their days, and no old-form row or skip is left",
-                    function () use ($db, $setup, $elsewhere, $rowsOf, $settled, $keyOf, $times, $zone, $clock, $toAllDay, $whole): void {
-                        $s = $setup(!$toAllDay, $zone, $clock);
+                    function () use ($db, $setup, $elsewhere, $rowsOf, $settled, $keyOf, $times, $zone, $clock, $toAllDay, $whole, $control, $controlMarks): void {
+                        $s = $setup(!$toAllDay, $zone, $clock, $control ? $controlMarks : null);
                         $elsewhere($s, 'smplflip', $times($toAllDay, $zone, $clock));
                         if ($whole) {
                             $db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$s->calendarId]);
                         }
                         $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
                         $k = static fn(int $day): string => $keyOf($toAllDay, $day, $zone, $clock);
-                        checkEq('6 January keeps its row and tag, 7 January its row and reminder, each at its own day\'s key in the new form; 5 and 8 January, whose notes Google dropped, are ordinary days', [
+                        checkEq('6 January keeps its row and tag, 7 January its row and reminder, each at its own day\'s key in the new form, and no other day has a row', [
                             $s->idOn[6] => ['key' => $k(6), 'allDay' => (int) $toAllDay, 'start' => $k(6), 'notes' => 'Sample notes', 'reminders' => null, 'own' => '["tags"]', 'tags' => ['sample-day']],
                             $s->idOn[7] => ['key' => $k(7), 'allDay' => (int) $toAllDay, 'start' => $k(7), 'notes' => 'Sample notes', 'reminders' => '[{"minutes":10}]', 'own' => '["reminders"]', 'tags' => []],
                         ], $rowsOf($s->masterId));
@@ -170,8 +181,8 @@ return static function (Db $db): void {
                 // 00:00 UTC on the 8th), and made timed, the record of
                 // 5 January has the key the all-day row of 6 January had.
                 scenario("sync form match, $where, $direction at Google with two days' notes held there in the new form, $read: each record goes to its own day's row",
-                    function () use ($db, $setup, $elsewhere, $rowsOf, $settled, $keyOf, $idOf, $times, $zone, $clock, $toAllDay, $whole): void {
-                        $s = $setup(!$toAllDay, $zone, $clock);
+                    function () use ($db, $setup, $elsewhere, $rowsOf, $settled, $keyOf, $idOf, $times, $zone, $clock, $toAllDay, $whole, $control, $controlMarks): void {
+                        $s = $setup(!$toAllDay, $zone, $clock, $control ? $controlMarks : null);
                         $k = static fn(int $day): string => $keyOf($toAllDay, $day, $zone, $clock);
                         $elsewhere($s, 'smplflip', $times($toAllDay, $zone, $clock));
                         $elsewhere($s, $idOf($toAllDay, $k(5)), ['description' => 'Notes for the fifth']);
@@ -180,12 +191,21 @@ return static function (Db $db): void {
                             $db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$s->calendarId]);
                         }
                         $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
-                        checkEq('each of the four days is the row it was, at its own day\'s key in the new form: the notes on 5 and 8 January, the tag on 6 January, the reminder on 7 January', [
-                            $s->idOn[5] => ['key' => $k(5), 'allDay' => (int) $toAllDay, 'start' => $k(5), 'notes' => 'Notes for the fifth', 'reminders' => null, 'own' => '["description"]', 'tags' => []],
-                            $s->idOn[6] => ['key' => $k(6), 'allDay' => (int) $toAllDay, 'start' => $k(6), 'notes' => 'Sample notes', 'reminders' => null, 'own' => '["tags"]', 'tags' => ['sample-day']],
-                            $s->idOn[7] => ['key' => $k(7), 'allDay' => (int) $toAllDay, 'start' => $k(7), 'notes' => 'Sample notes', 'reminders' => '[{"minutes":10}]', 'own' => '["reminders"]', 'tags' => []],
-                            $s->idOn[8] => ['key' => $k(8), 'allDay' => (int) $toAllDay, 'start' => $k(8), 'notes' => 'Notes for the eighth', 'reminders' => null, 'own' => '["description"]', 'tags' => []],
-                        ], $rowsOf($s->masterId));
+                        $want = [
+                            5 => ['key' => $k(5), 'allDay' => (int) $toAllDay, 'start' => $k(5), 'notes' => 'Notes for the fifth', 'reminders' => null, 'own' => '["description"]', 'tags' => []],
+                            6 => ['key' => $k(6), 'allDay' => (int) $toAllDay, 'start' => $k(6), 'notes' => 'Sample notes', 'reminders' => null, 'own' => '["tags"]', 'tags' => ['sample-day']],
+                            7 => ['key' => $k(7), 'allDay' => (int) $toAllDay, 'start' => $k(7), 'notes' => 'Sample notes', 'reminders' => '[{"minutes":10}]', 'own' => '["reminders"]', 'tags' => []],
+                            8 => ['key' => $k(8), 'allDay' => (int) $toAllDay, 'start' => $k(8), 'notes' => 'Notes for the eighth', 'reminders' => null, 'own' => '["description"]', 'tags' => []],
+                        ];
+                        if ($control) {
+                            // No row of 5 or 8 January stood before (no record there at Google): their records make rows of their own.
+                            checkEq('each record is its own day\'s row, at its own day\'s key in the new form: the notes on 5 and 8 January (rows of their own), the tag on 6 January and the reminder on 7 January on the rows they were',
+                                [[$s->idOn[6], $s->idOn[7]], array_values($want)],
+                                [array_values(array_intersect(array_keys($rowsOf($s->masterId)), [$s->idOn[6], $s->idOn[7]])), array_values((static function (array $rows): array { usort($rows, static fn(array $a, array $b): int => strcmp((string) $a['key'], (string) $b['key'])); return $rows; })($rowsOf($s->masterId)))]);
+                        } else {
+                            checkEq('each of the four days is the row it was, at its own day\'s key in the new form: the notes on 5 and 8 January, the tag on 6 January, the reminder on 7 January',
+                                [$s->idOn[5] => $want[5], $s->idOn[6] => $want[6], $s->idOn[7] => $want[7], $s->idOn[8] => $want[8]], $rowsOf($s->masterId));
+                        }
                         $settled($s, $toAllDay, $k(4));
                     });
             }

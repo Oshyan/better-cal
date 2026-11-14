@@ -279,12 +279,68 @@ final class Events
     // transaction that saves Google's answer here, so a session or API key
     // revoked mid-request can't finish the change.
 
-    /** The calendar row when this event lives on a writable Google calendar, else null. */
-    private function googleCalendarFor(int $calendarId): ?array
+    /**
+     * The calendar row when this event lives on a Google calendar a change
+     * may be sent to, else null. $change: a change Google holds is being
+     * attempted, so a Google calendar stored below writer asks Google first
+     * (GoogleWriter::recheck: one small list) and goes on when Google now
+     * says writer, or is refused with the access rule's sentence; without
+     * it, the stored level answers, or the level a recheck in this request
+     * found, which is stored only once its transaction is over.
+     */
+    private function googleCalendarFor(int $calendarId, bool $change = false, ?RequestAuthority $authority = null): ?array
     {
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [$calendarId]);
-        return $calendar !== null && GoogleWriter::writable($calendar) ? $calendar : null;
+        if ($calendar === null || !GoogleWriter::bound($calendar)) {
+            return null;
+        }
+        if (!GoogleWriter::writable($calendar) && isset($this->rechecked[$calendarId])) {
+            $calendar['google_access_role'] = $this->rechecked[$calendarId];
+        }
+        if (!GoogleWriter::writable($calendar) && $change) {
+            $calendar = $this->google()->recheck($calendar, $this->googleBeforeSend($authority));
+            $this->rechecked[$calendarId] = (string) $calendar['google_access_role'];
+        }
+        return GoogleWriter::writable($calendar) ? $calendar : null;
     }
+
+    /**
+     * Check again: ask Google what this account may do with a Google
+     * calendar now, at the person's asking (the Review item about its access,
+     * its settings line), through the one small list (GoogleWriter::accessNow,
+     * which recheck asks too); the level is stored through settleAccess, so a
+     * move gets its line and its item. Returns the level Google gave.
+     */
+    public function checkGoogleAccess(int $userId, int $calendarId, ?RequestAuthority $authority = null): string
+    {
+        $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]);
+        if ($calendar === null || !GoogleWriter::bound($calendar)) {
+            throw HttpError::notFound('No such Google calendar');
+        }
+        $role = $this->google()->accessNow($calendar, $this->googleBeforeSend($authority));
+        if ($role === null) {
+            throw new HttpError('google_write_failed', 'Google could not be asked just now. Try again in a minute.', 502);
+        }
+        return $role;
+    }
+
+    /**
+     * The keys of an edit that change what Google holds, as against what is
+     * held here alone (OwnFields::feedEditKeys: tags, people, reminders, an
+     * answer or attendance mark, ...) and the request's own words (scope,
+     * the day, a plan, a preview). The one reading of "this change can be
+     * refused for access": a commit asks Google first exactly when it has
+     * such keys, and its preview exactly when the commit would (SeriesPlans). Pure.
+     *
+     * @return list<string>
+     */
+    private static function googleKeys(array $in): array
+    {
+        return array_values(array_diff(array_keys($in), ['scope', 'instanceStart', 'plan', 'preview', ...\BetterCal\Domain\Series\OwnFields::feedEditKeys()]));
+    }
+
+    /** Levels a recheck found writer in this request, by calendar, until the store after its transaction catches up. @var array<int,string> */
+    private array $rechecked = [];
 
     private ?Duplicates $duplicates = null;
 
@@ -299,7 +355,9 @@ final class Events
      */
     private function refuseWhilePending(int $userId, array $event): void
     {
-        if ($this->googleCalendarFor((int) $event['calendar_id']) !== null) {
+        // Any Google calendar, whatever its level: a half-done change stays frozen while it is read-only too.
+        $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $event['calendar_id']]);
+        if ($calendar !== null && GoogleWriter::bound($calendar)) {
             GoogleSeries::refusePending($this->db, $userId, (int) $event['calendar_id'], GoogleSeries::namesOf($event));
         }
     }
@@ -567,7 +625,6 @@ final class Events
             // The day starts where the own list this edit leaves puts it.
             [$cols, $changed] = $this->placedThis($existing, $this->columnPatch($existing, $in, $instanceUtc, forOverride: true), $master, $in);
             [$googleFields, $localFields] = self::splitGoogleFields($cols);
-            self::refuseTimedUnderAllDay($master, (int) ($googleFields['all_day'] ?? $existing['all_day']));
             $body = $googleFields === [] ? [] : self::patchBody($existing, $googleFields);
             if ($body !== []) {
                 // A local-only override (attendance, reminders) has no Google
@@ -597,7 +654,6 @@ final class Events
             $shown = GoogleWriter::instanceBody($override);
             $occurrence = $override;
             $override = array_merge($override, $patch);
-            self::refuseTimedUnderAllDay($master, (int) $override['all_day']);
             $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
             $body = self::patchBody($occurrence, $patchGoogle);
             if ($body !== []) {
@@ -705,20 +761,6 @@ final class Events
             GoogleUndo::details(GoogleUndo::EDIT, $calendar, $undo[0], $undo[1], $undo[2], self::answerEtag($resp),
                 ['changed' => GoogleUndo::editChanged($undo[1], $stored, $resp)]),
             [$before, $after]);
-    }
-
-    /**
-     * An instance of an all-day series can't be given a clock time at
-     * Google (the probe, 2.2a: 400 "Invalid start time"), so a "this event"
-     * edit that would make a day of an all-day Google series timed is
-     * refused here before anything is sent, with the reason. The undo and
-     * the redo of such an edit ask the same (GoogleUndo::undo).
-     */
-    public static function refuseTimedUnderAllDay(array $master, int $rowAllDay): void
-    {
-        if ((int) $master['all_day'] === 1 && $rowAllDay === 0) {
-            throw new HttpError('google_all_day', 'At Google, a day of an all-day series can\'t be given a clock time. Make the series timed, or keep this day all-day.', 422);
-        }
     }
 
     /** "Nov 7" for an activity line: an all-day date as stored, a timed day on the series' clock. */
@@ -1328,7 +1370,7 @@ final class Events
             throw HttpError::badRequest('Unknown calendarId');
         }
         $in = $this->typedTimes($userId, $in, null);
-        $google = $calendar['kind'] === 'subscribed' && GoogleWriter::writable($calendar) ? $calendar : null;
+        $google = $calendar['kind'] === 'subscribed' ? $this->googleCalendarFor($calendarId, true, $authority) : null;
         if ($calendar['kind'] === 'subscribed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Cannot create events on a subscribed calendar');
         }
@@ -1710,7 +1752,7 @@ final class Events
             }
             $master = $this->get($userId, (int) $event['recurrence_parent_id']);
             // A writable Google calendar's day takes it as any edit does (Google first).
-            $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+            $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id'], true, $authority) : null;
             if ($event['source'] === 'feed' && $google === null) {
                 throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags, reminders and a place\'s coordinates');
             }
@@ -1723,8 +1765,8 @@ final class Events
         // Reminders are user-local metadata (like tags), so feed events accept
         // them even though their feed-derived content is read-only.
         // What a feed's day may be given is what is held here alone (OwnFields::feedEditKeys, read from the one list).
-        $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', ...\BetterCal\Domain\Series\OwnFields::feedEditKeys()]);
-        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+        $editKeys = self::googleKeys($in);
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id'], $editKeys !== [], $authority) : null;
         if ($event['source'] === 'feed' && $editKeys !== [] && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags, reminders and a place\'s coordinates');
         }
@@ -2221,7 +2263,7 @@ final class Events
         $row = $this->get($userId, $id);
         $this->refuseWhilePending($userId, $row);
         [$event, $instanceStart] = $this->seriesFrom($userId, $row, $scope, $instanceStart);
-        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id'], true, $authority) : null;
         if ($event['source'] === 'feed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events cannot be deleted; hide them instead');
         }
@@ -2547,6 +2589,26 @@ final class Events
      * clients get when they ask for a specific event, and what a create
      * returns. It carries everything, uid included.
      */
+    /**
+     * What an event's details say while a change half done at Google holds it
+     * (GoogleSeries::halfDoneFor), whether or not its Review notice was
+     * dismissed, since the state is true either way: when it stopped, why
+     * neither Finish nor Put back can run (the Review item's own sentence),
+     * and the notice to reopen or go to. Null when no change holds it. The
+     * client composes the words.
+     *
+     * @return array{noticeId:?int, open:bool, stoppedAt:string, unrecoverable:?string}|null
+     */
+    public static function halfDoneLine(Db $db, Events $events, array $row): ?array
+    {
+        $half = GoogleSeries::halfDoneFor($db, $row);
+        if ($half === null) {
+            return null;
+        }
+        $notice = (new ReviewQueue($db, $events))->halfDoneNotices((int) $row['user_id'])[(int) $half['id']] ?? null;
+        return ['noticeId' => $notice['row'] ?? null, 'open' => ($notice['status'] ?? 'open') === 'open', 'stoppedAt' => (string) $half['createdAt'], 'unrecoverable' => $half['unrecoverable']];
+    }
+
     public function serializeSingle(array $row): array
     {
         $links = $this->labels->forEvents([(int) $row['id']]);

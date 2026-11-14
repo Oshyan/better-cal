@@ -1,5 +1,5 @@
 {
- "about": "This and following with tags stopped before its second write; a day given an exception at Google with a title and notes, then the same day cancelled at Google; Finish stores the skip, which is what Google holds when it runs (x-finish A4 by the stand-in's state when Finish runs, seed 60611 case 143). Before, A4 expected the remote title on a live record whatever a later remote step did to that day.",
+ "about": "This and following with tags stopped before its second write; a day given an exception at Google with a title and notes, then the same day cancelled at Google; the old series' own write (its new end) had been taken, so Finish puts the day back as the change has it and its answer says the day was deleted in Google Calendar and put back (x-finish A4 by the stand-in's state when Finish runs, seed 60611 case 143). Until 1.5.6 Finish stored the skip.",
  "seed": 60611,
  "n": 143,
  "series": {

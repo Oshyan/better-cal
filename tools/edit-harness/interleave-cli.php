@@ -12,6 +12,14 @@
 declare(strict_types=1);
 
 $opts = getopt('', ['interleave', 'cases:', 'seed:', 'case:', 'no-shrink', 'quiet', 'fixed::', 'findings:', 'model:', 'save-spec:', 'shards:', 'shard:', 'partial:', 'oracle-probes', 'flips:', 'day-shapes:', 'series-undo:']);
+// The interleaving mode checks this tree's product only: --product (the forward mode's other checkout) is refused,
+// never ignored, so a run never reports on the wrong tree.
+foreach ($argv as $arg) {
+    if ($arg === '--product' || str_starts_with((string) $arg, '--product=')) {
+        fwrite(STDERR, "--product is not supported with --interleave: the interleaving mode checks this tree's product.\n");
+        exit(1);
+    }
+}
 $cases = (int) ($opts['cases'] ?? 200);
 $seed = (int) ($opts['seed'] ?? 1);
 $onlyCase = isset($opts['case']) ? (int) $opts['case'] : null;

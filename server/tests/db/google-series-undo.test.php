@@ -135,9 +135,15 @@ return static function (Db $db): void {
     $held = static function (object $s, string $googleId): array {
         $m = $s->fake->events[$googleId];
         $out = ['rule' => $m['recurrence'][0] ?? null, 'start' => $m['start']['dateTime'] ?? $m['start']['date'], 'title' => $m['summary'], 'status' => $m['status'] ?? 'confirmed', 'records' => [], 'cancelled' => []];
+        $at = static fn(array $w): string => isset($w['date']) ? (string) $w['date'] : (string) (new DateTimeImmutable((string) $w['dateTime']))->getTimestamp();
         foreach ($s->fake->records($googleId) as $k => $r) {
             if (($r['status'] ?? '') === 'cancelled') {
                 $out['cancelled'][] = $k;
+            } elseif (($r['summary'] ?? '') === ($m['summary'] ?? '') && $at($r['start']) === $at($r['originalStartTime'])) {
+                // A record at the series' title on its own occurrence is an ordinary day (series-model.md, "What a record of
+                // Google's becomes here"): Google leaves one when a change brings a dropped record back to life (probe
+                // 3.36, 10.2, 2026-11-13), and the rows here hold none for it.
+                continue;
             } else {
                 $out['records'][$k] = [$r['summary'], $r['start']['dateTime'] ?? $r['start']['date']];
             }
@@ -384,21 +390,24 @@ return static function (Db $db): void {
     });
 
     // An undo of a series change is an ordinary series write: what it asks is the inverse of what the change asked,
-    // over the series as it stands, and what Google changed meanwhile, during the change or during the undo, stays.
+    // over the series as it stands. While either is sent, last write wins: a day changed in Google Calendar between
+    // the series' write and the read after it is set as the change has it, since nothing can tell that change from
+    // what the series' write itself did to the day (decisions.md, "After the series' write, the days are set from what
+    // Google holds"). A difference in the series itself that arrives after its write is not written over; it is recorded.
     $day = 'smpl2weekly_20270308T180000Z'; // 8 March 2027, an ordinary occurrence
     $row = static fn(object $s, string $googleId): ?array => $db->one('SELECT * FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [$s->calendarId, $googleId]);
 
-    scenario('google series undo: a day renamed at Google during a rename and again during its undo keeps the newer title, at Google and here', function () use ($setup, $masterId, $last, $pending, $sameAfterPoll, $iso, $row, $day): void {
+    scenario('google series undo: a day renamed at Google during a rename and again during its undo is the change\'s each time, at Google and here', function () use ($setup, $masterId, $last, $pending, $sameAfterPoll, $iso, $row, $day): void {
         $s = $setup();
         $s->t->race = [$day, ['summary' => 'Sample remote A']];
         planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed']);
         $entry = $last($s);
-        checkEq('the rename keeps the day renamed at Google during it', ['Sample remote A', 'Sample remote A'], [$s->fake->events[$day]['summary'] ?? null, $row($s, $day)['title'] ?? null]);
+        checkEq('the rename sets the day renamed at Google during it as the change has it: the new title at Google, an ordinary day with no row here', ['Sample renamed', null], [$s->fake->events[$day]['summary'] ?? null, $row($s, $day)['title'] ?? null]);
         $s->t->race = [$day, ['summary' => 'Sample remote B']];
         $s->undo->undoById($s->u, (int) $entry['id']);
         $here = $row($s, $day);
-        checkEq('the undo puts the series title back and the day keeps the newer title from Google, there and here, owned; nothing pending', [
-            'Sample weekly', 'Sample weekly', 'Sample remote B', 'Sample remote B', true, [],
+        checkEq('the undo puts the series title back and the day with it, there and here, with no row of its own; nothing pending', [
+            'Sample weekly', 'Sample weekly', 'Sample weekly', null, false, [],
         ], [$s->fake->events['smpl2weekly']['summary'], $row($s, 'smpl2weekly')['title'] ?? null, $s->fake->events[$day]['summary'] ?? null, $here['title'] ?? null,
             in_array('title', json_decode((string) ($here['override_fields'] ?? '[]'), true) ?: [], true), $pending($s)]);
         check('a poll after changes nothing', $sameAfterPoll($s));

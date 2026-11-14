@@ -9110,6 +9110,7 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     // As a poll leaves them: the series' etag on the master and its exception.
     $gw->run('UPDATE events SET google_etag = ? WHERE id IN (11, 12)', [$fakeGoogle->events['g-series']['etag']]);
     BetterCal\Domain\RequestAuthority::during($kinds['session'][0], fn() => planned($gev, 1, 11, ['title' => 'From the start', 'scope' => 'following', 'instanceStart' => '2030-06-01T09:00:00+00:00']));
+    // The edited day's write with no read before it (inside our own change the last write wins: decisions.md).
     checkEq('google following from the first day: the series itself is edited through GoogleSeries, nothing inserted, its rule and start kept, the edited day keeps its own title', [
         ['GET', 'PATCH', 'GET', 'PATCH', 'GET'], 'From the start', 'Sample standup, later', 'FREQ=DAILY;COUNT=6', '2030-06-01 09:00:00', 1, null, 0,
     ], [
@@ -12049,6 +12050,8 @@ use BetterCal\Infra\Secrets;
     davJournal($radb);
     undoJournal($radb);
     eventLinkTables($radb);
+    // Re-attach stores the level through GoogleWriter::settleAccess, whose move between tiers ends or holds the access notice.
+    $radb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
     $radb->run("INSERT INTO calendars (id, user_id, name, kind, provider, google_account_id, google_calendar_id, google_access_role, google_binding_version, google_sync_token, last_poll_status, last_poll_error, settings_json) VALUES
         (1, 1, 'Sample team', 'subscribed', 'google', NULL, 'team@example.test', 'reader', 3, 'sync-position', 'error', 'Google account disconnected', '{\"reminderDefaults\":\"defaults\"}'),
         (2, 1, 'Adopted copy', 'subscribed', 'ics', NULL, NULL, NULL, 0, NULL, 'ok', NULL, NULL),
@@ -12063,7 +12066,7 @@ use BetterCal\Infra\Secrets;
         [9, 'writer', 4, 'sync-position', 'ok', null, '{"reminderDefaults":"defaults"}'],
         [(int) $ra['google_account_id'], $ra['google_access_role'], (int) $ra['google_binding_version'], $ra['google_sync_token'], $ra['last_poll_status'], $ra['last_poll_error'], $ra['settings_json']]);
     checkEq('google re-attach: no longer an orphan', null, $raCalendars->orphanedGoogleCalendar(1, 'team@example.test'));
-    check('google re-attach: recorded in Activity with Undo', str_contains((string) $radb->scalar('SELECT summary FROM mutations WHERE entity_id = 1'), 'Re-attached'));
+    check('google re-attach: recorded in Activity with Undo', str_contains((string) $radb->scalar('SELECT summary FROM mutations WHERE entity_id = 1 ORDER BY id DESC LIMIT 1'), 'Re-attached'));
     check('google re-attach: a binding from before the re-attach no longer matches',
         !BetterCal\Domain\GoogleSync::sameBinding(['google_account_id' => null, 'google_calendar_id' => 'team@example.test', 'google_binding_version' => 3], $ra));
     checkEq('google role: your own calendars start as Mine, Google\'s as Context, shared and feed copies as Opportunities',

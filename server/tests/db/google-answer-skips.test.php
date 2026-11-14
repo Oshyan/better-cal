@@ -57,8 +57,19 @@ return static function (Db $db): void {
         $auth = new GoogleAuth($db, $cfg, static fn(string $url, array $fields, ?float $deadline): array
             => ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])]);
         $feeds = new Feeds($db);
-        $writer = new GoogleWriter($db, $auth, $feeds, static fn(string $method, string $url, ?array $payload, array $headers = []): array
-            => $inner($method, $url, $payload, array_merge(['Authorization: Bearer sample-access'], $headers)));
+        // $net->downAfterWrite: the network goes right after the writer's next write is taken, so the read after it can't be made.
+        $net = (object) ['downAfterWrite' => false, 'down' => false];
+        $writer = new GoogleWriter($db, $auth, $feeds, static function (string $method, string $url, ?array $payload, array $headers = []) use ($inner, $net): array {
+            if ($net->down) {
+                throw new \RuntimeException('HTTP error for the stand-in: network down');
+            }
+            $answer = $inner($method, $url, $payload, array_merge(['Authorization: Bearer sample-access'], $headers));
+            if ($net->downAfterWrite && $method !== 'GET') {
+                $net->downAfterWrite = false;
+                $net->down = true;
+            }
+            return $answer;
+        });
         $syncTransport = $fake->syncTransport();
         $sync = new GoogleSync($db, $auth, $feeds, static fn(string $url, array $headers): array => $syncTransport($url, array_merge(['Authorization: Bearer sample-access'], $headers)));
         $events = new Events($db, new Recurrence(), $d->undo, new BetterCal\Domain\Labels($db),
@@ -71,7 +82,7 @@ return static function (Db $db): void {
         $poll = static fn() => $sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$calendarId]));
         $poll();
         $masterId = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [$calendarId, 'smplinv']);
-        return (object) ['u' => $u, 'd' => $d, 'fake' => $fake, 'events' => $events, 'writer' => $writer, 'poll' => $poll, 'calendarId' => $calendarId, 'masterId' => $masterId];
+        return (object) ['u' => $u, 'd' => $d, 'fake' => $fake, 'events' => $events, 'writer' => $writer, 'poll' => $poll, 'calendarId' => $calendarId, 'masterId' => $masterId, 'net' => $net];
     };
     // The Los Angeles dates of 5 to 7 January the calendar shows an event on.
     $shownDays = static function (object $s) use ($la): array {
@@ -110,6 +121,37 @@ return static function (Db $db): void {
         checkEq('after the answer and a poll: 6 January is a skipped day', ['2027-01-06 18:00:00'], $skips($s));
         (new BetterCal\Domain\Undo($db, null, $s->writer))->undoById($s->u, $answer);
         checkEq('after the undo of the answer: 6 January is still a skipped day, and the calendar shows 5 and 7 January only',
+            [['2027-01-06 18:00:00'], ['2027-01-05 10:00', '2027-01-07 10:00']], [$skips($s), $shownDays($s)]);
+    });
+
+    // The two scenarios above are kept by the read after the answer: it lists the series with its cancelled record, and
+    // that list is stored as a poll stores one. When that read can't be made (the network goes right after Google takes
+    // the answer), the answer stands and only Google's answer to the write is stored: the series' own resource, which
+    // says nothing of the days Google holds as cancelled records, so the skips stored here stand (GoogleWriter::apply,
+    // told the write sent no recurrence: rule 7 of the merge; docs/design/google-series-read-back.md, "What This Does
+    // Not Cover": "if the read after it can't be made, the answer stands, nothing is compared").
+    $mine = static fn(object $s): ?string => array_values(array_filter($s->fake->events['smplinv']['attendees'] ?? [], static fn(array $a): bool => !empty($a['self'])))[0]['responseStatus'] ?? null;
+    scenario('google answer skips: the read after the answer can\'t be made: the answer stands, and 6 January stays cancelled here', function () use ($db, $setup, $shownDays, $skips, $session, $mine): void {
+        $s = $setup();
+        $s->net->downAfterWrite = true;
+        (new Rsvp($db, new EmailSender([]), [], $s->writer))->answer($s->u, $s->masterId, 'accepted', $session($s));
+        checkEq('the answer was taken by Google and the network went right after it', ['accepted', true], [$mine($s), $s->net->down]);
+        checkEq('after the answer with no read after it: 6 January is still a skipped day, and the calendar shows 5 and 7 January only',
+            [['2027-01-06 18:00:00'], ['2027-01-05 10:00', '2027-01-07 10:00']], [$skips($s), $shownDays($s)]);
+        $s->net->down = false;
+        ($s->poll)();
+        checkEq('after the next poll, the network back: 6 January is a skipped day', [['2027-01-06 18:00:00'], ['2027-01-05 10:00', '2027-01-07 10:00']], [$skips($s), $shownDays($s)]);
+    });
+
+    scenario('google answer skips: the read after the answer\'s undo can\'t be made: the undo stands, and 6 January stays cancelled here', function () use ($db, $setup, $shownDays, $skips, $session, $mine): void {
+        $s = $setup();
+        (new Rsvp($db, new EmailSender([]), [], $s->writer))->answer($s->u, $s->masterId, 'accepted', $session($s));
+        $answer = lastEntry($db, $s->u);
+        ($s->poll)(); // as in the scenario above: the undo starts from what a poll stored
+        $s->net->downAfterWrite = true;
+        (new BetterCal\Domain\Undo($db, null, $s->writer))->undoById($s->u, $answer);
+        checkEq('the undo was taken by Google and the network went right after it', ['needsAction', true], [$mine($s), $s->net->down]);
+        checkEq('after the undo with no read after it: 6 January is still a skipped day, and the calendar shows 5 and 7 January only',
             [['2027-01-06 18:00:00'], ['2027-01-05 10:00', '2027-01-07 10:00']], [$skips($s), $shownDays($s)]);
     });
 };

@@ -38,8 +38,11 @@ final class GoogleWriter
     /** Pages refreshEtags reads for one series at most (2,500 rows each). */
     private const ETAG_PAGES = 4;
     public const CONFLICT_MESSAGE = 'This event changed at Google since you last saw it. Refresh and try again.';
+    /** The conflict's reason alone, for a change that had already sent part of itself. */
+    public const CONFLICT_SAID = 'This event changed at Google since this change read it.';
     public const BUSY_MESSAGE = 'Google is busy and refused the change for now; nothing was changed. Try again in a minute.';
     public const DELETED_MESSAGE = 'This event was deleted at Google; nothing was changed. Refresh to see the calendar as Google has it.';
+    public const REFUSED_MESSAGE = 'Google refused this change; nothing was changed. If you just got edit access back, try again in a moment.';
 
     /** The note on the Activity line of a removal whose target Google had already removed (gone). */
     public const ALREADY_GONE = 'Google had already removed it';
@@ -67,10 +70,356 @@ final class GoogleWriter
     /** May the connected account write to this calendar? Pure; unit-tested. */
     public static function writable(array $calendar): bool
     {
+        return self::bound($calendar) && self::writes($calendar['google_access_role'] ?? null);
+    }
+
+    /** Is this a calendar read through a connected Google account, whatever its access? Pure. */
+    public static function bound(array $calendar): bool
+    {
         return ($calendar['provider'] ?? 'ics') === 'google'
             && !empty($calendar['google_calendar_id'])
-            && $calendar['google_account_id'] !== null
-            && in_array((string) ($calendar['google_access_role'] ?? ''), ['writer', 'owner'], true);
+            && ($calendar['google_account_id'] ?? null) !== null;
+    }
+
+    // ---- Access: what Google last said this account may do here -----------------
+    // The model: docs/design/google-access-detect-and-inform.md.
+
+    /** Google's access roles (the accessRole of an events.list answer), lowest first; 'none': not visible. */
+    public const ROLES = ['none', 'freeBusyReader', 'reader', 'writer', 'owner'];
+
+    /** Does this level let the account write to the calendar? Pure. */
+    public static function writes(?string $role): bool
+    {
+        return in_array((string) $role, ['writer', 'owner'], true);
+    }
+
+    /** The tier a level is in for the person: 'edit', 'view' (view only, or busy times only) or 'none' (not shown). Pure. */
+    public static function tier(string $role): string
+    {
+        return $role === 'none' ? 'none' : (self::writes($role) ? 'edit' : ($role === 'freeBusyReader' ? 'busy' : 'view'));
+    }
+
+    /**
+     * Does a listing at this level show what Google holds, so it may be
+     * applied to the events stored here? Reader and above do; busy times
+     * only does not (Google leaves out the title of a read, the access
+     * probe's stage freebusy rows 6a, 6c, 6g, and the description and
+     * private properties of a list's items, row 4), and is never applied:
+     * what is held here stays as it was (docs/design/google-access-detect-and-inform.md,
+     * section 1). A level not stated (null) is not known to be lower, as
+     * before. The one rule every place that applies a list answer asks:
+     * the poll (GoogleSync) and a change's read-backs (GoogleSeries::store);
+     * apply stores only a write's own answer, which Google gives only at
+     * writer or owner (the access probe, rows 5, 6d to 6h). Pure.
+     */
+    public static function shows(?string $role): bool
+    {
+        return $role === null || in_array($role, ['reader', 'writer', 'owner'], true);
+    }
+
+    /** Whether the last list answer for the calendar through this writer shows what Google holds (shows). */
+    public function listShows(array $calendar): bool
+    {
+        return self::shows($this->listed[self::keyOf($calendar)][0] ?? null);
+    }
+
+    /**
+     * What an answer to an events.list request on the calendar says of this
+     * account's level: its top-level accessRole (on every list answer, plain
+     * and delta, in every state the access probe of 2026-11-13 met: rows 3,
+     * 4, 4d), 'none' for a 404 (sharing removed: every list answers 404,
+     * stage unshared) or a 410 to a list sent without a sync token, null when
+     * it says neither (busy, a failure, no role, a role Google doesn't
+     * document). Pure.
+     */
+    public static function roleOfList(int $status, string $body): ?string
+    {
+        // A 410 to a list sent with no sync token has no live row (a deleted calendar answered 404 like an unshared
+        // one, 2026-11-14, stage deleted): nothing depends on it; it says no level.
+        if ($status === 404) {
+            return 'none';
+        }
+        if ($status < 200 || $status >= 300) {
+            return null;
+        }
+        $role = json_decode($body, true)['accessRole'] ?? null;
+        return is_string($role) && in_array($role, self::ROLES, true) ? $role : null;
+    }
+
+    /** The calendar's name in a sentence, quoted. */
+    private static function named(array $calendar): string
+    {
+        $name = trim((string) ($calendar['name'] ?? ''));
+        return "'" . ($name !== '' ? $name : 'This calendar') . "'";
+    }
+
+    /**
+     * Why a change or an undo can't be made on a calendar Google says this
+     * account may not write to ($role, below writer), and what restores it:
+     * the one sentence every refusal of the rule gives. Pure.
+     */
+    public static function readOnlyWords(array $calendar, string $role, bool $undo = false): string
+    {
+        $name = self::named($calendar);
+        // Derived from the level stored before this refusal ($calendar's): "no longer" and "restore" are true only
+        // of a calendar that could be changed here until now; one that couldn't is said as what it is.
+        if (self::writes($calendar['google_access_role'] ?? null)) {
+            $why = $role === 'none'
+                ? 'Google no longer shows it to this account. If it is shared with you again, changes work here again.'
+                : 'your permissions for it at Google no longer allow changes. If you have access, restore full editing there.';
+            return ($undo ? "This can't be undone while $name is read-only: " : "$name is read-only: ") . $why;
+        }
+        $state = match (self::tier($role)) {
+            'none' => "Google doesn't show $name to this account",
+            'busy' => "Google shows this account only busy times for $name",
+            default => "$name is view only at Google",
+        };
+        return $undo ? "This can't be undone: $state." : "$state, so it can't be changed here.";
+    }
+
+    /**
+     * The refusal of a change (or an undo) on a calendar Google says this
+     * account may not write to: nothing was sent. Its own codes, never a
+     * Google status, so nothing reads it as the event deleted (gone).
+     */
+    public static function readOnly(array $calendar, string $role, bool $undo = false): HttpError
+    {
+        return new HttpError($role === 'none' ? 'google_not_shown' : 'google_read_only', self::readOnlyWords($calendar, $role, $undo), 403,
+            ['access' => $role, 'was' => $calendar['google_access_role'] ?? null, 'calendarId' => isset($calendar['id']) ? (int) $calendar['id'] : null]);
+    }
+
+    /**
+     * The access rule refusing a change the person attempted: readOnly, and
+     * the calendar's access notice, if dismissed, open again once the
+     * request is over (ReviewQueue::reopenState: a refusal because of the
+     * state a notice reports brings it back).
+     */
+    private function refused(array $calendar, string $role, bool $undo = false): HttpError
+    {
+        if (isset($calendar['id'], $calendar['user_id'])) {
+            ReviewQueue::reopenAfter($this->db, (int) $calendar['user_id'], ReviewQueue::accessKey((int) $calendar['id']));
+        }
+        return self::readOnly($calendar, $role, $undo);
+    }
+
+    /**
+     * The refusal when Google's word on the level could not be read: before a
+     * change's first write (admit), or after a write Google refused (call).
+     * Nothing was changed by this request; `refused` says Google took
+     * nothing, so a change under way does not count it as a step sent
+     * (GoogleSeries::refused). Whether anything was changed is known from
+     * what the change sent, not from this one request: `said` is the reason
+     * without "nothing was changed", for a change that had already sent part
+     * of itself and stops here (GoogleSeries::run).
+     */
+    public static function unconfirmed(): HttpError
+    {
+        return new HttpError('google_write_failed', 'Google did not say what this account may do with this calendar, so nothing was changed. Try again in a minute.', 502,
+            ['refused' => true, 'said' => 'Google did not say what this account may do with this calendar.']);
+    }
+
+    /** Whether a refusal is the access rule's (readOnly). Pure. */
+    public static function isReadOnly(HttpError $e): bool
+    {
+        return in_array($e->errorCode, ['google_read_only', 'google_not_shown'], true);
+    }
+
+    /** Requests sent through this writer so far: what tells a change's own list from an earlier one. */
+    private int $sent = 0;
+    /** The level each calendar's last events.list answer through this writer gave, and the request it answered. @var array<string,array{0:string,1:int}> */
+    private array $listed = [];
+    /** Levels queued to be stored once the transaction is over, by calendar (one store per level). @var array<string,string> */
+    private array $queued = [];
+
+    private static function keyOf(array $calendar): string
+    {
+        return (string) ($calendar['google_account_id'] ?? '') . '|' . (string) ($calendar['google_calendar_id'] ?? '');
+    }
+
+    /** Where this writer's requests stand: a read begun after it is this change's own (admit). */
+    public function mark(): int
+    {
+        return $this->sent;
+    }
+
+    /** The level the last list answer for the calendar gave, if that list was sent after $since. */
+    private function listedSince(array $calendar, int $since): ?string
+    {
+        $l = $this->listed[self::keyOf($calendar)] ?? null;
+        return $l !== null && $l[1] > $since ? $l[0] : null;
+    }
+
+    /**
+     * The decision of the access rule, the one function every change's
+     * first read goes through before anything is read from it or sent
+     * (GoogleSeries::condition, readNow, run, and Finish's and Put back's
+     * reads): a change is sent only when the level a list of this change
+     * gave ($since: the writer's mark before its first read) is writer or
+     * owner; otherwise it is refused, nothing sent. When the change's first
+     * read was not a list (nothing is stored here to list it by), one small
+     * list is asked first. A calendar not yet a calendar here (moving one to
+     * Google fills a calendar that has no row yet, GoogleMove) is out of the
+     * rule.
+     */
+    public function admit(array $calendar, ?\Closure $beforeSend, int $since): void
+    {
+        if (!isset($calendar['id'])) {
+            return;
+        }
+        $role = $this->listedSince($calendar, $since) ?? $this->accessNow($calendar, $beforeSend);
+        if ($role === null) {
+            throw self::unconfirmed();
+        }
+        if (!self::writes($role)) {
+            throw $this->refused($calendar, $role);
+        }
+    }
+
+    /**
+     * Google's word now on this account's level for the calendar: one small
+     * events.list request (one item), its level stored (learn) and
+     * returned, 'none' when the list answers 404, null when Google could not
+     * be read (unreachable, a 5xx, still busy, no level).
+     */
+    public function accessNow(array $calendar, ?\Closure $beforeSend = null): ?string
+    {
+        $since = $this->sent;
+        try {
+            $this->call($calendar, 'GET', '', null, ['maxResults' => '1'], $beforeSend);
+        } catch (HttpError $e) {
+            if (self::isReadOnly($e)) {
+                return 'none';
+            }
+            if (in_array($e->errorCode, ['google_write_failed', 'google_busy'], true)) {
+                return null;
+            }
+            throw $e;
+        }
+        return $this->listedSince($calendar, $since);
+    }
+
+    /**
+     * A change or an undo attempted on a Google calendar stored below
+     * writer: Google is asked first (accessNow), and the calendar is
+     * returned with the level it gives when that is writer, so the change
+     * goes on as on any writable calendar; otherwise it is refused with the
+     * rule's sentence. A calendar stored writer is returned as it is (the
+     * change's own first read decides).
+     */
+    public function recheck(array $calendar, ?\Closure $beforeSend = null, bool $undo = false): array
+    {
+        if (self::writable($calendar) || !self::bound($calendar)) {
+            return $calendar;
+        }
+        $role = $this->accessNow($calendar, $beforeSend);
+        if ($role === null) {
+            throw new HttpError('google_write_failed', 'Google could not be asked whether this calendar may be changed now, so nothing was changed. Try again in a minute.', 502);
+        }
+        if (!self::writes($role)) {
+            throw $this->refused($calendar, $role, $undo);
+        }
+        return ['google_access_role' => $role] + $calendar;
+    }
+
+    /** What a list answer said of the level: kept for admit, and stored once the transaction is over. */
+    private function listAnswered(array $calendar, array $account, string $role): void
+    {
+        $key = self::keyOf($calendar);
+        $this->listed[$key] = [$role, $this->sent];
+        if (!isset($calendar['id'], $calendar['user_id']) || ($this->queued[$key] ?? null) === $role) {
+            return;
+        }
+        $this->queued[$key] = $role;
+        $this->db->whenTxEnds(function () use ($calendar, $account, $role, $key): void {
+            unset($this->queued[$key]);
+            $this->learn($calendar, $account, $role);
+        });
+    }
+
+    /**
+     * Store a level a change's own list gave: the newest word, stored once
+     * that change's transaction is over, whatever it did (a refusal rolls it
+     * back, and what Google said still holds), in a write of its own, while
+     * the calendar row is still this Google calendar of this account and the
+     * account is usable under its lock (nothing is stored across the
+     * compromise reset).
+     */
+    private function learn(array $calendar, array $account, string $role): void
+    {
+        $undo = new Undo($this->db);
+        $undo->write((int) $calendar['user_id'], function () use ($undo, $calendar, $account, $role): void {
+            $now = CalendarMoveGuard::lockCalendar($this->db, (int) $calendar['id']);
+            if (!GoogleSync::sameBinding($calendar, $now)) {
+                return;
+            }
+            try {
+                $this->auth->assertUsable($account, true);
+            } catch (HttpError) {
+                return;
+            }
+            self::settleAccess($this->db, $undo, $now, $role);
+        });
+    }
+
+    /**
+     * Store a level on a calendar row the caller holds locked, with the
+     * account checked: when the calendar moves between tiers (editable, view
+     * only, not shown) Activity gets one line saying so and Review gets the
+     * calendar's one item for the tier it is in now (none while editable).
+     * A level learned for the first time (none stored: a calendar added
+     * before levels were kept, or one the compromise reset paused) says
+     * nothing. The one place a level is stored after a calendar is added;
+     * the poll calls it inside its own write.
+     */
+    public static function settleAccess(Db $db, Undo $undo, array $now, string $role): void
+    {
+        if (!in_array($role, self::ROLES, true)) {
+            return;
+        }
+        $was = $now['google_access_role'] !== null ? (string) $now['google_access_role'] : null;
+        if ($was === $role) {
+            return;
+        }
+        $db->update('calendars', ['google_access_role' => $role], 'id = ?', [(int) $now['id']]);
+        // A level learned from unknown (none stored: added before levels were kept, or paused by the compromise reset)
+        // is a move like any other: its line and its item, in words that claim nothing about before.
+        if ($was !== null && self::tier($was) === self::tier($role)) {
+            return;
+        }
+        $name = self::named($now);
+        $words = self::accessWords($now, $role, $was);
+        $undo->record((int) $now['user_id'], 'calendar', (int) $now['id'], 'update', null, null, match (self::tier($role)) {
+            'edit' => $was === null ? "Your permissions for $name at Google allow changes. Changes and undo work here." : "Your permissions for $name at Google allow changes now. Changes and undo work here.",
+            default => $was !== null && self::tier($was) === 'none' ? "Google shows $name to this account again. " . $words : $words,
+        });
+        // A level learned when none was stored closes any stale item, but opens one only below what the calendar was
+        // last known to allow; nothing is known after the compromise reset (it clears the level), so then no item opens
+        // and the Activity line and the settings line carry it.
+        if ($was === null) {
+            ReviewQueue::closeGoogleAccess($db, (int) $now['user_id'], (int) $now['id']);
+            return;
+        }
+        ReviewQueue::holdGoogleAccess($db, (int) $now['user_id'], ['google_access_role' => $role] + $now, self::tier($role), $words);
+    }
+
+    /** What a calendar below writer is, in the person's words: the Activity line and the Review item say it. Pure. */
+    public static function accessWords(array $calendar, string $role, ?string $was = null): string
+    {
+        $name = self::named($calendar);
+        $was = func_num_args() >= 3 ? $was : ($calendar['google_access_role'] ?? null);
+        // Derived from the level before ($was): "no longer", "now" and "restore" only where something was known before.
+        $editable = self::writes($was);
+        return match (self::tier($role)) {
+            'none' => $was !== null && $was !== 'none'
+                ? "Google no longer shows $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and no longer update. If it is shared with you again, it updates again; otherwise remove it, or keep it as a calendar of your own."
+                : "Google doesn't show $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and don't update. If it is shared with you, it updates; otherwise remove it, or keep it as a calendar of your own.",
+            'busy' => $editable
+                ? "Google now shows this account only busy times for $name, so its events here stay as they were and don't update, and changes and undo are unavailable. If you have access, restore full details and editing at Google."
+                : "Google shows this account only busy times for $name, so its events here stay as they were and don't update, and it can't be changed here.",
+            default => $editable
+                ? "Your permissions for $name at Google are now read-only. If you have access, restore full editing there. Until then $name works read-only here: changes, and undoing past changes, are unavailable."
+                : "$name is view only at Google, so it can't be changed here.",
+        };
     }
 
     // ---- Shape translation (pure, unit-tested) ---------------------------------
@@ -344,21 +693,35 @@ final class GoogleWriter
      * there. $refresh: re-read the series' etags after a write to one of
      * its rows.
      */
-    public function patch(array $calendar, string $googleId, array $body, ?\Closure $beforeSend = null, ?array $read = null, bool $refresh = true): array
+    public function patch(array $calendar, string $googleId, array $body, ?\Closure $beforeSend = null, ?array $read = null, bool $refresh = true, ?array $items = null): array
     {
         $series = $refresh ? $this->seriesOf($calendar, $googleId) : null;
-        $resp = $this->call($calendar, 'PATCH', '/' . rawurlencode($googleId), $body, beforeSend: $beforeSend, ifMatch: $this->condition($calendar, $googleId, $beforeSend, $read));
+        $resp = $this->call($calendar, 'PATCH', '/' . rawurlencode($googleId), $body, beforeSend: $beforeSend, ifMatch: $this->condition($calendar, $googleId, $beforeSend, $read, $items));
         if ($refresh && ($series !== null || !empty($resp['recurringEventId']) || !empty($resp['recurrence']))) {
             $this->refreshAfterWrite($calendar, (string) ($resp['iCalUID'] ?? $series ?? ''));
         }
         return $resp;
     }
 
-    public function delete(array $calendar, string $googleId, ?\Closure $beforeSend = null, ?array $read = null, bool $refresh = true): void
+    public function delete(array $calendar, string $googleId, ?\Closure $beforeSend = null, ?array $read = null, bool $refresh = true, ?array $items = null): void
     {
         $series = $refresh ? $this->seriesOf($calendar, $googleId) : null;
-        $this->call($calendar, 'DELETE', '/' . rawurlencode($googleId), null, beforeSend: $beforeSend, ifMatch: $this->condition($calendar, $googleId, $beforeSend, $read));
+        $this->call($calendar, 'DELETE', '/' . rawurlencode($googleId), null, beforeSend: $beforeSend, ifMatch: $this->condition($calendar, $googleId, $beforeSend, $read, $items));
         $this->refreshAfterWrite($calendar, $series);
+    }
+
+    /**
+     * The event $googleId as Google holds it now, for a caller that builds
+     * its write from it (an answer to an invitation, an undo), read as every
+     * write's first read is (GoogleSeries::readNow: the list by the
+     * iCalendar UID stored here, whose level decides), and that list. Both
+     * go to patch or delete, so the write's condition reads nothing again.
+     *
+     * @return array{0:array, 1:list<array>}
+     */
+    public function readNow(array $calendar, string $googleId, ?\Closure $beforeSend = null, ?string $uid = null): array
+    {
+        return (new GoogleSeries($this->db, $this, $this->feeds))->readNow($calendar, $googleId, $beforeSend, $uid);
     }
 
     /**
@@ -373,14 +736,56 @@ final class GoogleWriter
     }
 
     /**
+     * The one write that goes with no If-Match: a day's step inside a change
+     * to all events, after the change's conditional write to the series
+     * (GoogleSeries::run). While our own change is sent the last write wins
+     * (decisions.md, "Inside a change to all events a day is written with no
+     * condition"); Google takes such a write in every state a run meets (probe
+     * 2026-11-13, 3.66). Every other PATCH and DELETE stays conditional.
+     */
+    public function sendDayStep(array $calendar, string $path, array $body, ?\Closure $beforeSend = null): array
+    {
+        return $this->call($calendar, 'PATCH', $path, $body, [], $beforeSend, null, true);
+    }
+
+    /**
+     * Every record Google holds under one iCalendar UID (a series' master and
+     * its records, cancelled ones included, or a single event), by events.list
+     * with singleEvents=false and showDeleted=true, at most $pages pages. Each
+     * answer's level is kept and stored (call).
+     *
+     * @return list<array>
+     */
+    public function listByUid(array $calendar, string $uid, ?\Closure $beforeSend = null, int $pages = 4): array
+    {
+        $items = [];
+        $pageToken = null;
+        $n = 0;
+        do {
+            $query = ['iCalUID' => $uid, 'singleEvents' => 'false', 'showDeleted' => 'true', 'maxResults' => '2500'];
+            if ($pageToken !== null) {
+                $query['pageToken'] = $pageToken;
+            }
+            $data = $this->call($calendar, 'GET', '', null, $query, $beforeSend);
+            foreach ((array) ($data['items'] ?? []) as $item) {
+                if (is_array($item)) {
+                    $items[] = $item;
+                }
+            }
+            $pageToken = isset($data['nextPageToken']) && is_string($data['nextPageToken']) && $data['nextPageToken'] !== '' ? $data['nextPageToken'] : null;
+        } while ($pageToken !== null && ++$n < $pages);
+        return $items;
+    }
+
+    /**
      * The If-Match for a write to $googleId: the etag of a read (made now,
      * or the caller's $read), once what was read is the series (or event)
      * as stored here (GoogleSeries::condition, the one rule every write
      * follows; no caller is exempt).
      */
-    private function condition(array $calendar, string $googleId, ?\Closure $beforeSend, ?array $read = null): string
+    private function condition(array $calendar, string $googleId, ?\Closure $beforeSend, ?array $read = null, ?array $items = null): string
     {
-        return (new GoogleSeries($this->db, $this, $this->feeds))->condition($calendar, $googleId, $beforeSend, null, $read)['etag'];
+        return (new GoogleSeries($this->db, $this, $this->feeds))->condition($calendar, $googleId, $beforeSend, $items, $read)['etag'];
     }
 
     /**
@@ -527,7 +932,7 @@ final class GoogleWriter
         return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => $instanceUtc];
     }
 
-    private function call(array $calendar, string $method, string $path, ?array $payload, array $query = [], ?\Closure $beforeSend = null, ?string $ifMatch = null): array
+    private function call(array $calendar, string $method, string $path, ?array $payload, array $query = [], ?\Closure $beforeSend = null, ?string $ifMatch = null, bool $dayStep = false): array
     {
         $account = $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [(int) $calendar['google_account_id']]);
         if ($account === null) {
@@ -542,9 +947,10 @@ final class GoogleWriter
             $url .= '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
         }
         // Only a write is conditional: what it changes must be what was read,
-        // and none goes without the etag of a read (condition).
+        // and none goes without the etag of a read (condition), but for the
+        // one exemption, a run's day step (sendDayStep).
         $headers = [];
-        if ($method === 'PATCH' || $method === 'DELETE') {
+        if (($method === 'PATCH' || $method === 'DELETE') && !$dayStep) {
             if ($ifMatch === null || $ifMatch === '') {
                 throw new HttpError('google_write_failed', 'Nothing was sent to Google: no version of the event was read to write to.', 502);
             }
@@ -559,6 +965,7 @@ final class GoogleWriter
             : $http->json($method, $url, $payload, array_merge(['Authorization: Bearer ' . $access], $headers));
         // Refreshing a token is network work too. Recheck after it, not before it.
         if ($beforeSend !== null) $beforeSend();
+        $this->sent++;
         try {
             $r = $send($access);
         } catch (\RuntimeException $e) {
@@ -589,8 +996,44 @@ final class GoogleWriter
                 throw new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
             }
         }
+        // Every events.list answer states the level (the access probe, rows 3, 4, 4d): kept for the
+        // decision (admit) and stored. A list answered 404 is the calendar no longer shown to this
+        // account (stage unshared), never an event deleted: it is refused as such.
+        if ($method === 'GET' && $path === '') {
+            $role = self::roleOfList((int) $r['status'], (string) $r['body']);
+            if ($role !== null) {
+                $this->listAnswered($calendar, $account, $role);
+            }
+            if ($role === 'none' && isset($calendar['id'])) {
+                throw $this->refused($calendar, 'none');
+            }
+            // Any other refusal of a list says nothing of an event: never read as one deleted (gone).
+            if ($role === null && (int) $r['status'] >= 400 && self::refusal((int) $r['status'], (string) $r['body']) === 'deleted') {
+                throw new HttpError('google_write_failed', 'Google gave an answer Better-Cal does not read for this calendar\'s list; nothing was changed. Try again in a minute.', 502,
+                    ['googleStatus' => 0, 'said' => 'Google gave an answer Better-Cal does not read for this calendar\'s list.']);
+            }
+        }
+        // A write refused for what may be the account's access (a 403 not about a rate, a 404, a 410, a
+        // 412) is read only after one small list says the level now: access lowered or sharing removed
+        // between a change's list and its write answers each of these (the access probe: an insert 403
+        // requiredAccessLevel or 404, row 5; a PATCH 403 forbidden, 404, or 412 for the account's own
+        // single event once unshared, rows 6d to 6h; a DELETE there was not probed). Below writer, the
+        // write is refused as read-only, never as a change or a deletion at Google. Its cost, one list,
+        // is paid only on such a refusal. A write to a calendar not yet a calendar here (a move) is out.
+        $refusedAs = self::refusal((int) $r['status'], (string) $r['body']);
+        if ($method !== 'GET' && $path !== '/import' && isset($calendar['id'])
+            && ($r['status'] === 412 || in_array($refusedAs, ['permission', 'deleted'], true))) {
+            $role = $this->accessNow($calendar, $beforeSend);
+            if ($role === null) {
+                // The level could not be read: the refused write is read as nothing (never a 404 as "already removed").
+                throw self::unconfirmed();
+            }
+            if (!self::writes($role)) {
+                throw $this->refused($calendar, $role);
+            }
+        }
         if ($r['status'] === 412) {
-            throw new HttpError('google_conflict', self::CONFLICT_MESSAGE, 409);
+            throw new HttpError('google_conflict', self::CONFLICT_MESSAGE, 409, ['said' => self::CONFLICT_SAID]);
         }
         if ($r['status'] === 204 || ($method === 'DELETE' && $r['status'] === 410)) {
             return []; // deleted, or already gone
@@ -605,10 +1048,16 @@ final class GoogleWriter
             // Classified by Google's reason, not its status alone: busy
             // (a rate or quota limit, still so after the retries above),
             // the target deleted at Google, a permission refusal, the rest.
-            throw match (self::refusal((int) $r['status'], (string) $r['body'])) {
-                'busy' => new HttpError('google_busy', self::BUSY_MESSAGE, 503, $extra),
+            // Each refusal's message says nothing was changed, true of the one request; `said` is the same
+            // reason without that claim, for a caller whose change had already sent part of itself
+            // (GoogleSeries::run says what reached Google from what it sent).
+            $google = $why !== '' ? " Google said: \"$why\"." : '';
+            throw match ($refusedAs) {
+                'busy' => new HttpError('google_busy', self::BUSY_MESSAGE, 503, $extra + ['said' => 'Google is busy and refused the change for now.']),
                 'deleted' => self::deleted((int) $r['status']),
-                'permission' => new HttpError('google_write_failed', 'Google says this account may not edit that calendar' . ($why !== '' ? " ($why)" : ''), 403, $extra),
+                // The level a small list gave just now was writer, so this is not the calendar read-only: the
+                // probe saw Google refuse a write for a few seconds after edit access was given back (row 6e).
+                'permission' => new HttpError('google_write_failed', self::REFUSED_MESSAGE . $google, 403, $extra + ['said' => 'Google refused this part of the change.' . $google]),
                 default => new HttpError('google_write_failed', 'Google rejected the change: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : ''), 502, $extra),
             };
         }
@@ -622,7 +1071,7 @@ final class GoogleWriter
      */
     public static function deleted(int $googleStatus = 404): HttpError
     {
-        return new HttpError('google_deleted', self::DELETED_MESSAGE, 409, ['googleStatus' => $googleStatus]);
+        return new HttpError('google_deleted', self::DELETED_MESSAGE, 409, ['googleStatus' => $googleStatus, 'said' => 'This event was deleted at Google.']);
     }
 
     /**

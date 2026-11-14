@@ -387,6 +387,43 @@ final class Expect
         return null;
     }
 
+    /** The own fields Google holds of an edited day (an edited day with none of them is an ordinary day there). */
+    private const GOOGLE_OWN = ['date', 'time', 'length', 'allDay', 'title', 'location', 'description', 'url', 'status'];
+
+    /**
+     * On a Google calendar, the days a switch between timed and all-day would hide there (decisions.md, "A switch
+     * between timed and all-day that Google would hide days with is refused"; probe 2026-11-13, 3.48 to 3.51 and 3.63
+     * to 3.65), from what Google was seen to do: each day of the new series ($out's days) at the instant of an old day
+     * Google holds a record for (an edited day owning a field Google holds, or a deleted day), an all-day day's instant
+     * being its date at 00:00 UTC. The new series' dates, Y-m-d.
+     *
+     * @return list<string>
+     */
+    public function googleHidden(array $out): array
+    {
+        $o = $this->o;
+        if ($this->allDay1 === $o['allDay']) {
+            return [];
+        }
+        $held = [];
+        foreach ($o['exdates'] as $k) {
+            $held[Clock::db(Clock::parse((string) $k))] = true;
+        }
+        foreach ($o['overrides'] as $id => $row) {
+            if (array_intersect($o['own'][$id] ?? [], self::GOOGLE_OWN) !== []) {
+                $held[Clock::db(Clock::parse((string) $row['recurrence_instance_utc']))] = true;
+            }
+        }
+        $hidden = [];
+        foreach ($out['days'] as $dn) {
+            $at = $this->allDay1 ? Days::date((int) $dn) . ' 00:00:00' : Clock::db(Clock::at((int) $dn, $this->clock1, $this->tz1));
+            if (isset($held[$at])) {
+                $hidden[] = Days::date((int) $dn);
+            }
+        }
+        return $hidden;
+    }
+
     // ---- readings ----------------------------------------------------------
 
     /**
@@ -1146,7 +1183,9 @@ final class Expect
             $rows[$id] = ['img' => $img, 'inside' => $inside($img), 'acted' => false];
         }
         return [
-            'empty' => $days === [] || ($gen !== [] && count($gen) === count($days)),
+            // No events: no day, or a bounded series whose every day is skipped (decisions.md, "A plan that leaves no
+            // undeleted day is refused as leaving no events").
+            'empty' => $days === [] || ($gen !== [] && count($gen) === count($days)) || ($bound['kind'] !== 'none' && array_diff($days, $skips) === []),
             'start' => $days[0] ?? $earliest,
             'days' => $days,
             'bounded' => $bound['kind'] !== 'none',

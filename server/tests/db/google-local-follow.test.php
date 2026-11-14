@@ -83,6 +83,18 @@ return static function (Db $db): void {
         $calls->exchangeArray([]);
         return (object) ['u' => $u, 'fake' => $fake, 'calls' => $calls, 'sync' => $sync, 'events' => $events, 'calendarId' => $calendarId, 'masterId' => $masterId];
     };
+
+    // Issue 240: a "this event" edit of an ordinary day on a Google calendar that sends Google nothing (what it
+    // changes is held here alone, or equals the series there) makes the day's row itself; its own list is what
+    // the edit set, as every writer stores it (series-model.md, Own Fields), never left empty for a reader to infer.
+    scenario('google local follow: a "this event" edit that sends Google nothing stores the day\'s own list: the fields it set', function () use ($setup, $db): void {
+        $s = $setup();
+        $list = static fn(string $key): ?string => $db->scalar('SELECT override_fields FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$s->masterId, $key]);
+        checkEq('a tag given to 8 March: nothing sent, the row owns its tags', [[], '["tags"]'], [[], $list('2027-03-08 18:00:00')]);
+        $s->events->patch($s->u, $s->masterId, ['scope' => 'this', 'instanceStart' => '2027-03-15T17:00:00+00:00', 'title' => 'Sample practice']);
+        $s->events->throwDeferred();
+        checkEq('15 March given the series\' own title: nothing sent, the row owns its title', [[], '["title"]'], [$s->calls->getArrayCopy(), $list('2027-03-15 17:00:00')]);
+    });
     // A change made at Google (not through the app), then a poll: a whole
     // read (no sync token) or a delta.
     $remote = static function (object $s, array $body, bool $whole) use ($db): void {

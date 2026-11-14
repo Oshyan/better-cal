@@ -316,27 +316,36 @@ return static function (Db $db): void {
             ($w->refused)($name, $redo, $unplaced('had its days moved', true, $summary($undone)));
         });
 
-    // H7. A day's own time, redone after the series was made all-day: the forward edit's refusal, before anything is sent.
-    // The day keeps a row (a tag), so the gate lets it through; in the all-day series 6 Jan is 2027-01-06 00:00:00.
-    $google('6 Jan tagged, given 21:00 and that undone, the series made all-day here, then the time redone', $ny, function (stdClass $w, string $name) use ($sixth, $first): void {
-        ($w->this1)($sixth, ['tagNames' => ['sample-day']]);
-        ($w->this1)($sixth, ['start' => '2027-01-06T21:00:00-05:00', 'end' => '2027-01-06T22:00:00-05:00']);
+    // The two blocks below switch the series between timed and all-day: at 20:00 New York (01:00 UTC the day after), since
+    // at 19:00 (00:00 UTC) the day's record meets a day of the all-day series and Google would hide it, which refuses the
+    // switch on a Google calendar (probe 2026-11-13, 3.48; google-hidden-switch), and that meeting is not these cases' subject.
+    $ny20 = ['start' => '2027-01-04T20:00:00-05:00', 'end' => '2027-01-04T21:00:00-05:00'] + $ny;
+    $first20 = '2027-01-04T20:00:00-05:00';
+    $sixth20 = '2027-01-06T20:00:00-05:00';
+    // H7. A day's own time, redone after the series was made all-day. The day keeps a row (a tag), so the gate lets it
+    // through; in the all-day series 6 Jan is 2027-01-06 00:00:00. Google holds a timed day under an all-day series once
+    // its date is sent null (probe 3.38, 2026-11-13), so the redo goes through as the edit itself would: one PATCH on
+    // the day, and the day timed here again.
+    $google('6 Jan tagged, given 21:00 and that undone, the series made all-day here, then the time redone', $ny20, function (stdClass $w, string $name) use ($sixth20, $first20): void {
+        ($w->this1)($sixth20, ['tagNames' => ['sample-day']]);
+        ($w->this1)($sixth20, ['start' => '2027-01-06T21:00:00-05:00', 'end' => '2027-01-06T22:00:00-05:00']);
         ($w->undo)($undone = ($w->last)());
         $redo = ($w->last)();
-        ($w->series)('all', $first, ['allDay' => true, 'start' => '2027-01-04', 'end' => '2027-01-05', 'tzid' => 'UTC']);
+        ($w->series)('all', $first20, ['allDay' => true, 'start' => '2027-01-04', 'end' => '2027-01-05', 'tzid' => 'UTC']);
         checkEq("$name: (setup) the tagged day is 6 Jan of the all-day series", ['2027-01-06 00:00:00'], array_keys(($w->rows)()));
-        $was = ($w->all)();
-        checkEq("$name: refused as the edit itself is, in its words", 'google_all_day: At Google, a day of an all-day series can\'t be given a clock time. Make the series timed, or keep this day all-day.', ($w->undo)($redo));
-        checkEq("$name: nothing was sent and nothing written", [[], true], [($w->sent)(), $was === ($w->all)()]);
+        $result = ($w->undo)($redo);
+        $row = $w->db->one('SELECT all_day FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$w->id, '2027-01-06 00:00:00']);
+        checkEq("$name: the redo goes through with one PATCH, and the day is timed here again (probe 3.38)", ['done', ['PATCH'], 0],
+            [$result, array_column(($w->sent)(), 0), (int) ($row['all_day'] ?? -1)]);
     });
     foreach (['a time and zone of its own (21:00 New York held in Berlin)' => ['start' => '2027-01-07T03:00:00+01:00', 'end' => '2027-01-07T04:00:00+01:00', 'tzid' => 'Europe/Berlin'],
-        'moved to the 8th at the series clock' => ['start' => '2027-01-08T19:00:00-05:00', 'end' => '2027-01-08T20:00:00-05:00']] as $shape => $edit) {
+        'moved to the 8th at the series clock' => ['start' => '2027-01-08T20:00:00-05:00', 'end' => '2027-01-08T21:00:00-05:00']] as $shape => $edit) {
         foreach (['here', 'at Google'] as $where) {
-            $google("6 Jan given $shape and that undone, the series made all-day $where, then redone (no row, no skip)", $ny, function (stdClass $w, string $name) use ($sixth, $first, $edit, $where, $unplaced, $form, $summary): void {
-                ($w->this1)($sixth, $edit);
+            $google("6 Jan given $shape and that undone, the series made all-day $where, then redone (no row, no skip)", $ny20, function (stdClass $w, string $name) use ($sixth20, $first20, $edit, $where, $unplaced, $form, $summary): void {
+                ($w->this1)($sixth20, $edit);
                 ($w->undo)($undone = ($w->last)());
                 $redo = ($w->last)();
-                $where === 'here' ? ($w->series)('all', $first, ['allDay' => true, 'start' => '2027-01-04', 'end' => '2027-01-05', 'tzid' => 'UTC'])
+                $where === 'here' ? ($w->series)('all', $first20, ['allDay' => true, 'start' => '2027-01-04', 'end' => '2027-01-05', 'tzid' => 'UTC'])
                     : ($w->remote)(['start' => ['date' => '2027-01-04'], 'end' => ['date' => '2027-01-05']]);
                 ($w->refused)($name, $redo, $unplaced($form, true, $summary($undone)));
             });

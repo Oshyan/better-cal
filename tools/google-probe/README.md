@@ -53,7 +53,7 @@ What it proves: for each recorded request, that Google answers as the stand-in d
 
 ### Recording
 
-A trace is one scenario's requests and answers, in order, as JSON (`lib/Trace.php` has the format). `GOOGLE_TRACE=<file.json>` makes the edit harness's stand-in (`tools/edit-harness/GoogleStand.php`) record through a wrapper around its transports; nothing in the stand-in changes. The trace set comes from one process per scenario, so each trace holds its scenario alone: the three scenarios in `record-app.php` (a timed single event and an all-day one created, changed and deleted, a series deleted whole), the harness's fixed cases whose names start with `google-`, every sequence, and drawn cases 1 to 15 of seed 7, a poll after each write. On the test database:
+A trace is one scenario's requests and answers, in order, as JSON (`lib/Trace.php` has the format). `GOOGLE_TRACE=<file.json>` makes the edit harness's stand-in (`tools/edit-harness/GoogleStand.php`) record through a wrapper around its transports; nothing in the stand-in changes. The trace set comes from one process per scenario, so each trace holds its scenario alone: the four scenarios in `record-app.php` (a timed single event and an all-day one created, changed and deleted, a series deleted whole, plain and over an edited and a deleted day), the harness's fixed cases whose names start with `google-`, every sequence, and drawn cases 1 to 15 of seed 7, a poll after each write. On the test database:
 
 ```bash
 BC_TEST_DB=127.0.0.1:33308 php tools/google-probe/record.php --out workfolder/google-traces --zone America/Los_Angeles

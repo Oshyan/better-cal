@@ -405,7 +405,17 @@ final class Rsvp
         // list it has now (not our copy) with only our own answer changed:
         // read as every write's first read is (GoogleWriter::readNow, the list
         // by the iCalendar UID, whose level decides before anything is sent).
-        [$current, $items] = $this->google->readNow($calendar, $googleId, fn() => $check(false));
+        // With the conflict choice on, an event in no series is read through its step: the read stored as a poll
+        // stores it (its own write, before the send), and what Google changed is kept, never asked about: the click
+        // is the choice, and nothing of the answer is a field compared (GoogleConflict, nothing wanted).
+        $keptFields = [];
+        if (empty($row['rrule']) && empty($row['recurrence_parent_id']) && Settings::googleConflictChoice($this->db, (int) $row['user_id'])) {
+            $step = $this->google->readAndStore($calendar, $googleId, GoogleConflict::mapOf($row), [], fn() => $check(false));
+            [$current, $items] = [$step['read'], $step['items']];
+            $keptFields = GoogleConflict::having($step['outcomes'], 'kept');
+        } else {
+            [$current, $items] = $this->google->readNow($calendar, $googleId, fn() => $check(false));
+        }
         $attendees = (array) ($current['attendees'] ?? []);
         $was = null; // my answer before, for its undo
         foreach ($attendees as $i => $a) {
@@ -445,6 +455,6 @@ final class Rsvp
             $journal(google: $google);
         });
         ReviewQueue::holdGoogleAnswerLines($this->db, (int) $row['user_id'], (int) $row['id'], (string) $row['title'], (string) $calendar['name'], $sent['lines']);
-        return ['sent' => true, 'reason' => null, 'message' => null];
+        return ['sent' => true, 'reason' => null, 'message' => null] + ($keptFields !== [] ? ['keptFields' => $keptFields] : []);
     }
 }

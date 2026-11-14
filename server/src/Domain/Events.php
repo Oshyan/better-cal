@@ -97,11 +97,13 @@ final class Events
      * it is the private attendance mark. Scope applies to a series as for
      * any other change.
      */
-    public function setRelationship(int $userId, int $id, string $relationship, ?string $scope = null, ?string $instanceStart = null, ?RequestAuthority $authority = null, ?array $plan = null): void
+    public function setRelationship(int $userId, int $id, string $relationship, ?string $scope = null, ?string $instanceStart = null, ?RequestAuthority $authority = null, ?array $plan = null, ?array $over = null): void
     {
+        $this->googleKept = [];
         [$how, $value] = $this->relationshipChange($userId, $id, $relationship, $scope, $instanceStart);
         if ($how === 'patch') {
-            $this->patch($userId, $id, $value + ($plan !== null ? ['plan' => $plan] : []), $authority);
+            // An edit of the status: `over` (what the person was shown) goes with it.
+            $this->patch($userId, $id, $value + ($plan !== null ? ['plan' => $plan] : []) + ($over !== null ? ['over' => $over] : []), $authority);
             return;
         }
         $this->setAttendance($userId, $id, $value, $scope, $instanceStart, $plan);
@@ -544,18 +546,30 @@ final class Events
     {
         $id = (int) $event['id'];
         [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($event, $in));
+        // Only what Google holds goes to Google; a change of nothing it
+        // holds sends nothing and is written here as a local change.
+        $body = $googleFields === [] ? [] : self::patchBody($event, $googleFields);
+        $read = null;
+        $items = null;
+        if ($body !== [] && $this->choosesOverGoogle($userId, $event)) {
+            // The conflict choice: Google read and stored first, then the
+            // fields to send, or a question and nothing of the request written.
+            $step = $this->googleChoice($userId, $calendar, $event, $googleFields, $authority);
+            if ($step === null) {
+                return;
+            }
+            ['event' => $event, 'read' => $read, 'items' => $items, 'columns' => $googleFields] = $step;
+            $body = $googleFields === [] ? [] : self::patchBody($event, $googleFields);
+        }
         $this->tripRules($id, $localFields);
         // The row and its links before and after, as a local edit keeps
         // them: every column it changed is in the entry, Google's sent back
         // to Google on undo, the rest put back here (GoogleUndo).
         $before = ['events' => [$event]] + $this->labels->eventLinkRows($id);
         $resp = null;
-        // Only what Google holds goes to Google; a change of nothing it
-        // holds sends nothing and is written here as a local change.
-        $body = $googleFields === [] ? [] : self::patchBody($event, $googleFields);
         if ($body !== []) {
             $googleId = self::requireGoogleId($event);
-            $resp = $this->google()->patch($calendar, $googleId, $body, $this->googleBeforeSend($authority));
+            $resp = $this->google()->patch($calendar, $googleId, $body, $this->googleBeforeSend($authority), $read, items: $items);
         } else {
             $localFields += $googleFields;
             $googleFields = [];
@@ -804,23 +818,145 @@ final class Events
                 [$out['befores'], $beforeTables, $this->googleSeriesTables($calendar, [(string) $event['uid']])]);
             return;
         }
+        $read = null;
+        $items = null;
+        $gone = false;
+        if ($this->choosesOverGoogle($userId, $event)) {
+            // The conflict choice: a delete wants every field, so any change
+            // at Google since the event was shown is asked about.
+            try {
+                $step = $this->googleChoice($userId, $calendar, $event, null, $authority);
+                if ($step === null) {
+                    return;
+                }
+                ['event' => $event, 'read' => $read, 'items' => $items] = $step;
+            } catch (HttpError $e) {
+                if (!GoogleWriter::gone($e)) {
+                    throw $e;
+                }
+                $gone = true;
+            }
+        }
         $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => GoogleUndo::bodyOf($event)['status']],
             $event['google_etag'] ?? null, null, ['local' => $this->googleUndo()->localOf($event)]);
-        $gone = $this->googleRemove($calendar, $googleId, $authority);
+        $gone = $gone || $this->googleRemove($calendar, $googleId, $authority, $read, $items);
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], false, [GoogleWriter::tombstone((string) $event['uid'], null)]));
         $this->googleJournal($userId, $summary, $calendar, (int) $event['id'], $undo, note: $gone ? GoogleWriter::ALREADY_GONE : null);
+    }
+
+    /** Whether a change to $event goes through the conflict choice: the setting on, and an event in no series. */
+    private function choosesOverGoogle(int $userId, array $event): bool
+    {
+        return empty($event['rrule']) && empty($event['recurrence_parent_id']) && Settings::googleConflictChoice($this->db, $userId);
+    }
+
+    /**
+     * The step every write to one Google event in no series goes through
+     * with the setting on (docs/design/google-conflict-choice.md, the page
+     * "1.5.7, Slice 1"): Google read and the read stored as a poll stores it
+     * (GoogleWriter::readAndStore), the base being what the request's `over`
+     * says the person was shown, else the row; then, field by field
+     * (GoogleConflict::threeWay), either the question, left for after the
+     * transaction (throwDeferred) so the store commits and nothing of the
+     * request is written, or the row as stored, the read and its list for
+     * the write's condition, and the columns to send: those of each field to
+     * send, whole, and the request's columns that are no field (a zone, a
+     * rule). $columns: the Google columns the request sets; null for a
+     * delete, which wants every field. Sets `kept` (kept()).
+     *
+     * @return array{event:array, read:array, items:list<array>, columns:array<string,mixed>}|null null: asked
+     */
+    private function googleChoice(int $userId, array $calendar, array $event, ?array $columns, ?RequestAuthority $authority): ?array
+    {
+        $baseRow = array_merge($event, $this->overColumns($userId, $event, $this->requestOver));
+        $wantedRow = array_merge($baseRow, $columns ?? []);
+        $wanted = $columns === null
+            ? array_fill_keys(GoogleConflict::FIELDS, GoogleConflict::DELETE)
+            : array_intersect_key(GoogleConflict::mapOf($wantedRow), array_flip(GoogleConflict::fieldsIn($columns)));
+        $step = $this->google()->readAndStore($calendar, self::requireGoogleId($event), GoogleConflict::mapOf($baseRow), $wanted, $this->googleBeforeSend($authority));
+        $stored = $this->get($userId, (int) $event['id']);
+        $kept = $this->keptOf($stored, GoogleConflict::having($step['outcomes'], 'kept'));
+        $asked = GoogleConflict::having($step['outcomes'], 'ask');
+        if ($asked !== []) {
+            $was = $this->servedFields($baseRow);
+            $now = $this->servedFields($stored);
+            $yours = $columns === null ? null : $this->servedFields($wantedRow);
+            $fields = array_map(static fn(string $f): array => ['field' => $f, 'was' => $was[$f], 'now' => $now[$f], 'yours' => $yours === null ? null : $yours[$f]], $asked);
+            $this->googleDeferred = new HttpError('google_changed', GoogleConflict::message((string) $was['title'], $fields, $columns === null), 409, ['fields' => $fields, 'kept' => $kept]);
+            return null;
+        }
+        $this->googleKept = $kept;
+        $send = [];
+        foreach (GoogleConflict::having($step['outcomes'], 'send') as $field) {
+            foreach (array_merge(GoogleConflict::COLUMNS[$field], $field === 'time' ? ['tzid'] : []) as $column) {
+                $send[$column] = $wantedRow[$column] ?? null;
+            }
+        }
+        $fieldColumns = array_merge(...array_values(GoogleConflict::COLUMNS));
+        return ['event' => $stored, 'read' => $step['read'], 'items' => $step['items'],
+            'columns' => $send + array_diff_key($columns ?? [], array_flip($fieldColumns))];
+    }
+
+    /**
+     * The columns the request's `over` names, parsed exactly as the same keys
+     * in a request body are (fromViewer, columnPatch over the row): the base
+     * of the conflict choice. Only the six fields' columns.
+     *
+     * @return array<string,mixed>
+     */
+    public function overColumns(int $userId, array $row, array $over): array
+    {
+        $over = array_intersect_key($over, array_flip(['title', 'description', 'location', 'url', 'status', 'start', 'end', 'allDay']));
+        if ($over === []) {
+            return [];
+        }
+        $over = $this->fromViewer($userId, (int) $row['id'], $over);
+        return array_intersect_key($this->columnPatch($row, $over), array_flip(array_merge(...array_values(GoogleConflict::COLUMNS))));
+    }
+
+    /**
+     * A row's six fields as the API serves them (serializeFields): the form
+     * of `over`, of a question's values and of `kept`. The time is
+     * {start, end, allDay}.
+     *
+     * @return array<string,mixed>
+     */
+    public function servedFields(array $row): array
+    {
+        $s = $this->serializeFields($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), [], true);
+        return ['title' => $s['title'], 'description' => $s['description'], 'location' => $s['location'], 'url' => $s['url'], 'status' => $s['status'],
+            'time' => ['start' => $s['start'], 'end' => $s['end'], 'allDay' => $s['allDay']]];
+    }
+
+    /**
+     * `kept` for fields of $row: each with its value as served.
+     *
+     * @param list<string> $fields
+     * @return list<array{field:string, now:mixed}>
+     */
+    public function keptOf(array $row, array $fields): array
+    {
+        $served = $fields === [] ? [] : $this->servedFields($row);
+        return array_map(static fn(string $f): array => ['field' => $f, 'now' => $served[$f]], $fields);
+    }
+
+    /** What the last change to one Google event left as Google changed it (`kept` of a 200); [] when nothing. */
+    public function kept(): array
+    {
+        return $this->googleKept;
     }
 
     /**
      * A removal at Google of one event or one day, read as every removal
      * reads one (GoogleWriter::gone, the series path's reading): a target
      * Google no longer has is removed already, so the removal completes
-     * here. Returns whether it was gone.
+     * here. Returns whether it was gone. $read and $items: the conflict
+     * choice's read, for the write's condition.
      */
-    private function googleRemove(array $calendar, string $googleId, ?RequestAuthority $authority): bool
+    private function googleRemove(array $calendar, string $googleId, ?RequestAuthority $authority, ?array $read = null, ?array $items = null): bool
     {
         try {
-            $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
+            $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority), $read, items: $items);
         } catch (HttpError $e) {
             if (!GoogleWriter::gone($e)) {
                 throw $e;
@@ -1585,6 +1721,11 @@ final class Events
     public function patch(int $userId, int $id, array $in, ?RequestAuthority $authority = null): void
     {
         $this->parentSeries = [];
+        // `over`: the fields as the person was shown them, the base of the
+        // conflict choice (googleChoice), never a field to write.
+        $this->googleKept = [];
+        $this->requestOver = is_array($in['over'] ?? null) ? $in['over'] : [];
+        unset($in['over']);
         if (!empty($in['preview'])) {
             // A preview is answered by previewPatch and never applied.
             throw HttpError::badRequest('preview is answered without applying the change; send it to the preview path', 'preview_unavailable');
@@ -1698,6 +1839,11 @@ final class Events
 
     /** The patch under way's trip rows and those flagged before it ([rows, flagged]), for tripRules; null when it leaves the flag alone. */
     private ?array $tripRule = null;
+
+    /** The request's `over` (patch, deleteEvent): what the person was shown, by served key. */
+    private array $requestOver = [];
+    /** `kept` of the change under way (googleChoice): the fields Google changed that it leaves as they are. */
+    private array $googleKept = [];
 
     /**
      * The trip rules (Trips::assertRules) over the patch under way's rows,
@@ -2238,8 +2384,11 @@ final class Events
     }
 
     /** $plan: delete following's confirmed plan ({hash, choices}), as for any series change (Series Plans). */
-    public function deleteEvent(int $userId, int $id, ?string $scope, ?string $instanceStart, ?RequestAuthority $authority = null, ?array $plan = null): void
+    /** $over: the fields as the person was shown them, the base of the conflict choice (googleChoice); none, the row. */
+    public function deleteEvent(int $userId, int $id, ?string $scope, ?string $instanceStart, ?RequestAuthority $authority = null, ?array $plan = null, ?array $over = null): void
     {
+        $this->googleKept = [];
+        $this->requestOver = $over ?? [];
         $event = $this->get($userId, $id);
         $this->undo->write($userId, function () use ($userId, $id, $scope, $instanceStart, $event, $authority, $plan): void {
             // As in create(): the credential is locked before the calendar.

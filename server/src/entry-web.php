@@ -175,6 +175,13 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/calendars/:id/export", [$exportController, 'calendar']);
         $router->add('GET', "$base/export", [$exportController, 'all']);
         $router->add('POST', "$base/calendars/:id/claim-subscription", [$calendarsController, 'claimSubscription']);
+        // Check again: what Google lets this account do with a Google calendar now (Events::checkGoogleAccess).
+        $router->add('POST', "$base/calendars/:id/check-access", function (Request $req, array $params) use ($events, $calendars): Response {
+            $req->requireSession('Checking a calendar\'s access at Google');
+            $userId = (int) $req->user['id'];
+            $role = $events->checkGoogleAccess($userId, (int) $params['id'], Domain\RequestAuthority::request($req));
+            return Response::json(['googleAccessRole' => $role, 'calendar' => $calendars->serializeById($userId, (int) $params['id'])]);
+        });
         $router->add('PATCH', "$base/calendars", [$calendarsController, 'patchMany']);
         $router->add('PATCH', "$base/calendars/:id", [$calendarsController, 'patch']);
         $router->add('POST', "$base/calendars/:id/position", [$calendarsController, 'position']);
@@ -226,9 +233,9 @@ function bc_handle_api(Request $request, array $cfg): void
             return Response::json(['ok' => true, 'undone' => $undone]);
         });
         // Single-event occurrence, for activity jump-to-event.
-        $router->add('GET', "$base/events/:id/occurrence", function (Request $req, array $params) use ($events): Response {
+        $router->add('GET', "$base/events/:id/occurrence", function (Request $req, array $params) use ($events, $db): Response {
             $row = $events->get((int) $req->user['id'], (int) $params['id']);
-            return Response::json(['occurrence' => $events->serializeSingle($row)]);
+            return Response::json(['occurrence' => $events->serializeSingle($row) + ['halfDone' => Domain\Events::halfDoneLine($db, $events, $row)]]);
         });
 
         $router->add('GET', "$base/search", [$searchController, 'search']);
@@ -290,6 +297,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/review/mail-errors/:id/dismiss", [$reviewController, 'dismissMailError']);
         $router->add('POST', "$base/review/model-limits/:id/dismiss", [$reviewController, 'dismissModelLimit']);
         $router->add('POST', "$base/review/google-differences/:id/dismiss", [$reviewController, 'dismissGoogleDifferences']);
+        $router->add('POST', "$base/review/notices/:id/dismiss", [$reviewController, 'dismissNotice']);
+        $router->add('POST', "$base/review/notices/:id/reopen", [$reviewController, 'reopenNotice']);
         $router->add('POST', "$base/review/google-half/:id/finish", [$reviewController, 'finishGoogle']);
         $router->add('POST', "$base/review/google-half/:id/put-back", [$reviewController, 'putBackGoogle']);
         $router->add('POST', "$base/duplicates/:id", [$reviewController, 'decideDuplicate']);

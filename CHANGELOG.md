@@ -6,7 +6,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## 1.5.6 (unreleased)
 
-Google calendars, after replaying Better-Cal's own requests against Google and probing what it does.
+Google calendars, after replaying Better-Cal's own requests against Google and probing what it does: fixes, one rule for a change to all events (read back, then send every day that is not as you asked), and access that is read from Google and said plainly.
 
 - **A repeating event is no longer switched between timed and all-day where Google Calendar would stop showing some of its days.** Google does this, undocumented, when a day of the event has its own changes or was deleted and the event's time is midnight in UTC (09:00 in Tokyo, 16:00 or 17:00 in Los Angeles). Better-Cal now says so before sending anything, names the days, and gives the way that works: move the event's time first, then switch.
 - **A day with its own time or length keeps it** when you change something for all events of a repeating event (its time, its zone, its first day). Google moved the day's start and left its end, and Better-Cal kept that: the day ended up the wrong length, at Google and here, with nothing said. After its change to the event Better-Cal now reads back what Google holds and sends every day that is not as you asked, whatever Google did to it.
@@ -17,6 +17,9 @@ Google calendars, after replaying Better-Cal's own requests against Google and p
 - **A Put back that failed part way no longer spoils the change.** A later Finish could lose a day's own changes without saying so; Finish and Put back now work from the change as it was first recorded.
 - **One day of an all-day repeating event can take a time** on a Google calendar.
 - **Undo's refusals read as one sentence,** without "Undo failed:" in front of one that already says what happened.
+- **Better-Cal notices when your access to a Google calendar changes, and says so.** When Google lowers this account to view only or busy times only, or stops showing the calendar, Activity and a Review notice say it once and the calendar works read-only here until editing is given back; then changes and undo work again. A change you try is checked with Google first, so it is never refused on an old reading, and **Check again** in Review and in the calendar's settings asks Google now.
+- **At busy times only, events here stay as they were.** Google then shows this account times without titles; that listing is no longer applied over what Better-Cal holds.
+- **Every Review notice can be dismissed,** a change left half done at Google and a paused subscription included. Dismiss means you have seen it and changes nothing else; Review's history lists it with **Show again** while what it reports still holds.
 - Maintainers: `tools/google-probe` ran three times on 2026-11-13 ([findings](docs/design/research/google-series/probe-2026-11-13.md)), and the stand-in for Google now hides days, clears notes and cancels a series as Google does. The harness's shrinker no longer stops on a case with no edit, and its interleaving mode refuses `--product` instead of ignoring it.
 
 **What the upgrade loses:** a change left half done by 1.5.5 that had already brought a deleted day back keeps it back after Finish; Put back restores it. A half-done switch between timed and all-day at such a time may be refused by Finish with the new sentence, which then says to Put back first. Nothing else: no event, tag, person or setting changes.

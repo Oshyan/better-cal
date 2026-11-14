@@ -234,10 +234,10 @@ $standIn = static function (): FakeGoogle {
     $fake = new FakeGoogle(CAL);
     $fake->token = null;
     $la = static fn(string $local): array => ['dateTime' => (new DateTimeImmutable($local, new DateTimeZone('America/Los_Angeles')))->format('Y-m-d\TH:i:sP'), 'timeZone' => 'America/Los_Angeles'];
-    $fake->seed(['id' => 'standin01', 'summary' => 'Sample weekly', 'start' => $la('2027-03-01 10:00'), 'end' => $la('2027-03-01 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=10']]);
-    $fake->seed(['id' => 'standin01_20270315T170000Z', 'iCalUID' => 'standin01@google.com', 'recurringEventId' => 'standin01', 'summary' => 'Sample weekly',
+    $fake->seed(['id' => 'standin01', 'summary' => 'Sample series', 'start' => $la('2027-03-01 10:00'), 'end' => $la('2027-03-01 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=10']]);
+    $fake->seed(['id' => 'standin01_20270315T170000Z', 'iCalUID' => 'standin01@google.com', 'recurringEventId' => 'standin01', 'summary' => 'Sample series',
         'originalStartTime' => $la('2027-03-15 10:00'), 'start' => $la('2027-03-16 10:00'), 'end' => $la('2027-03-16 11:00')]);
-    $fake->seed(['id' => 'standin01_20270405T170000Z', 'iCalUID' => 'standin01@google.com', 'recurringEventId' => 'standin01', 'summary' => 'Sample weekly', 'status' => 'cancelled',
+    $fake->seed(['id' => 'standin01_20270405T170000Z', 'iCalUID' => 'standin01@google.com', 'recurringEventId' => 'standin01', 'summary' => 'Sample series', 'status' => 'cancelled',
         'originalStartTime' => $la('2027-04-05 10:00'), 'start' => $la('2027-04-05 10:00'), 'end' => $la('2027-04-05 11:00')]);
     return $fake;
 };
@@ -548,6 +548,142 @@ $call($fake, 'PATCH', 'notes001', ['summary' => 'Sample notes, renamed']);
 $afterTitle = $day($fake);
 check('stand-in, 3.68: a master PATCH with no recurrence clears a day\'s own notes on a series with none; a title-only PATCH after leaves them absent and renames the day',
     !array_key_exists('description', $afterProperty) && !array_key_exists('description', $afterTitle) && ($afterTitle['summary'] ?? null) === 'Sample notes, renamed', json_encode([$afterProperty, $afterTitle]));
+
+// ---- The stand-in by the account's level, against the access probe of 2026-11-13 ----
+// Each expectation is a row of workfolder/google-access/access-a49ac66229.md (stage and row named) or of the listread
+// run, workfolder/google-access-listread/access-61fb838522.md. Before the stand-in took a level, every one of these
+// answered as a writer, so each check of a level here fails on it (the L1 etag and the restored writes hold on both). The account's own single event (made by this account), a
+// series it made with a renamed day, and an event of the calendar's owner, as the probe's stages had.
+$access = static function () use ($call): FakeGoogle {
+    $fake = new FakeGoogle(CAL);
+    $fake->token = null;
+    $fake->owner = 'account@example.org';
+    $la = static fn(string $l): array => ['dateTime' => (new DateTimeImmutable($l, new DateTimeZone('America/Los_Angeles')))->format('Y-m-d\TH:i:sP'), 'timeZone' => 'America/Los_Angeles'];
+    $call($fake, 'POST', '', ['id' => 'single0001', 'summary' => 'Sample single', 'start' => $la('2027-03-02 09:00'), 'end' => $la('2027-03-02 10:00')]);
+    $call($fake, 'POST', '', ['id' => 'series0001', 'summary' => 'Sample series', 'start' => $la('2027-03-01 10:00'), 'end' => $la('2027-03-01 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4']]);
+    $call($fake, 'PATCH', 'series0001_20270308T180000Z', ['summary' => 'Sample series (one changed)']);
+    $fake->seed(['id' => 'others0001', 'summary' => 'Owner event', 'creator' => ['email' => 'owner@example.org'], 'start' => $la('2027-03-03 09:00'), 'end' => $la('2027-03-03 10:00')]);
+    return $fake;
+};
+$listOf = static fn(FakeGoogle $fake, array $q = ['maxResults' => '1']): array => $call($fake, 'GET', '', null, $q);
+$etagOf = static fn(FakeGoogle $fake, string $id): string => (string) ($call($fake, 'GET', $id)[1]['etag'] ?? '');
+
+// Every list answer states the level: plain (rows 3, 4), by iCalUID (L1 to L8, an unknown iCalUID too) and delta (4d).
+$fake = $access();
+[$s1, $l1] = $listOf($fake);
+[$s2, $l2] = $listOf($fake, ['iCalUID' => 'single0001@google.com', 'singleEvents' => 'false', 'showDeleted' => 'true']);
+[$s3, $l3] = $listOf($fake, ['iCalUID' => 'never0existed@example.org']);
+[, $whole] = $listOf($fake, ['showDeleted' => 'true', 'singleEvents' => 'false']);
+[$s4, $l4] = $listOf($fake, ['syncToken' => (string) $whole['nextSyncToken']]);
+check('stand-in, access rows 3, 4, 4d, L1, L8: every list answer carries accessRole, an unknown iCalUID answering 200 empty with it',
+    [$s1, $s2, $s3, $s4] === [200, 200, 200, 200] && [$l1['accessRole'] ?? null, $l2['accessRole'] ?? null, $l3['accessRole'] ?? null, $l4['accessRole'] ?? null] === ['owner', 'owner', 'owner', 'owner'] && ($l3['items'] ?? null) === [],
+    json_encode([$s1, $s2, $s3, $s4, $l1['accessRole'] ?? null, $l3['items'] ?? null]));
+// L1: a single event listed by its iCalUID is the resource a GET returns, the same etag.
+check('stand-in, L1: a single event listed by its iCalUID has the etag its GET gives', count($l2['items'] ?? []) === 1 && ($l2['items'][0]['etag'] ?? null) === $etagOf($fake, 'single0001'));
+
+// Any change of level makes the token from before it answer 410 fullSyncRequired (row 4d); one given after answers 200.
+$fake = $access();
+[, $whole] = $listOf($fake, ['showDeleted' => 'true', 'singleEvents' => 'false']);
+$fake->role = 'writer';
+[$st, $d] = $listOf($fake, ['syncToken' => (string) $whole['nextSyncToken']]);
+[, $again] = $listOf($fake, ['showDeleted' => 'true', 'singleEvents' => 'false']);
+[$st2, $d2] = $listOf($fake, ['syncToken' => (string) $again['nextSyncToken']]);
+check('stand-in, row 4d: after a change of level the earlier token answers 410 fullSyncRequired; a token given after it answers 200 writer',
+    $st === 410 && ($d['error']['errors'][0]['reason'] ?? null) === 'fullSyncRequired' && $st2 === 200 && ($d2['accessRole'] ?? null) === 'writer', json_encode([$st, $d, $st2]));
+
+// reader (stage reader): reads 200, an insert 403 requiredAccessLevel (row 5), every PATCH 403 forbidden (6d to 6h).
+$fake = $access();
+$single = $etagOf($fake, 'single0001');
+$fake->role = 'reader';
+[$sl, $rl] = $listOf($fake);
+$reads = array_map(static fn(string $id): int => $call($fake, 'GET', $id)[0], ['single0001', 'series0001', 'series0001_20270308T180000Z', 'others0001']);
+[$si, $ins] = $call($fake, 'POST', '', ['summary' => 'Sample insert', 'start' => ['date' => '2027-03-09'], 'end' => ['date' => '2027-03-10']]);
+$patches = [];
+foreach (['single0001' => ['_ifMatch' => $single], 'series0001' => [], 'series0001_20270308T180000Z' => [], 'others0001' => []] as $id => $extra) {
+    [$ps, $pb] = $call($fake, 'PATCH', $id, ['summary' => 'Changed'] + $extra);
+    $patches[] = $ps . ' ' . ($pb['error']['errors'][0]['reason'] ?? '');
+}
+check('stand-in, stage reader: lists say reader, reads 200, an insert 403 requiredAccessLevel, every PATCH 403 forbidden',
+    $sl === 200 && ($rl['accessRole'] ?? null) === 'reader' && $reads === [200, 200, 200, 200]
+    && $si === 403 && ($ins['error']['errors'][0]['reason'] ?? null) === 'requiredAccessLevel' && ($ins['error']['message'] ?? null) === 'You need to have writer access to this calendar.'
+    && $patches === ['403 forbidden', '403 forbidden', '403 forbidden', '403 forbidden'], json_encode([$sl, $rl['accessRole'] ?? null, $reads, $si, $patches]));
+check('stand-in, stage reader: nothing a refused write sent was taken', ($fake->events['single0001']['summary'] ?? null) === 'Sample single');
+
+// freeBusyReader (stage freebusy): lists 200; a single event, a day and another's event 200 with no title (6a, 6c, 6g);
+// the series' main record 404 on read and PATCH (6b, 6e); other PATCHes 403 forbidden (6d, 6f, 6h); an insert 403 (5).
+$fake = $access();
+$fake->role = 'freeBusyReader';
+[$fl, $flb] = $listOf($fake, ['showDeleted' => 'true', 'singleEvents' => 'false']);
+$got = [];
+foreach (['single0001', 'series0001', 'series0001_20270308T180000Z', 'others0001'] as $id) {
+    [$gs, $gb] = $call($fake, 'GET', $id);
+    $got[] = $gs . (isset($gb['summary']) ? ' titled' : '');
+}
+$fp = [];
+foreach (['single0001', 'series0001', 'series0001_20270308T180000Z', 'others0001'] as $id) {
+    $fp[] = $call($fake, 'PATCH', $id, ['summary' => 'Changed'])[0];
+}
+[$fi] = $call($fake, 'POST', '', ['summary' => 'Sample insert', 'start' => ['date' => '2027-03-09'], 'end' => ['date' => '2027-03-10']]);
+$titled = array_filter($flb['items'] ?? [], static fn(array $e): bool => isset($e['summary']));
+check('stand-in, stage freebusy: lists 200 freeBusyReader with no titles; single, day and another\'s event 200 with no title, the series 404; PATCHes 403 but the series 404; insert 403',
+    $fl === 200 && ($flb['accessRole'] ?? null) === 'freeBusyReader' && $titled === [] && $got === ['200', '404', '200', '200'] && $fp === [403, 404, 403, 403] && $fi === 403,
+    json_encode([$fl, $flb['accessRole'] ?? null, count($titled), $got, $fp, $fi]));
+
+// none (stage unshared): 404 everywhere (rows 1 to 5, 6b, 6c, 6e to 6h) but the account's own single event: it reads
+// 200 (6a) and its PATCH with If-Match answers 412 (6d). A series the account made answers 404 too (6b, 6e).
+$fake = $access();
+$single = $etagOf($fake, 'single0001');
+$fake->role = 'none';
+$entry = ($fake->transport())('GET', Api::BASE . '/users/me/calendarList/' . rawurlencode(CAL), ['Authorization: Bearer x'], null);
+$cal = ($fake->transport())('GET', Api::BASE . '/calendars/' . rawurlencode(CAL), ['Authorization: Bearer x'], null);
+$none = [(int) $entry['status'], (int) $cal['status'], $listOf($fake)[0], $listOf($fake, ['iCalUID' => 'single0001@google.com'])[0],
+    $call($fake, 'POST', '', ['summary' => 'Sample insert', 'start' => ['date' => '2027-03-09'], 'end' => ['date' => '2027-03-10']])[0]];
+$reads = array_map(static fn(string $id): int => $call($fake, 'GET', $id)[0], ['single0001', 'series0001', 'series0001_20270308T180000Z', 'others0001']);
+$np = [$call($fake, 'PATCH', 'single0001', ['summary' => 'Changed', '_ifMatch' => $single])[0], $call($fake, 'PATCH', 'series0001', ['summary' => 'Changed'])[0],
+    $call($fake, 'PATCH', 'series0001_20270308T180000Z', ['summary' => 'Changed'])[0], $call($fake, 'PATCH', 'others0001', ['summary' => 'Changed'])[0]];
+check('stand-in, stage unshared: 404 on the list entry, the calendar, every list and an insert; reads 404 but the account\'s own single event 200; its PATCH 412, the rest 404',
+    $none === [404, 404, 404, 404, 404] && $reads === [200, 404, 404, 404] && $np === [412, 404, 404, 404], json_encode([$none, $reads, $np]));
+
+// The second live round (2026-11-14, workfolder/google-access-2/access-a49ac66229.md): every DELETE with If-Match at view
+// only and at busy times only 403 forbidden, at not shown 404 for all, the events kept (rows D1 to D4); a busy-only list
+// carries only times and ids, gives a series as its occurrences with no rule, and no sync token (rows 4, U1, U2).
+$deletes = [];
+foreach (['reader', 'freeBusyReader', 'none'] as $level) {
+    $fake = $access();
+    $tags = ['single0001' => $etagOf($fake, 'single0001'), 'series0001' => $etagOf($fake, 'series0001'),
+        'series0001_20270308T180000Z' => $etagOf($fake, 'series0001_20270308T180000Z'), 'others0001' => $etagOf($fake, 'others0001')];
+    $fake->role = $level;
+    foreach ($tags as $id => $etag) {
+        $deletes[$level][] = $call($fake, 'DELETE', $id, ['_ifMatch' => $etag])[0];
+    }
+    $kept = array_filter(array_keys($tags), static fn(string $id): bool => ($fake->events[$id]['status'] ?? 'confirmed') !== 'cancelled');
+    $deletes[$level][] = count($kept);
+}
+check('stand-in, round 2, D1 to D4: DELETE 403 at view only and busy times only, 404 at not shown, for all four, the events kept',
+    $deletes === ['reader' => [403, 403, 403, 403, 4], 'freeBusyReader' => [403, 403, 403, 403, 4], 'none' => [404, 404, 404, 404, 4]], json_encode($deletes));
+$fake = $access();
+$fake->role = 'freeBusyReader';
+[, $bw] = $listOf($fake, ['showDeleted' => 'true', 'singleEvents' => 'false', 'maxResults' => '2500']);
+[, $bs] = $listOf($fake, ['iCalUID' => 'series0001@google.com', 'singleEvents' => 'false', 'showDeleted' => 'true']);
+$fields = array_unique(array_merge(...array_map('array_keys', $bw['items'] ?? [[]])));
+sort($fields);
+check('stand-in, round 2, rows 4 and U2: a busy-only list carries only times and ids, a series as its occurrences with no rule, and no sync token',
+    array_diff($fields, ['end', 'etag', 'htmlLink', 'iCalUID', 'id', 'kind', 'start', 'status', 'updated', 'visibility']) === [] && count($bs['items'] ?? []) === 4
+        && !isset($bw['nextSyncToken']) && array_filter($bw['items'] ?? [], static fn(array $e): bool => isset($e['recurrence'])) === [], json_encode([$fields, count($bs['items'] ?? []), isset($bw['nextSyncToken'])]));
+
+// Stage deleted (round 2, 2026-11-14): a calendar deleted by its owner answers as one no longer shared, the delta from an
+// earlier token included: 404, not 410.
+$fake = $access();
+[, $whole] = $listOf($fake, ['showDeleted' => 'true', 'singleEvents' => 'false']);
+$fake->role = 'none';
+[$dst] = $listOf($fake, ['syncToken' => (string) $whole['nextSyncToken']]);
+check('stand-in, stage deleted: the delta from an earlier token answers 404, as every list does', $dst === 404, (string) $dst);
+
+// Access given back (stage restored, second run): everything answers as a writer again.
+$fake->role = 'writer';
+[$rs] = $call($fake, 'PATCH', 'series0001', ['summary' => 'Sample series (restored)']);
+[$ri] = $call($fake, 'POST', '', ['summary' => 'Sample insert', 'start' => ['date' => '2027-03-09'], 'end' => ['date' => '2027-03-10']]);
+check('stand-in, stage restored: writes are taken again', [$rs, $ri] === [200, 200], json_encode([$rs, $ri]));
 
 // ---- Report scrubbing on its own ---------------------------------------------
 $r = new Report($tmp . '/scrub');

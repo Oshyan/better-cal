@@ -440,9 +440,11 @@ return static function (Db $db): void {
                 checkEq("$name: the answer is taken, and Google has it", [null, 'accepted'], [$error, $mine()]);
                 $ends($inv, "$name, after the answer", $series(), $want);
                 if ($dayWrites !== null) {
-                    // No slower where nothing is to put back: the read of the event, the read of its series, the write, one read after.
-                    checkEq("$name: with no day to put back the answer costs what it did (two lists, one read of the event, one write, no day write)",
-                        [2, 1, 1, $dayWrites, 0], [$n['lists'], $n['gets'], $n['master'], $n['days'], $n['other']]);
+                    // No slower where nothing is to put back: the list that is the answer's first read (it took the place of a
+                    // read of the event and a list of its series when the access rule made every first read a list), the
+                    // write, one read after.
+                    checkEq("$name: with no day to put back the answer costs no more than it did (two lists, no read of the event by its id, one write, no day write)",
+                        [2, 0, 1, $dayWrites, 0], [$n['lists'], $n['gets'], $n['master'], $n['days'], $n['other']]);
                 }
 
                 $error = null;

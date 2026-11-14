@@ -567,10 +567,14 @@ final class GoogleSeries
         });
     }
 
-    /** A Google answer that refused the write: it changed nothing there (any 4xx, the 412 of a conflict among them). */
+    /**
+     * A Google answer that refused the write: it changed nothing there (any 4xx, the 412 of a conflict among them),
+     * the refusals built after the small list included (the access rule's, and one whose level could not be read):
+     * whether anything was changed is known from what Google answered, not from how the refusal was worded.
+     */
     private static function refused(HttpError $e): bool
     {
-        if ($e->errorCode === 'google_conflict') {
+        if ($e->errorCode === 'google_conflict' || GoogleWriter::isReadOnly($e) || !empty($e->extra['refused'])) {
             return true;
         }
         $status = (int) ($e->extra['googleStatus'] ?? 0);
@@ -631,9 +635,14 @@ final class GoogleSeries
             $items = [$read]; // an event in no series: the caller's read is the whole read
         }
         if ($items === null) {
-            $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
-                => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
-            $items = $this->readBack($calendar, $send, $master !== null && !empty($master['rrule']) ? (string) $master['uid'] : null, $seriesId, null, $beforeSend);
+            $since = $this->writer->mark();
+            $items = $this->firstRead($calendar, $master, $seriesId, $beforeSend);
+            // The access rule's decision (docs/design/google-access-detect-and-inform.md): the level this
+            // change's list answered is writer or owner, or nothing is sent. Before anything else is read
+            // from the answer, so a calendar shown as busy times only, whose series answer 404 (the access
+            // probe, stage freebusy, row 6b), is never read as a series deleted. A read the caller made
+            // and passed in was decided on where it was made (readNow, run).
+            $this->writer->admit($calendar, $beforeSend, $since);
         }
         // Read by Google's reason, as every answer is (GoogleWriter::refusal):
         // a target Google no longer has (its read answered 404 or 410, or
@@ -663,7 +672,8 @@ final class GoogleSeries
      * notes, probe 3.68 of 2026-11-14), so after it the series is read back and every day that is not as it was is
      * sent (sendDays). The plan is the series as stored here, which the read before the write has just matched
      * (condition): such a write asks nothing of any day. $read is the resource as the caller has just read it and
-     * built $body from; its etag is the If-Match.
+     * built $body from, and $items the read it came from (readNow: the write's first read, the list by the iCalendar
+     * UID, decided on by the access rule there); $read's etag is the If-Match, and no other read is made before the write.
      *
      * For an id that is not a series' own (a single event, one day of a series) this is the one conditional write
      * every PATCH goes through (GoogleWriter::patch), as before.
@@ -675,25 +685,29 @@ final class GoogleSeries
      *
      * @return array{resource:array, uid:?string, plan:?array, readback:?list<array>, lines:list<string>}
      */
-    public function writeBesideDays(array $calendar, string $googleId, array $body, ?\Closure $beforeSend, array $read): array
+    public function writeBesideDays(array $calendar, string $googleId, array $body, ?\Closure $beforeSend, array $read, array $items): array
     {
         [$master, $rows] = $this->storedOf($calendar, $googleId);
         if ($master === null || empty($master['rrule']) || (string) $master['google_event_id'] !== $googleId) {
-            return ['resource' => $this->writer->patch($calendar, $googleId, $body, $beforeSend, $read), 'uid' => null, 'plan' => null, 'readback' => null, 'lines' => []];
+            return ['resource' => $this->writer->patch($calendar, $googleId, $body, $beforeSend, $read, items: $items), 'uid' => null, 'plan' => null, 'readback' => null, 'lines' => []];
         }
         $send = fn(string $method, string $path, ?array $payload, ?string $ifMatch): array
             => $this->writer->send($calendar, $method, $path, $payload, [], $ifMatch, $beforeSend);
         $uid = (string) $master['uid'];
         $plan = self::stateOf($master, $rows);
-        $first = $this->readBack($calendar, $send, $uid, $googleId, null, $beforeSend);
+        $first = $items;
         $etag = $this->condition($calendar, $googleId, $beforeSend, $first, $read)['etag'];
         $resource = $send('PATCH', '/' . rawurlencode($googleId), $body, $etag);
         $out = ['resource' => $resource, 'uid' => $uid, 'plan' => $plan, 'readback' => null, 'lines' => []];
         try {
-            $out['readback'] = $this->readBack($calendar, $send, $uid, $googleId, isset($resource['etag']) && is_string($resource['etag']) ? $resource['etag'] : null, $beforeSend);
+            $back = $this->readBack($calendar, $send, $uid, $googleId, isset($resource['etag']) && is_string($resource['etag']) ? $resource['etag'] : null, $beforeSend);
         } catch (HttpError | \RuntimeException) {
             return $out;
         }
+        if (!$this->writer->listShows($calendar)) {
+            return $out; // a read below reader shows no titles or notes: nothing is compared, sent or kept from it
+        }
+        $out['readback'] = $back;
         try {
             [$out['readback']] = $this->sendDays($calendar, $send, $plan, $out['readback'], $beforeSend,
                 static fn(string $kind, string $id, ?string $key, \Closure $write, array $check = []): mixed => $write());
@@ -704,8 +718,79 @@ final class GoogleSeries
             } catch (HttpError | \RuntimeException) {
             }
         }
+        if (!$this->writer->listShows($calendar)) {
+            return ['readback' => null] + $out; // the last read was made below reader: not kept, and nothing is said from it
+        }
         $out['lines'] = self::outcomeWords(self::outcome(self::held($first, $googleId), $plan, $out['readback']), $plan, (int) Time::nowUtc()->format('Y'), 'answer');
         return $out;
+    }
+
+    /**
+     * A write's first read: the series or event stored here for $seriesId,
+     * listed by its iCalendar UID with every record (a single event too: a
+     * list by iCalUID returns the same resource a GET does, the same etag,
+     * timed, all-day and imported alike, and a deleted one listed cancelled
+     * with showDeleted, the probe of 2026-11-13, stage listread L1 to L5),
+     * so the list's level decides before anything is sent. A single event
+     * the list does not hold (a row whose uid is not Google's iCalUID) is
+     * then read by its id, after the list. With nothing stored here for it,
+     * a GET by id, as before.
+     *
+     * @return list<array>
+     */
+    private function firstRead(array $calendar, ?array $master, string $seriesId, ?\Closure $beforeSend, ?string $uid = null): array
+    {
+        $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
+            => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
+        $uid = $master !== null ? (string) ($master['uid'] ?? '') : (string) $uid;
+        if ($uid === '') {
+            return $this->readBack($calendar, $send, null, $seriesId, null, $beforeSend);
+        }
+        $items = $this->readBack($calendar, $send, $uid, $seriesId, null, $beforeSend);
+        if (empty($master['rrule']) && self::itemOf($items, $seriesId) === null) {
+            $items = $this->readBack($calendar, $send, null, $seriesId, null, $beforeSend);
+        }
+        return $items;
+    }
+
+    /** The item of a read with this id, or null. */
+    private static function itemOf(array $items, string $googleId): ?array
+    {
+        foreach ($items as $item) {
+            if ((string) ($item['id'] ?? '') === $googleId) {
+                return $item;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The event $googleId as Google holds it now and the read it came from,
+     * for a caller that builds its write from it (GoogleWriter::readNow):
+     * the write's first read (firstRead), decided on by the access rule
+     * there and then, the event its item, or, a day with no record of its
+     * own, read by its instance id after the list. Gone at Google: refused
+     * as the write would be. $uid: the iCalendar UID of an event in no
+     * series that is no longer stored here (an undo of its removal), to list
+     * it by.
+     *
+     * @return array{0:array, 1:list<array>}
+     */
+    public function readNow(array $calendar, string $googleId, ?\Closure $beforeSend = null, ?string $uid = null): array
+    {
+        [$master] = $this->storedOf($calendar, $googleId);
+        $seriesId = $master !== null ? (string) $master['google_event_id'] : $googleId;
+        $since = $this->writer->mark();
+        $items = $this->firstRead($calendar, $master, $seriesId, $beforeSend, $uid);
+        $this->writer->admit($calendar, $beforeSend, $since);
+        $read = self::itemOf($items, $googleId);
+        if ($read === null && $googleId !== $seriesId) {
+            $read = $this->writer->send($calendar, 'GET', '/' . rawurlencode($googleId), null, [], null, $beforeSend);
+        }
+        if ($read === null) {
+            throw GoogleWriter::deleted();
+        }
+        return [$read, $items];
     }
 
     /**
@@ -848,7 +933,12 @@ final class GoogleSeries
         // none journaled (the prediction needs the row), and it too is compared with what was read. What a step
         // journals before its request is compared with only where the run never read after it. A removal takes no
         // expectation: it is read by whether what it removed is still gone (landed).
-        $settled = function (int $i, array $items, string $googleId) use (&$steps, $save, $back): void {
+        // A read made below reader (access dropped to busy times only during the change) shows no titles: it is never
+        // kept, neither stored over the rows (store) nor recorded as what Google held (GoogleWriter::shows).
+        $settled = function (int $i, array $items, string $googleId) use (&$steps, $save, $back, $calendar): void {
+            if (!$this->writer->listShows($calendar)) {
+                return;
+            }
             for ($n = count($steps) - 1; $n >= 0; $n--) {
                 if (!empty($steps[$n]['back']) !== $back) {
                     return;
@@ -900,7 +990,10 @@ final class GoogleSeries
                 }
                 $before = $this->masterRow($calendar, $t);
                 $old = $before === null ? null : self::stateOf($before, [])['master'];
+                $since = $this->writer->mark();
                 $reads[$i] = $this->readBack($calendar, $send, !empty($t['uid']) ? (string) $t['uid'] : null, (string) $t['googleId'], null, $beforeSend);
+                // The access rule's decision on this change's first read, before anything is read from it.
+                $this->writer->admit($calendar, $beforeSend, $since);
                 $h = self::held($reads[$i], (string) $t['googleId']);
                 $carried[$i] = self::carriedExdates($h, $t);
                 // A series Google no longer holds is refused by the condition, whatever the change would send to it.
@@ -1027,8 +1120,10 @@ final class GoogleSeries
                         $read = null;
                     }
                 }
+                $at = $this->writer->mark();
                 $items = $read ?? $this->readBack($calendar, $send, $t['uid'], (string) $t['googleId'], $chain, $beforeSend);
                 if ($read === null) {
+                    $this->comparable($calendar, $beforeSend, $at);
                     // Every read the run makes after a write of its own replaces the expectation journaled before it
                     // (the model, "At a Stop"): a change stopped at a day write is compared with this read back.
                     $settled($i, $items, (string) $t['googleId']);
@@ -1047,7 +1142,11 @@ final class GoogleSeries
                 }
                 // The series as Google held it before this run wrote anything to it, for the record (none for a series this run inserted).
                 $was = empty($reads[$i]) ? null : self::held($reads[$i], (string) $t['googleId']);
-                [$items] = $this->sendDays($calendar, $send, $t, $items, $beforeSend, $step);
+                $at = $this->writer->mark();
+                [$items, $daysSent] = $this->sendDays($calendar, $send, $t, $items, $beforeSend, $step);
+                if ($daysSent > 0) {
+                    $this->comparable($calendar, $beforeSend, $at);
+                }
                 $readbacks[(string) $t['uid']] = $items;
                 $settled($i, $items, (string) $t['googleId']);
                 $differences = array_merge($differences, self::outcomeWords(self::outcome($was, $t, $items), $t, $thisYear));
@@ -1067,7 +1166,10 @@ final class GoogleSeries
             // The journaled plan is not written here: this run's targets are a
             // Put back's befores, or a Finish's reading of the plan over what
             // Google held, and neither is the change's plan ($identify).
-            $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($e->getMessage(), 0, 2000),
+            // What stopped it, said of a change that had sent part of itself: the refusal's reason without its
+            // "nothing was changed", which was true of the one request and not of the change (`said`).
+            $said = $e instanceof HttpError && is_string($e->extra['said'] ?? null) ? (string) $e->extra['said'] : $e->getMessage();
+            $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($said, 0, 2000),
                 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
             if (!$e instanceof HttpError && !$e instanceof \RuntimeException) {
                 $this->endUnlessTx($pendingId, false);
@@ -1092,10 +1194,25 @@ final class GoogleSeries
             $this->endUnlessTx($pendingId, true);
             $code = $e instanceof HttpError ? $e->errorCode : 'google_write_failed';
             $status = $e instanceof HttpError ? $e->status : 502;
-            $message = $e instanceof HttpError ? $e->getMessage() : 'Google could not be reached: ' . $e->getMessage();
+            $message = $e instanceof HttpError ? $said : 'Google could not be reached: ' . $e->getMessage();
             throw new HttpError($code, rtrim($message, '.') . '. ' . self::HALF_WORDS, $status, ['pending' => $pendingId]);
         }
         return ['pending' => $pendingId, 'readbacks' => $readbacks, 'differences' => $differences, 'inserted' => $inserted, 'targets' => $targets];
+    }
+
+    /**
+     * A read a run makes after a write of its own is compared with the plan only when it shows what Google holds. One
+     * answered below reader (access dropped to busy times only while the change was being sent) shows no titles or
+     * notes: it is never kept (settled, store; docs/design/google-access-detect-and-inform.md, section 8, rule B), and
+     * nothing is decided or said from it. The change stops there by the access rule's own decision on that list
+     * (GoogleWriter::admit, $since the writer's mark before the read), half done, and Finish reads again once access
+     * is back.
+     */
+    private function comparable(array $calendar, ?\Closure $beforeSend, int $since): void
+    {
+        if (!$this->writer->listShows($calendar)) {
+            $this->writer->admit($calendar, $beforeSend, $since);
+        }
     }
 
     /**
@@ -1215,21 +1332,7 @@ final class GoogleSeries
                     }
                 }
             } else {
-                $pageToken = null;
-                $pages = 0;
-                do {
-                    $query = ['iCalUID' => $uid, 'singleEvents' => 'false', 'showDeleted' => 'true', 'maxResults' => '2500'];
-                    if ($pageToken !== null) {
-                        $query['pageToken'] = $pageToken;
-                    }
-                    $data = $this->writer->send($calendar, 'GET', '', null, $query, null, $beforeSend);
-                    foreach ((array) ($data['items'] ?? []) as $item) {
-                        if (is_array($item)) {
-                            $items[] = $item;
-                        }
-                    }
-                    $pageToken = isset($data['nextPageToken']) && is_string($data['nextPageToken']) && $data['nextPageToken'] !== '' ? $data['nextPageToken'] : null;
-                } while ($pageToken !== null && ++$pages < self::PAGES);
+                $items = $this->writer->listByUid($calendar, $uid, $beforeSend, self::PAGES);
             }
             if ($expectEtag === null || self::masterEtag($items, $googleId) === $expectEtag || $try + 1 >= self::READBACK_TRIES) {
                 return $items;
@@ -2991,6 +3094,11 @@ final class GoogleSeries
      */
     public function store(array $calendar, array $readbacks, array $targets, ?int $pendingId = null): void
     {
+        // A read-back listed below reader (access dropped to busy times only during the change) is never applied
+        // (GoogleWriter::shows): what is held here stays as it was.
+        if (!$this->writer->listShows($calendar)) {
+            return;
+        }
         $uids = array_fill_keys(array_map('strval', array_keys($readbacks)), true);
         $items = [];
         foreach ($readbacks as $list) {
@@ -3183,7 +3291,7 @@ final class GoogleSeries
                 'createdAt' => Time::dbToIso((string) $row['created_at'], 'UTC'),
                 'finishRefused' => $finishRefused,
                 // The calendar no longer writes to Google: neither Finish nor Put back can run, and why.
-                'unrecoverable' => self::unrecoverable(['provider' => $row['cal_provider'], 'google_calendar_id' => $row['cal_google_calendar_id'],
+                'unrecoverable' => self::unrecoverable(['name' => $row['calendar_name'], 'provider' => $row['cal_provider'], 'google_calendar_id' => $row['cal_google_calendar_id'],
                     'google_account_id' => $row['cal_google_account_id'], 'google_access_role' => $row['cal_google_access_role']]),
             ];
         }
@@ -3256,6 +3364,28 @@ final class GoogleSeries
         return $out;
     }
 
+    /**
+     * The change half done at Google that holds this event (a series, one of
+     * its days, or an event of its own a change named), as halfDoneOf gives
+     * it, or null: what the event's own details say about it.
+     */
+    public static function halfDoneFor(Db $db, array $row): ?array
+    {
+        $pending = self::pendingNames($db, (int) $row['user_id'], (int) $row['calendar_id']);
+        foreach (self::namesOf($row) as $name) {
+            $series = GoogleWriter::instanceOf($name)['series'] ?? null;
+            $which = $pending[$name] ?? ($series !== null ? $pending[$series] ?? null : null);
+            if ($which !== null) {
+                foreach (self::halfDoneOf($db, (int) $row['user_id']) as $h) {
+                    if ((int) $h['id'] === (int) $which['id']) {
+                        return $h;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     /** The names a row goes by for pendingNames: its uid (its series' too, for an edited day) and its Google id. @return list<string> */
     public static function namesOf(array $row): array
     {
@@ -3281,6 +3411,8 @@ final class GoogleSeries
             $series = GoogleWriter::instanceOf((string) $name)['series'] ?? null;
             $which = $pending[(string) $name] ?? ($series !== null ? $pending[$series] ?? null : null);
             if ($which !== null) {
+                // Refused because of the half-done change: its Review notice, if dismissed, opens again.
+                ReviewQueue::reopenAfter($db, $userId, ReviewQueue::halfKey((int) $which['id']));
                 throw self::pendingRefusal($which);
             }
         }
@@ -3387,7 +3519,13 @@ final class GoogleSeries
         if (($calendar['google_access_role'] ?? null) === null) {
             return 'Google access for this calendar is paused. Reconnect the Google account in Settings, Connections; Finish and Put back are offered again after its next update.';
         }
-        return 'This account can no longer edit this calendar at Google, so Finish and Put back can no longer run for this change.';
+        // Detect and inform (docs/design/google-access-detect-and-inform.md): no repair while Google says
+        // read-only; the change stays listed, and its event frozen, until access returns or the calendar goes.
+        $name = "'" . (trim((string) ($calendar['name'] ?? '')) !== '' ? trim((string) $calendar['name']) : 'this calendar') . "'";
+        return ($calendar['google_access_role'] === 'none'
+            ? "This change stopped part way, and Google no longer shows $name to this account, so it can't be finished or put back."
+            : "This change stopped part way, and your permissions for $name at Google are now read-only, so it can't be finished or put back.")
+            . ' It stays here, and the event takes no other change, until full editing is restored at Google or you remove the calendar.';
     }
 
     /** A pending row of the account, as the journal holds it now, or null. */
@@ -4166,7 +4304,11 @@ final class GoogleSeries
             if ($mine === []) {
                 continue; // nothing was sent for this series
             }
+            $since = $this->writer->mark();
             $nowItems = $this->readBack($calendar, $send, empty($b['remove']) && !empty($b['uid']) ? (string) $b['uid'] : null, (string) $b['googleId'], null, $beforeSend);
+            if (empty($b['remove']) && !empty($b['uid'])) {
+                $this->writer->admit($calendar, $beforeSend, $since); // decided on the list before it is compared (its writes go through condition)
+            }
             $current = self::masterEtag($nowItems, (string) $b['googleId']);
             [$safe, $made, $unread] = $this->asLeft($calendar, $send, $i, $b, $targets, $steps, $nowItems, $beforeSend, empty($b['remove']));
             if (!$safe) {
@@ -4285,12 +4427,15 @@ final class GoogleSeries
         $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
             => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
         $got = [];
+        $since = $this->writer->mark();
         foreach ($series as $t) {
             if (!empty($t['uid']) && empty($t['insert']) && !isset($got[(string) $t['uid']])) {
                 $got[(string) $t['uid']] = $this->readBack($calendar, $send, (string) $t['uid'], (string) $t['googleId'], null, $beforeSend);
             }
         }
         if ($got !== []) {
+            // Finish's and Put back's first read: the access rule decides on it before it is stored or used.
+            $this->writer->admit($calendar, $beforeSend, $since);
             $this->store($calendar, $got, [], $pendingId);
         }
         return $got;

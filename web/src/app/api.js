@@ -701,7 +701,7 @@ export async function ensureDayLoaded(dayKey) {
 // An edited day's series fields (its own list, the series' title, id and
 // the day's key) are merged too, wherever the server sends them.
 const DETAIL_FIELDS = ['description', 'rrule', 'reminders', 'reminderSource', 'createdAt', 'updatedAt', 'tzid', 'uid', 'url', 'location', 'locationLat', 'locationLng', 'invite', 'styleJson',
-  'ownFields', 'seriesTitle', 'seriesId', 'seriesKey'];
+  'ownFields', 'seriesTitle', 'seriesId', 'seriesKey', 'halfDone'];
 const detailInFlight = new Map(); // instanceId -> Promise, so a popover then editor open shares one fetch
 
 export function ensureFullOccurrence(instanceId) {

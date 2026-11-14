@@ -402,8 +402,10 @@ final class Rsvp
         };
         $check(false);
         // Google replaces the whole guest list on a write, so send back the
-        // list it has now (not our copy) with only our own answer changed.
-        $current = $this->google->get($calendar, $googleId);
+        // list it has now (not our copy) with only our own answer changed:
+        // read as every write's first read is (GoogleWriter::readNow, the list
+        // by the iCalendar UID, whose level decides before anything is sent).
+        [$current, $items] = $this->google->readNow($calendar, $googleId, fn() => $check(false));
         $attendees = (array) ($current['attendees'] ?? []);
         $was = null; // my answer before, for its undo
         foreach ($attendees as $i => $a) {
@@ -423,7 +425,7 @@ final class Rsvp
         // An answer for all events is a write to the series, and any write to a series can change the days Google
         // keeps of it: the series is read back and every day not as it was is sent (GoogleSeries::writeBesideDays).
         $series = new GoogleSeries($this->db, $this->google, new Feeds($this->db));
-        $sent = $series->writeBesideDays($calendar, $googleId, ['attendees' => array_values($attendees)], fn() => $check(false), $current);
+        $sent = $series->writeBesideDays($calendar, $googleId, ['attendees' => array_values($attendees)], fn() => $check(false), $current, $items);
         $resp = $sent['resource'];
         $etag = static fn(array $r): ?string => isset($r['etag']) && is_string($r['etag']) ? $r['etag'] : null;
         $google = GoogleUndo::details(GoogleUndo::ANSWER, $calendar, $googleId, null, $etag($current), $etag($resp),

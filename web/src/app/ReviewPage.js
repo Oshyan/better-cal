@@ -13,6 +13,8 @@
 //   duplicate      two events that might be the same event.
 //   subscription   a feed whose automatic updates need your decision.
 //   plugin         a plugin turned off because the API key that enabled it was revoked.
+//   google_read_only, google_not_shown  a Google calendar Google now lets this account only view,
+//                  or no longer shows: read-only here until that changes (notices, dismissible).
 //
 // The rule that makes it trustworthy, stated in the UI: an emailed change or a
 // suggested plan is not on the calendar until accepted. A paused feed keeps its
@@ -36,9 +38,10 @@ import { usePasswordStepUp } from './PasswordStepUp.js';
 import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
 import { askConfirm } from './ConfirmDialog.js';
+import { accessCheckWords } from './CalendarSettings.js';
 
-const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused', plugin: 'Plugin turned off', google_half: 'Half done at Google', google_differs: 'Google kept something else', google_empty: 'Google listed nothing' };
-const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar', plugin: 'warning', google_half: 'warning', google_differs: 'calendar', google_empty: 'warning' };
+const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused', plugin: 'Plugin turned off', google_half: 'Half done at Google', google_differs: 'Google kept something else', google_empty: 'Google listed nothing', google_read_only: 'Read-only at Google', google_not_shown: 'No longer shown by Google' };
+const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar', plugin: 'warning', google_half: 'warning', google_differs: 'calendar', google_empty: 'warning', google_read_only: 'warning', google_not_shown: 'warning' };
 
 // Which reader made a held emailed event, so an AI reading can be checked
 // before it is added: [phrase, tooltip]. A tier the item lacks (one held
@@ -103,6 +106,13 @@ function ReviewCard({ item, onChanged }) {
       if (!res) return;
       if (res.settings) adoptSettings(res.settings);
       const accepted = action.name !== 'dismiss';
+      if (action.name === 'reopen') {
+        // Show again: a dismissed notice back among the open ones; nothing else changes.
+        toast('Shown again in Review.');
+        loadReviewCount();
+        invalidateRecords();
+        return;
+      }
       if (item.kind === 'rsvp' && action.name === 'dismiss') {
         toast('Dismissed without answering. You can still answer from the event.');
         loadReviewCount();
@@ -111,6 +121,9 @@ function ReviewCard({ item, onChanged }) {
         toast(out.text, { error: !!out.error });
       } else if (item.kind === 'duplicate') {
         toast(action.name === 'linked' ? 'Shown as one event from now on' : 'Kept as separate events');
+      } else if (item.kind === 'subscription' && action.name === 'dismiss') {
+        // Acknowledged, not decided: the feed stays paused, and its notice comes back if that changes.
+        toast('Notice dismissed. The feed stays paused; its saved events stay visible.');
       } else if (item.kind === 'subscription') {
         // Removing deletes a calendar, which undo puts back; the others are log-only.
         toast(action.name === 'keep_updating' ? 'Calendar updates resumed' : action.name === 'remove' ? 'Subscription removed' : 'Saved events kept as a local calendar', { undo: action.name === 'remove' ? entriesOf(res) : [] });
@@ -127,6 +140,17 @@ function ReviewCard({ item, onChanged }) {
         toast('Notice dismissed. The calendar shows what Google stores.');
       } else if (item.kind === 'google_empty') {
         toast('Notice dismissed. Nothing was removed.');
+      } else if ((item.kind === 'google_read_only' || item.kind === 'google_not_shown') && action.name === 'check') {
+        // Check again: the level Google gave just now, said plainly; the calendars and Review follow it.
+        toast(accessCheckWords(res && res.googleAccessRole, d && d.access));
+        await loadCalendars().catch(() => {});
+        loadReviewCount();
+      } else if (item.kind === 'google_read_only' || item.kind === 'google_not_shown') {
+        // Dismissed, not resolved: the calendar stays read-only until Google says otherwise.
+        toast('Notice dismissed. The calendar stays read-only here until Google allows changes again.');
+      } else if (item.kind === 'google_half' && action.name === 'dismiss') {
+        // Acknowledged, not decided: the change stays half done, and the event's own details say so.
+        toast('Notice dismissed. The change stays half done; the event says so and leads back here.');
       } else if (item.kind === 'google_half') {
         // Put back is all or nothing: a series changed at Google since
         // refuses it whole (409), and its words arrive through the catch.

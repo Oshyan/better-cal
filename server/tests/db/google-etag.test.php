@@ -144,7 +144,7 @@ return static function (Db $db): void {
                 return ['status' => 200, 'body' => json_encode($moved($etag, (string) ($payload['summary'] ?? '')))];
             }
             // The series' list, filtered to its UID: every row with its etag now.
-            return ['status' => 200, 'body' => json_encode(['items' => [$master($etag), $moved($etag), $cancelled($etag)]])];
+            return ['status' => 200, 'body' => json_encode(['accessRole' => 'owner', 'items' => [$master($etag), $moved($etag), $cancelled($etag)]])];
         };
         $masterId = (int) $row($t, 'probe1a2b3c')['id'];
         $t->events->patch($t->u, $masterId, ['title' => 'Sample standup, guest', 'scope' => 'this', 'instanceStart' => '2027-03-08T18:00:00+00:00']);
@@ -174,7 +174,9 @@ return static function (Db $db): void {
             if ($method === 'PATCH') {
                 $now = $single('"s2"', (string) ($payload['summary'] ?? ''));
             }
-            return ['status' => 200, 'body' => json_encode($now)];
+            // The read is a list by the event's iCalUID, with the account's level (the access probe, L1).
+            $list = $method === 'GET' && str_ends_with((string) parse_url($url, PHP_URL_PATH), '/events');
+            return ['status' => 200, 'body' => json_encode($list ? ['accessRole' => 'owner', 'items' => [$now]] : $now)];
         };
         $t->events->patch($t->u, (int) $row($t, 'probe9z8y7x')['id'], ['title' => 'Sample review, moved room']);
         checkEq('a read, one PATCH with If-Match "s1" from it, the answer\'s etag stored', [['GET', 'PATCH'], '"s1"', '"s2"', 'Sample review, moved room'], [
@@ -192,7 +194,7 @@ return static function (Db $db): void {
         $t->google->calls = [];
         // Renamed at Google, not yet polled.
         $t->google->writes = static fn(string $method, string $url, ?array $payload, array $headers): array
-            => ['status' => 200, 'body' => json_encode(['items' => [$master('"e2"', 'Sample standup renamed elsewhere'), $moved('"e2"'), $cancelled('"e2"')]])];
+            => ['status' => 200, 'body' => json_encode(['accessRole' => 'owner', 'items' => [$master('"e2"', 'Sample standup renamed elsewhere'), $moved('"e2"'), $cancelled('"e2"')]])];
         $before = $db->all('SELECT * FROM events WHERE calendar_id = ? ORDER BY id', [$t->calendarId]);
         $code = refusal(fn() => $t->events->patch($t->u, (int) $row($t, 'probe1a2b3c')['id'], ['title' => 'One day', 'scope' => 'this', 'instanceStart' => '2027-03-22T17:00:00+00:00']));
         checkEq('409 google_conflict after one read, no write sent, no row changed', ['google_conflict', ['GET'], $before],

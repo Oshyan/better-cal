@@ -34,6 +34,9 @@ use BetterCal\Support\Time;
  *   google_half    a series change that stopped half way at Google (Finish, Put back)
  *   google_differs Google kept something else than a series change said (a notice)
  *   google_empty   a Google calendar's whole read listed nothing; nothing removed (a notice)
+ *   google_read_only a Google calendar Google now lets this account only view (or see busy
+ *                  times of): read-only here until editing is restored there (a notice)
+ *   google_not_shown a Google calendar Google no longer shows to this account (a notice)
  *
  * invite_new, invite_change, mail_limit and model_limit are stored by the queue itself;
  * the others live where they always did and keep their own endpoints,
@@ -65,12 +68,15 @@ final class ReviewController
         $storedItems = $this->queue->listFor($userId, $openOnly, isset($req->query['before']) ? max(1, (int) $req->query['before']) : null);
         $mailSettings = $this->queue->mailSettings($userId);
         foreach ($storedItems as $c) {
+            if ($c['kind'] === 'subscription' || $c['kind'] === ReviewQueue::KIND_GOOGLE_HALF) {
+                continue; // a paused feed's or a half-done change's notice row: listed below, from its state now
+            }
             $open = $c['status'] === 'open';
-            if (in_array($c['kind'], [ReviewQueue::KIND_MAIL_LIMIT, ReviewQueue::KIND_MODEL_LIMIT, ReviewQueue::KIND_MAIL_ERROR, ReviewQueue::KIND_GOOGLE_DIFFERS, ReviewQueue::KIND_GOOGLE_EMPTY], true)) {
+            if (in_array($c['kind'], [ReviewQueue::KIND_MAIL_LIMIT, ReviewQueue::KIND_MODEL_LIMIT, ReviewQueue::KIND_MAIL_ERROR, ReviewQueue::KIND_GOOGLE_DIFFERS, ReviewQueue::KIND_GOOGLE_EMPTY, ReviewQueue::KIND_GOOGLE_READ_ONLY, ReviewQueue::KIND_GOOGLE_NOT_SHOWN], true)) {
                 $isModel = $c['kind'] === ReviewQueue::KIND_MODEL_LIMIT;
                 $dismissPath = match ($c['kind']) {
                     ReviewQueue::KIND_MAIL_ERROR => "/review/mail-errors/{$c['id']}/dismiss",
-                    ReviewQueue::KIND_GOOGLE_DIFFERS, ReviewQueue::KIND_GOOGLE_EMPTY => "/review/google-differences/{$c['id']}/dismiss",
+                    ReviewQueue::KIND_GOOGLE_DIFFERS, ReviewQueue::KIND_GOOGLE_EMPTY, ReviewQueue::KIND_GOOGLE_READ_ONLY, ReviewQueue::KIND_GOOGLE_NOT_SHOWN => "/review/google-differences/{$c['id']}/dismiss",
                     default => $isModel ? "/review/model-limits/{$c['id']}/dismiss" : "/review/mail-limits/{$c['id']}/dismiss",
                 };
                 $items[] = [
@@ -82,9 +88,16 @@ final class ReviewController
                     'createdAt' => $c['createdAt'],
                     'eventId' => $c['kind'] === ReviewQueue::KIND_GOOGLE_DIFFERS ? $c['eventId'] : null,
                     'detail' => $c['detail'],
-                    'actions' => $open && $canDecide ? [
+                    // A dismissed notice is listed in the history while its state holds (an ended one is gone), with the
+                    // way to show it again: what a dismiss hides stays reachable (one rule for every notice kind).
+                    'actions' => !$open && $canDecide && $c['status'] === 'dismissed' && in_array($c['kind'], ReviewQueue::NOTICE_KINDS, true)
+                        ? [self::action('reopen', 'Show again', "/review/notices/{$c['id']}/reopen") + ['quiet' => true]]
+                        : ($open && $canDecide ? [
+                        // A calendar read-only at Google: ask Google again now (the person can always ask).
+                        ...(in_array($c['kind'], [ReviewQueue::KIND_GOOGLE_READ_ONLY, ReviewQueue::KIND_GOOGLE_NOT_SHOWN], true) && isset($c['detail']['calendarId'])
+                            ? [self::action('check', 'Check again', "/calendars/{$c['detail']['calendarId']}/check-access") + ['quiet' => true]] : []),
                         self::action('dismiss', 'Dismiss', $dismissPath),
-                    ] : [],
+                    ] : []),
                 ];
                 continue;
             }
@@ -194,7 +207,22 @@ final class ReviewController
                 ] : [],
             ];
         }
-        foreach ($this->calendars->subscriptionsAwaitingReview($userId) as $calendar) {
+        // Each paused feed is a state notice (ReviewQueue::subscriptionNotices): dismissed, it stays out of the list
+        // while its updates stay paused for the same reason, and comes back when that changes or a refresh is refused.
+        $paused = $this->calendars->subscriptionsAwaitingReview($userId);
+        $notices = $this->queue->subscriptionNotices($userId, $paused);
+        foreach ($paused as $calendar) {
+            $notice = $notices[(int) $calendar['id']] ?? null;
+            if ($notice === null || ($notice['status'] !== 'open' && $openOnly)) {
+                continue;
+            }
+            if ($notice['status'] !== 'open') {
+                // In the history, dismissed while its state holds: listed with the way to show it again.
+                $items[] = ['key' => 'subscription:' . $calendar['id'], 'kind' => 'subscription', 'status' => 'dismissed', 'title' => $calendar['name'],
+                    'summary' => $calendar['subscriptionAuthorization']['reason'], 'createdAt' => null, 'eventId' => null, 'detail' => ['calendarId' => $calendar['id']],
+                    'actions' => $canDecide ? [self::action('reopen', 'Show again', "/review/notices/{$notice['row']}/reopen") + ['quiet' => true]] : []];
+                continue;
+            }
             $authorization = $calendar['subscriptionAuthorization'];
             $items[] = [
                 'key' => 'subscription:' . $calendar['id'],
@@ -212,10 +240,26 @@ final class ReviewController
                     self::action('keep_updating', 'Keep updating', "/calendars/{$calendar['id']}/claim-subscription"),
                     self::action('keep_local', 'Keep a local copy', "/calendars/{$calendar['id']}/adopt"),
                     array_replace(self::action('remove', 'Remove', "/calendars/{$calendar['id']}"), ['method' => 'DELETE']),
+                    // Acknowledged, not decided: the feed stays paused.
+                    self::action('dismiss', 'Dismiss', "/review/notices/{$notice['row']}/dismiss") + ['quiet' => true],
                 ] : [],
             ];
         }
-        foreach ($this->queue->googleHalfDone($userId) as $half) {
+        // Each half-done change is a state notice (ReviewQueue::halfDoneNotices): dismissed, it stays out of the list
+        // while the change stays half done, and comes back when a change refused because of it is attempted; the event
+        // itself says it is half done either way, with the way back here.
+        foreach ($this->queue->halfDoneNotices($userId) as $notice) {
+            $half = $notice['half'];
+            if ($notice['status'] !== 'open') {
+                if (!$openOnly) {
+                    // In the history, dismissed while the change is still half done: the way to show it again, also
+                    // where no event here carries the line (a whole-series delete whose answer was lost).
+                    $items[] = ['key' => 'google_half:' . $half['id'], 'kind' => 'google_half', 'status' => 'dismissed', 'title' => $half['title'],
+                        'summary' => 'Half done at Google: ' . $half['summary'], 'createdAt' => $half['createdAt'], 'eventId' => $half['eventId'], 'detail' => $half,
+                        'actions' => $canDecide ? [self::action('reopen', 'Show again', "/review/notices/{$notice['row']}/reopen") + ['quiet' => true]] : []];
+                }
+                continue;
+            }
             $items[] = [
                 'key' => 'google_half:' . $half['id'],
                 'kind' => 'google_half',
@@ -229,9 +273,11 @@ final class ReviewController
                 'eventId' => $half['eventId'],
                 'detail' => $half,
                 // The calendar no longer writes to Google (GoogleSeries::unrecoverable): neither can run, so neither is offered.
-                'actions' => $canDecide && $half['unrecoverable'] === null ? array_values(array_filter([
-                    $half['finishRefused'] === null ? self::action('finish', 'Finish', "/review/google-half/{$half['id']}/finish") : null,
-                    self::action('put_back', 'Put back', "/review/google-half/{$half['id']}/put-back"),
+                'actions' => $canDecide ? array_values(array_filter([
+                    $half['unrecoverable'] === null && $half['finishRefused'] === null ? self::action('finish', 'Finish', "/review/google-half/{$half['id']}/finish") : null,
+                    $half['unrecoverable'] === null ? self::action('put_back', 'Put back', "/review/google-half/{$half['id']}/put-back") : null,
+                    // Acknowledged, not decided: the change stays half done, and the event says so.
+                    self::action('dismiss', 'Dismiss', "/review/notices/{$notice['row']}/dismiss") + ['quiet' => true],
                 ])) : [],
             ];
         }
@@ -355,11 +401,13 @@ final class ReviewController
             'rsvp' => count($this->queue->invitationsAwaitingReply($userId)),
             'proposal' => count($this->proposals->listFor($userId, 'open')),
             'duplicate' => count($this->duplicates?->possible($userId) ?? []),
-            'subscription' => count($this->calendars->subscriptionsAwaitingReview($userId)),
+            'subscription' => count(array_filter($this->queue->subscriptionNotices($userId, $this->calendars->subscriptionsAwaitingReview($userId)), static fn(array $n): bool => $n['status'] === 'open')),
             'plugin' => count($this->plugins?->turnedOffByRevokedKey() ?? []),
-            'google_half' => count($this->queue->googleHalfDone($userId)),
+            'google_half' => count(array_filter($this->queue->halfDoneNotices($userId), static fn(array $n): bool => $n['status'] === 'open')),
             'google_differs' => $this->queue->openCount($userId, ReviewQueue::KIND_GOOGLE_DIFFERS),
             'google_empty' => $this->queue->openCount($userId, ReviewQueue::KIND_GOOGLE_EMPTY),
+            'google_read_only' => $this->queue->openCount($userId, ReviewQueue::KIND_GOOGLE_READ_ONLY),
+            'google_not_shown' => $this->queue->openCount($userId, ReviewQueue::KIND_GOOGLE_NOT_SHOWN),
         ];
     }
 
@@ -430,6 +478,20 @@ final class ReviewController
         return Response::json(['item' => $this->queue->dismissMailError((int) $req->user['id'], (int) $params['id'])]);
     }
 
+    /** POST /review/notices/:id/reopen: a dismissed notice open again, from the event's own line about it. */
+    public function reopenNotice(Request $req, array $params): Response
+    {
+        $req->requireSession('Review decisions');
+        return Response::json(['item' => $this->queue->reopenNotice((int) $req->user['id'], (int) $params['id'])]);
+    }
+
+    /** POST /review/notices/:id/dismiss: any notice that reports a state or an event (ReviewQueue::NOTICE_KINDS). */
+    public function dismissNotice(Request $req, array $params): Response
+    {
+        $req->requireSession('Review decisions');
+        return Response::json(['item' => $this->queue->dismissNotice((int) $req->user['id'], (int) $params['id'])]);
+    }
+
     public function dismissGoogleDifferences(Request $req, array $params): Response
     {
         $req->requireSession('Review decisions');
@@ -442,6 +504,7 @@ final class ReviewController
         $req->requireSession('Review decisions');
         $out = $this->events->googleFinish((int) $req->user['id'], (int) $params['id'], \BetterCal\Domain\RequestAuthority::request($req));
         $this->events->throwDeferred();
+        $this->queue->halfDoneNotices((int) $req->user['id']); // the change complete: its notice ends
         return Response::json($out);
     }
 
@@ -451,6 +514,7 @@ final class ReviewController
         $req->requireSession('Review decisions');
         $out = $this->events->googlePutBack((int) $req->user['id'], (int) $params['id'], \BetterCal\Domain\RequestAuthority::request($req));
         $this->events->throwDeferred();
+        $this->queue->halfDoneNotices((int) $req->user['id']); // the change complete: its notice ends
         return Response::json($out);
     }
 

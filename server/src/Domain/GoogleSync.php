@@ -25,6 +25,9 @@ use BetterCal\Support\Time;
  */
 final class GoogleSync
 {
+    /** What a poll says when a whole read listed nothing for a calendar holding rows (the failure its google_empty notice reports). */
+    public const EMPTY_MESSAGE = 'Google listed no events for this calendar while it has events here; nothing was removed, and the next poll reads it again.';
+
     private const EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/%s/events';
     private const PAGE_SIZE = 2500;
 
@@ -66,17 +69,6 @@ final class GoogleSync
         $access = $this->auth->accessToken($account, $deadline);
         self::assertWithinDeadline($deadline);
         $googleCalendarId = (string) $calendar['google_calendar_id'];
-        // The access role decides whether writes are allowed (GoogleWriter).
-        // Calendars added before it was recorded learn it on their next poll.
-        $learnedRole = null;
-        if (empty($calendar['google_access_role'])) {
-            foreach ($this->auth->listCalendars($account, $deadline) as $entry) {
-                if ($entry['id'] === $googleCalendarId) {
-                    $learnedRole = $entry['accessRole'];
-                    break;
-                }
-            }
-        }
         $syncToken = $calendar['google_sync_token'] !== null ? (string) $calendar['google_sync_token'] : null;
         $budget = new RemotePaginationBudget(
             'Google calendar sync',
@@ -95,29 +87,38 @@ final class GoogleSync
         $exdateWork = 0;
 
         try {
-            [$changes, $nextToken] = $this->listEvents(
-                $account,
-                $googleCalendarId,
-                $access,
-                $syncToken,
-                $http,
-                $budget,
-                $exdateWork,
-            );
-        } catch (GoneException) {
-            // Google forgot our token (it does after a while, and after some
-            // kinds of change). Start over: a full list is the truth.
-            $syncToken = null;
-            $budget->restartSequence();
-            [$changes, $nextToken] = $this->listEvents(
-                $account,
-                $googleCalendarId,
-                $access,
-                null,
-                $http,
-                $budget,
-                $exdateWork,
-            );
+            try {
+                [$changes, $nextToken, $role] = $this->listEvents(
+                    $account,
+                    $googleCalendarId,
+                    $access,
+                    $syncToken,
+                    $http,
+                    $budget,
+                    $exdateWork,
+                );
+            } catch (GoneException) {
+                // Google forgot our token (it does after a while, and after any
+                // change of this account's access: the access probe, row 4d).
+                // Start over: a full list is the truth.
+                $syncToken = null;
+                $budget->restartSequence();
+                [$changes, $nextToken, $role] = $this->listEvents(
+                    $account,
+                    $googleCalendarId,
+                    $access,
+                    null,
+                    $http,
+                    $budget,
+                    $exdateWork,
+                );
+            }
+        } catch (NotShownException) {
+            // Google no longer shows the calendar to this account (every list answers 404: the access
+            // probe, stage unshared). The level is stored as for any list answer, the rows and the
+            // sync position stay as they are, and every such poll says so.
+            $this->storeAccess($calendar, $account, 'none');
+            throw new \RuntimeException(GoogleWriter::accessWords($calendar, 'none'));
         }
 
         // A delta with no items: nothing changed at Google since the stored
@@ -154,8 +155,9 @@ final class GoogleSync
         self::assertWithinDeadline($deadline);
         $whole = $syncToken === null;
         $emptyRefused = false;
+        $busyOnly = false;
         // The account first, as every change to its data takes it (Undo::write).
-        $count = (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($account, $calendar, $calendarId, $eventLimit, $learnedRole, $snapshot, $nextToken, $deadline, $unchanged, $whole, &$emptyRefused): int {
+        $count = (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($account, $calendar, $calendarId, $eventLimit, $role, $snapshot, $nextToken, $deadline, $unchanged, $whole, &$emptyRefused, &$busyOnly): int {
             // Adopt and every event writer serialize on this row. Re-read the
             // complete Google binding after the fetch so a response from the
             // old authority can never land in a newly-local, moving calendar.
@@ -175,9 +177,21 @@ final class GoogleSync
             // event writers take them, the Google account's lock makes
             // reset/finalization atomic.
             $this->auth->assertUsable($account, true);
-            if ($learnedRole !== null) {
-                $this->db->update('calendars', ['google_access_role' => $learnedRole], 'id = ?', [$calendarId]);
-                $current['google_access_role'] = $learnedRole;
+            // The level the list's answers gave, at no extra request, stored after the account's check
+            // and only while nothing moved since the fetch began (stored level, sync position: an
+            // earlier answer never overwrites a newer one; the edit check above covers the rows).
+            if ($role !== null && self::unmoved($calendar, $current)) {
+                GoogleWriter::settleAccess($this->db, new Undo($this->db), $current, $role);
+                $current['google_access_role'] = $role;
+            }
+            // A listing below reader shows only times, never what Google holds: nothing of it is applied, every row
+            // here stays as it was. Google gives such a listing no sync token (round 2, stage freebusy), so none is
+            // kept: each poll at that level reads one page whole, and the first after access returns reads the
+            // calendar whole and catches up.
+            if (!GoogleWriter::shows($role)) {
+                $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
+                $busyOnly = true;
+                return 0;
             }
             if ($unchanged) {
                 $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
@@ -210,8 +224,11 @@ final class GoogleSync
             $this->feeds->pollSucceeded($current, $this->storedCount($calendarId), $count);
             return $count;
         });
+        if ($busyOnly) {
+            throw new \RuntimeException(GoogleWriter::accessWords($calendar, (string) $role));
+        }
         if ($emptyRefused) {
-            $message = 'Google listed no events for this calendar while it has events here; nothing was removed, and the next poll reads it again.';
+            $message = self::EMPTY_MESSAGE;
             error_log('google sync: calendar ' . $calendarId . ': a whole read listed nothing; not applied');
             (new Undo($this->db))->write((int) $calendar['user_id'], fn() => ReviewQueue::holdGoogleEmpty($this->db, (int) $calendar['user_id'], $calendar));
             throw new \RuntimeException($message);
@@ -297,8 +314,9 @@ final class GoogleSync
     // ---- Google API ---------------------------------------------------------
 
     /**
-     * @return array{0:list<array>,1:string} parsed changes and the next sync token
+     * @return array{0:list<array>,1:string,2:?string} parsed changes, the next sync token, and the level the answers gave
      * @throws GoneException when Google says the sync token is stale (410)
+     * @throws NotShownException when Google no longer shows the calendar (a list answered 404: unshared or deleted alike)
      */
     private function listEvents(
         array $account,
@@ -312,6 +330,7 @@ final class GoogleSync
         $changes = [];
         $pageToken = null;
         $nextSync = null;
+        $role = null;
         do {
             // A compromise reset may commit between pages. Permit only the
             // request already in flight, never the rest of a long listing.
@@ -361,8 +380,22 @@ final class GoogleSync
                 throw $e;
             }
             $budget->consumeResponse($r['body']);
-            if ($r['status'] === 410) {
+            if ($r['status'] === 410 && $syncToken !== null) {
                 throw new GoneException();
+            }
+            // Every list answer states the account's level (GoogleWriter::roleOfList); the last one is kept.
+            $said = GoogleWriter::roleOfList((int) $r['status'], (string) $r['body']);
+            if ($said === 'none') {
+                throw new NotShownException();
+            }
+            if ($said !== null) {
+                $role = $said;
+            }
+            // A listing below reader is another shape (the second live round, 2026-11-14, stage freebusy: items with
+            // only times and ids, a series as its occurrences with no rule, no sync token at its end) and is never
+            // applied (GoogleWriter::shows): its first page has said the level, so no further page is read.
+            if ($said !== null && !GoogleWriter::shows($said)) {
+                return [[], null, $said];
             }
             $data = json_decode($r['body'], true);
             if ($r['status'] < 200 || $r['status'] >= 300 || !is_array($data)) {
@@ -383,7 +416,34 @@ final class GoogleSync
             unset($r, $data, $items, $pageChanges);
         } while ($pageToken !== null);
 
-        return [$changes, $nextSync];
+        return [$changes, $nextSync, $role];
+    }
+
+    /** Neither the stored level nor the sync position moved while the poll fetched. Pure. */
+    public static function unmoved(array $atStart, ?array $current): bool
+    {
+        return $current !== null
+            && ($current['google_access_role'] ?? null) === ($atStart['google_access_role'] ?? null)
+            && ($current['google_sync_token'] ?? null) === ($atStart['google_sync_token'] ?? null)
+            && !self::editedDuringFetch($atStart, $current);
+    }
+
+    /**
+     * Store a level a poll learned outside its write (a list answered 404):
+     * in a write of its own, under the same checks as inside it (the binding,
+     * the account usable under its lock, nothing moved since the fetch).
+     */
+    private function storeAccess(array $calendar, array $account, string $role): void
+    {
+        $undo = new Undo($this->db);
+        $undo->write((int) $calendar['user_id'], function () use ($undo, $calendar, $account, $role): void {
+            $current = CalendarMoveGuard::lockCalendar($this->db, (int) $calendar['id']);
+            if (!self::sameBinding($calendar, $current) || !self::unmoved($calendar, $current)) {
+                return;
+            }
+            $this->auth->assertUsable($account, true);
+            GoogleWriter::settleAccess($this->db, $undo, $current, $role);
+        });
     }
 
     // ---- Shape translation (pure, unit-tested) ---------------------------------
@@ -1042,6 +1102,11 @@ final class GoogleSync
 }
 
 /** Google answered 410: the sync token is no longer valid. */
+/** A list answered 404 (or 410 to a list sent with no sync token): Google no longer shows the calendar to this account. */
+final class NotShownException extends \RuntimeException
+{
+}
+
 final class GoneException extends \RuntimeException
 {
 }

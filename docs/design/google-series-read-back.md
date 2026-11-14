@@ -96,7 +96,7 @@ One change to one series: the read, the series' write, the read back, N day writ
 | A weekday added | 1 | 1 |
 | Timed to all-day | 4 | 3, and the day at its own time as a record: 4 |
 
-The one row that grows is the fault itself: the day at its own time was not sent, and ended wrong. An answer to an invitation cost four requests before (the event, its series, the write, a list of etags) and costs four now (the read back takes the etag list's place), plus one per day to put back and one last read when there is any.
+The one row that grows is the fault itself: the day at its own time was not sent, and ended wrong. An answer to an invitation cost four requests before (the event, its series, the write, a list of etags). It costs three now: the list that is its first read (since [the access rule](google-access-detect-and-inform.md) made every write's first read a list, which took the place of the read of the event and the list of its series), the write, and the read back, which takes the etag list's place; plus one per day to put back and one last read when there is any.
 
 ## Every Site That Writes a Series at Google
 

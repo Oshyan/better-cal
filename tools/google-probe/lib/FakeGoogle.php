@@ -19,7 +19,10 @@
 // of the new form at the instant of a record of the old (3.48 to 3.51, 3.63 to
 // 3.65); a master write that leaves out the notes clears every kept record's
 // own notes on a series with none (3.52 to 3.61); a rule change that leaves
-// only deleted days cancels the series for good (3.62).
+// only deleted days cancels the series for good (3.62). And (the access probe of
+// 2026-11-13, workfolder/google-access/access-a49ac66229.md) the account's level,
+// $role: every list answer states it, any change of it makes an earlier sync token
+// answer 410 fullSyncRequired, and each level answers as the probe saw (role()).
 //
 // Occurrences come from $expand when the caller gives one (the harness's
 // own evaluator; the database suite's tests the product's expander, since
@@ -46,6 +49,7 @@ final class FakeGoogle
     /** The request with this number is handled, and its answer is lost on the way back (the network drops it once). */
     public ?int $loseAnswerAt = null;
     public bool $primary = false;
+    /** The account's level for the calendar: owner, writer, reader, freeBusyReader, or none (sharing removed). */
     public string $role = 'owner';
     public string $zone = 'America/Los_Angeles';
     public string $owner = 'owner@example.com';
@@ -101,6 +105,9 @@ final class FakeGoogle
     private array $hidden = [];
     /** @var array<string,true> masters Google cancelled because a rule change left them only deleted days (3.62) */
     private array $emptied = [];
+    /** The level answered last, and the change sequence at which it last changed (tokens from before it answer 410). */
+    private string $roleSeen = 'owner';
+    private int $roleSince = 0;
 
     public function __construct(public readonly string $calendarId)
     {
@@ -214,7 +221,16 @@ final class FakeGoogle
         if ($auth === [] || $n === $this->unauthorizedAt) {
             return self::error(401, 'Invalid Credentials');
         }
-        $answer = $this->shapedAnswer($method, $this->route($method, $path, $query, $headers, $payload));
+        // Any change of the account's level invalidates every sync token given before it (the access probe, row 4d: 410
+        // at every stage after a change, 200 at the second run of a stage with no change between).
+        if ($this->role !== $this->roleSeen) {
+            $this->roleSeen = $this->role;
+            $this->roleSince = ++$this->seq;
+        }
+        $answer = $this->role($method, $path, $query) ?? $this->shapedAnswer($method, $this->route($method, $path, $query, $headers, $payload));
+        if ($this->role === 'freeBusyReader' && $answer['status'] === 200) {
+            $answer = $this->busyOnly($answer);
+        }
         // The status the stand-in answered, beside the request: a write it refused (4xx) took nothing. A lost answer was
         // taken, so its status is recorded before the answer is lost.
         $this->requests[$n - 1]['status'] = (int) $answer['status'];
@@ -222,6 +238,94 @@ final class FakeGoogle
             throw new \RuntimeException('HTTP error for the fake: the answer was lost');
         }
         return $answer;
+    }
+
+    /**
+     * What a level below writer answers in place of the request, as the access probe of 2026-11-13 saw each (stage and
+     * row named), or null to answer it as a writer is answered. Proven: reader reads 200 (rows 1 to 4, 6a to 6c, 6g),
+     * an insert 403 requiredAccessLevel (row 5), each PATCH 403 forbidden (6d to 6h); freeBusyReader lists 200 (3, 4),
+     * reads a single event, a day and another's event 200 with no title (6a, 6c, 6g; busyOnly), a series' main record
+     * 404 on read and PATCH (6b, 6e), other PATCHes 403 forbidden (6d, 6f, 6h), an insert 403 requiredAccessLevel (5);
+     * none (sharing removed) 404 on the calendar list entry, the calendar, every list and an insert (1 to 5), every read
+     * and PATCH 404 (6b, 6c, 6e to 6h), except a single event this account made: it reads 200 (6a) and its PATCH with
+     * If-Match answers 412 (6d). Not probed, answered as the nearest proven request: a DELETE (as a PATCH of the same
+     * target), a series' instances list (as a list).
+     */
+    private function role(string $method, string $path, array $query): ?array
+    {
+        if (self::writes($this->role)) {
+            return null;
+        }
+        $prefix = '/calendars/' . rawurlencode($this->calendarId);
+        $rest = str_starts_with($path, $prefix) ? substr($path, strlen($prefix)) : null;
+        $notFound = self::googleError(404, 'notFound', 'Not Found');
+        $forbidden = self::googleError(403, 'forbidden', 'Forbidden');
+        // 'none' answers a calendar no longer shared and one deleted alike: the second round's stage deleted (2026-11-14)
+        // answered every list (the delta from an earlier token too: 404, not 410), the calendar, every read, an insert and
+        // every PATCH 404, but the account's own single event's PATCH with If-Match 412, as at not shared.
+        if ($this->role === 'none') {
+            // UNPROVEN, and contradicted: the first round read the account's own single event 200 and its PATCH 412 (rows
+            // 6a, 6d); the second (2026-11-14) read that event 404 with its PATCH still 412, and the series 200. Kept as the
+            // first round saw it; no product path depends on it (a write refused at any level asks the small list).
+            // A DELETE at not shown answers 404 for every target (round 2, rows D1 to D4), the account's own included.
+            if ($rest !== null && preg_match('#^/events/([^/]+)$#', $rest, $m) === 1 && in_array($method, ['GET', 'PATCH'], true)) {
+                $e = $this->events[rawurldecode($m[1])] ?? null;
+                $own = $e !== null && ($e['creator']['email'] ?? '') === $this->owner && empty($e['recurrence']) && empty($e['recurringEventId']) && !isset($e['originalStartTime']);
+                if ($own) {
+                    return $method === 'GET' ? null : self::googleError(412, 'failedPrecondition', 'Precondition check failed.');
+                }
+            }
+            return $notFound;
+        }
+        if ($rest === '/events' && $method === 'POST') {
+            return self::googleError(403, 'requiredAccessLevel', 'You need to have writer access to this calendar.');
+        }
+        if ($rest !== null && preg_match('#^/events/([^/]+)$#', $rest, $m) === 1) {
+            $id = rawurldecode($m[1]);
+            $master = !empty($this->events[$id]['recurrence']);
+            // A series' main record at busy times only: 404 to a read and a PATCH (round 1, rows 6b, 6e); a DELETE is
+            // 403 forbidden like every DELETE at view only and busy times only (round 2, rows D1 to D4).
+            if ($this->role === 'freeBusyReader' && $master && in_array($method, ['GET', 'PATCH'], true)) {
+                return $notFound;
+            }
+            if ($method === 'PATCH' || $method === 'DELETE') {
+                return $forbidden;
+            }
+        }
+        return null;
+    }
+
+    /** Does a level let the account write? */
+    private static function writes(string $role): bool
+    {
+        return in_array($role, ['writer', 'owner'], true);
+    }
+
+    /**
+     * An answer at busy times only. A read leaves out the title (the access probe, stage freebusy, rows 6a, 6c, 6g). A
+     * list's items carry only end, etag, htmlLink, iCalUID, id, kind, start, status, updated and visibility (the second
+     * round, 2026-11-14, stage freebusy).
+     */
+    private function busyOnly(array $answer): array
+    {
+        $body = json_decode((string) $answer['body'], true);
+        if (!is_array($body)) {
+            return $answer;
+        }
+        if (isset($body['items']) && is_array($body['items'])) {
+            // A list item carries only these (round 2, stage freebusy, rows 4, U1, U2).
+            $keep = array_flip(['end', 'etag', 'htmlLink', 'iCalUID', 'id', 'kind', 'start', 'status', 'updated', 'visibility']);
+            $body['items'] = array_map(static fn(array $e): array => array_intersect_key($e, $keep), $body['items']);
+        } elseif (($body['kind'] ?? '') === 'calendar#event') {
+            unset($body['summary']);
+        }
+        return ['status' => $answer['status'], 'body' => (string) json_encode($body, JSON_UNESCAPED_SLASHES)];
+    }
+
+    /** An error with Google's reason and wording, as the access probe recorded it. */
+    private static function googleError(int $status, string $reason, string $message): array
+    {
+        return ['status' => $status, 'body' => (string) json_encode(['error' => ['errors' => [['domain' => 'global', 'reason' => $reason, 'message' => $message]], 'code' => $status, 'message' => $message]], JSON_UNESCAPED_SLASHES)];
     }
 
     private function route(string $method, string $path, array $query, array $headers, ?array $payload): array
@@ -666,11 +770,13 @@ final class FakeGoogle
 
     private function list(array $q): array
     {
-        $single = ($q['singleEvents'] ?? 'false') === 'true';
+        // At busy times only a series is listed as its occurrences, with no rule (round 2, stage freebusy, U2: 4 items
+        // where writer gets 2), whatever singleEvents asks.
+        $single = ($q['singleEvents'] ?? 'false') === 'true' || $this->role === 'freeBusyReader';
         $deleted = ($q['showDeleted'] ?? 'false') === 'true';
         if (isset($q['syncToken'])) {
-            if (preg_match('/^fake-sync-(\d+)$/', (string) $q['syncToken'], $m) !== 1) {
-                return self::error(410, 'Sync token is no longer valid, a full sync is required.');
+            if (preg_match('/^fake-sync-(\d+)$/', (string) $q['syncToken'], $m) !== 1 || (int) $m[1] < $this->roleSince) {
+                return self::googleError(410, 'fullSyncRequired', 'Sync token is no longer valid, a full sync is required.');
             }
             $since = (int) $m[1];
             $items = [];
@@ -726,10 +832,12 @@ final class FakeGoogle
         $size = min(2500, (int) ($q['maxResults'] ?? 250));
         $offset = (int) ($q['pageToken'] ?? 0);
         $slice = array_slice($items, $offset, $size);
-        $out = ['kind' => 'calendar#events', 'timeZone' => $this->zone, 'items' => $slice];
+        // Every list answer states the account's level (the access probe, rows 3, 4 and 4d, at every stage).
+        $out = ['kind' => 'calendar#events', 'timeZone' => $this->zone, 'accessRole' => $this->role, 'items' => $slice];
         if ($offset + $size < count($items)) {
             $out['nextPageToken'] = (string) ($offset + $size);
-        } else {
+        } elseif ($this->role !== 'freeBusyReader') {
+            // At busy times only Google gave no sync token (round 2, stage freebusy, row 4).
             $out['nextSyncToken'] = 'fake-sync-' . $this->seq;
         }
         return self::ok($out);
@@ -1052,6 +1160,9 @@ final class FakeGoogle
         $body = json_decode((string) $answer['body'], true);
         if (!is_array($body)) {
             return $answer;
+        }
+        if (isset($body['error']['errors'][0]['domain'])) {
+            return $answer; // already in Google's shape (googleError)
         }
         if (isset($body['error'])) {
             // As probed (2026-11-10 and 2026-11-13): reason and domain per status; a PATCH's 412 has its own wording and a status.

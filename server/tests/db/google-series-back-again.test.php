@@ -87,7 +87,8 @@ return static function (Db $db): void {
             // The stop read: after the master's write and its read-back, the series is read once more where the change stopped.
             $after = array_values(array_map(static fn(array $r): string => $r['method'] . (str_ends_with((string) $r['path'], '/events') ? ' list' : ''), array_slice($t->s->fake->requests, $from)));
             $patch = array_search('PATCH', $after, true);
-            checkEq('the change read the series after its master write twice: the read-back, and the read where it stopped', ['GET list', 'GET list'],
+            // And, since the access read's rule D, the one small list a refused write asks before it is read (it said writer).
+            checkEq('after its master write the change read: the series (read-back), the small list after the refusal, the series where it stopped', ['GET list', 'GET list', 'GET list'],
                 $patch === false ? null : array_values(array_filter(array_slice($after, $patch + 1), static fn(string $m): bool => $m === 'GET list')));
             [, $refused] = H::recover($t, 'putback');
             checkEq('Put back runs: the series timed again, the renamed day and the deleted day as they were, nothing half done',

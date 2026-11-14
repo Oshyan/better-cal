@@ -583,7 +583,7 @@ return [
                 ['077 run (snapshots dropped)', 'snapshots kept'])),
             [
                 'after the upgrade: Finish refused (409 not_undoable, the words), no request to Google, the pending row exactly as it was, the tags as the stop left them, Google\'s title as the stop left it',
-                'Put back alone, the summary ending with why Finish can\'t complete it',
+                'Put back alone (beside Dismiss, which every item has), the summary ending with why Finish can\'t complete it',
                 'Put back refuses: Google changed since; its words never point to Finish',
                 'Finish refuses with its words, no request to Google; the pending row stays half done with Put back\'s words',
                 'the pending row is exactly as Put back\'s refusal left it',
@@ -667,12 +667,27 @@ return [
         ],
     ],
     // What a write's answer says of a series' skipped days (rule 7 of the merge): every answer taken as whole for its
-    // series, as before the writer said what it sent. An answer to an invitation, and its undo, then bring every skipped
-    // day back until the next poll.
+    // series, as before the writer said what it sent. Since 1.5.6 an answer to an invitation for all events, and its
+    // undo, store the read made after the write (the next mutation); Google's answer to the write itself is stored only
+    // where that read can't be made, and there this brings every skipped day back until the next poll. (A write of a
+    // single event, one day's record or a removal goes through the same function with nothing of a series' skips in it.)
     [
         'id' => 'answer-read-as-whole', 'file' => 'server/src/Domain/GoogleWriter.php', 'dbtest' => 'google-answer-skips',
         'what' => 'the answer to a write that sent no recurrence is merged as everything Google holds of the series, so its stored skips go',
         'patch' => [["        )), \$changes, \$sentRecurrence);", "        )), \$changes, true);"]],
+        'checks' => [
+            'after the answer with no read after it: 6 January is still a skipped day, and the calendar shows 5 and 7 January only',
+            'after the undo with no read after it: 6 January is still a skipped day, and the calendar shows 5 and 7 January only',
+        ],
+    ],
+    // What keeps a series' skipped days through an answer for all events and its undo since 1.5.6: the read made after
+    // the write lists the series with its cancelled records, and that list is stored as a poll stores one
+    // (GoogleSeries::writeBesideDays, store). A read back stored without its cancelled records is taken as everything
+    // Google holds of the series, so every skipped day comes back.
+    [
+        'id' => 'readback-stored-without-cancelled', 'file' => 'server/src/Domain/GoogleSeries.php', 'dbtest' => 'google-answer-skips',
+        'what' => 'a read back is stored without the cancelled records it lists, so the series\' stored skips go',
+        'patch' => [["            foreach (\$list as \$item) {\n                \$items[] = \$item;\n            }", "            foreach (\$list as \$item) {\n                if ((string) (\$item['status'] ?? '') !== 'cancelled') {\n                    \$items[] = \$item;\n                }\n            }"]],
         'checks' => [
             'after the answer: 6 January is still a skipped day, and the calendar shows 5 and 7 January only',
             'after the undo of the answer: 6 January is still a skipped day, and the calendar shows 5 and 7 January only',

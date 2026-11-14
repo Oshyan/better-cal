@@ -1301,8 +1301,10 @@ final class Model
         }
         // On Google, a switch between timed and all-day that would hide days there (decisions.md, "A switch between
         // timed and all-day that Google would hide days with is refused"): the days Google holds a record for, by the
-        // rows here (every edited day holding a field Google holds, every deleted day).
-        if ($this->google && $out['writes'] !== null) {
+        // rows here (every edited day holding a field Google holds, every deleted day). Only where the series Google holds
+        // changes form: a split's part is inserted at Google under a new id, holding no record of the old series, so
+        // nothing of it can be hidden (the second independent read, F3).
+        if ($this->google && !isset($this->opts['splitDay']) && $out['writes'] !== null) {
             $keys = $this->exdates;
             foreach ($this->rows as $row) {
                 if (!empty($row['recurrence_instance_utc']) && OwnFields::googleHeld(OwnFields::stored($row)) !== []) {

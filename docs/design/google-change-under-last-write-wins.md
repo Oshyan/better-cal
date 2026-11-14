@@ -1,6 +1,6 @@
 # A Change to All Events Under "Last Write Wins"
 
-A written model, not yet built. It replaces the way `GoogleSeries::run()` reads Google during a change to all events of a repeating event on a Google calendar, and the way Finish and Put back compare. The rule it follows is the owner's: while one of our own changes is being sent, the last write wins; between changes, Google is read first and a change made there is reported, and a change to a field we are not changing is no conflict. Evidence: [probe 2026-11-13](research/google-series/probe-2026-11-13.md) (both runs), [replay round 4](research/google-series/replay-2026-11-13.md), the outside read of `5f60dd8b..14a17871` and its probes (on `google-156-read-fixes`; on this branch the regular tests google-series-stops, google-series-request-count, google-exdate-kept-through-changes, google-day-other-form-paths, google-upgrade-from-155).
+A written model, not yet built as a whole; 1.5.6 built the part of it that concerns the days after the series' write ([the read-back model](google-series-read-back.md)). Its build must answer every entry of [Carried In From 1.5.6](#carried-in-from-156) by number, and its independent reader checks that it did. It replaces the way `GoogleSeries::run()` reads Google during a change to all events of a repeating event on a Google calendar, and the way Finish and Put back compare. The rule it follows is the owner's: while one of our own changes is being sent, the last write wins; between changes, Google is read first and a change made there is reported, and a change to a field we are not changing is no conflict. Evidence: [probe 2026-11-13](research/google-series/probe-2026-11-13.md) (both runs), [replay round 4](research/google-series/replay-2026-11-13.md), the outside read of `5f60dd8b..14a17871` and its probes (on `google-156-read-fixes`; on this branch the regular tests google-series-stops, google-series-request-count, google-exdate-kept-through-changes, google-day-other-form-paths, google-upgrade-from-155).
 
 ## Why
 
@@ -148,3 +148,113 @@ The reader's small items:
 Size: about 8 code files and 12 functions (`GoogleSeries`: the predicate, `run()`, `afterMaster()`, `unproven()`, `dayCondition()`, `UNWRITTEN`; `Model`: `compute()`, `map()`, `mapHeld()`, `REASONS`; `Split`: its two checks; `FakeGoogle::patchMaster()` for causes 1 to 3; `ActivityPage.js`; the mutation list), with tests for each cause, the baseline test, and four docs. No migration.
 
 What it leaves that the redesign fixes: any other effect Google has that `afterMaster` doesn't predict is still kept in silence as someone else's change, mid-run and in Finish; a day costs two requests, not one (2N + 4, not N + 4), and one lost read still stops a change; Put back after a stop whose read failed still compares with the guess and can refuse falsely; the notices still name no field.
+
+## Carried In From 1.5.6
+
+What the 1.5.6 work put off to this model, kept from 2026-11-14 and checked against the tree of the read-back build ([its model](google-series-read-back.md)). An entry is not a wish: it says what was put off, why it could not be done in 1.5.6, what is known (with the probe case, test or commit that shows it), what is not known, and how this model's build shows it is done. Where the sections above say otherwise than an entry here (what goes, what a stop stores, which tests change), the entry is the later word: 1.5.6 built part of this model, and the sections above were written before it.
+
+### A. What the Owner Decided That This Model Must Deliver
+
+**A1. Store, in full, what Google held before a change, so it can be put back.**
+
+- The owner, 2026-11-13: "We should definitely just record, in full, what Google (and any remote!) had before our change, so we can put it back."
+- Why not in 1.5.6: it is a new stored form (what a pending change and an undo entry hold), which is a format number and a gate, and it changes Put back and undo together.
+- Known: one list by iCalendar UID with deleted records returns the series and every record of it, and equals a GET of each (the access probe's stage `listread`, `tools/google-probe/access.php`, 2026-11-13). That list carried a write at once after 100 of 100 writes (probe group 11, 2026-11-14). So one request captures the whole state. Today Put back's plan is the before as the rows here held it (`google_pending.befores_json`, from `stateOf`): the fields Better-Cal has a column for, the notes as its cleaned copy.
+- Not known: how large such a stored state gets for a long series with many edited days; what "any remote" means for CalDAV (not connected yet, issue 137).
+- Done when: for every kind of change in the generator of `google-series-read-back.test.php`, Put back from the stored state leaves Google equal, field by field, to the stored state, the fields Better-Cal has no column for included.
+
+**A2. Finish asks first, with a list, when Google really changed after a stop; goes ahead and says so when it did not.**
+
+- The owner accepted both halves on 2026-11-13 (Finish offers to finish anyway with a list; with no stop's read, go ahead and say so).
+- 1.5.6 does only the second half, for both cases. Finish first asks whether Google holds each series as the change last read it. Where it does not and the series' own write had landed, Finish sets each day as the change has it and its answer names each day it changed, with what Google held and what Finish set, under one lead sentence ([decisions.md](decisions.md), "Finish sets the plan's days where it can't tell its own change from another"). A day changed in Google Calendar between a stop and Finish is replaced there and named, not kept, and Finish does not ask.
+- Why: a step's stored expectation is a digest. It does not say whether it came from a read of Google or from a prediction journaled before the request, so "someone changed it since" can't be told from "the run never read after its last write". Telling them apart needs one more stored fact, a change to a stored form.
+- Known: every read a run makes after a write of its own is now the expectation ([decisions.md](decisions.md), "A step's expectation is what the run last read after it"), so the two are confused only where no read followed the last write: the network down right after the series' write, where the days at Google carry Google's own effects (the kept end, cleared notes) and the journaled prediction lacks them (the stop cases of `google-series-read-back.test.php`; `google-series-stops.test.php`). There Put back is refused as "changed at Google since", which may not be so. Where a step carries no expectation at all, Put back's refusal says there is no record (`google-put-back-fails.test.php`).
+- The assertions 1.5.6 restated, to restate again for the two cases: `google-series-recovery.test.php` 4 (a note on an ordinary day, a place on an edited day, a day deleted while the change was half done, a note made after the rename landed), `google-finish-first-write.test.php` 3 (its control block, the series' write landed), `google-finish-drag.test.php` 2 (a day deleted at Google since), `google-series-recovery-grounds.test.php` 1 (in its words only); and in the edit harness's interleaving mode the A4 part of `x-finish`, with the fixed cases `a-split-stopped-then-a-day-given-an-exception-at-google-then-finished-is-replaced-and-named` and `a-split-stopped-then-a-day-given-an-exception-and-cancelled-at-google-then-finished-is-put-back-and-named`.
+- Done when: the stop stores what it read, or that it read nothing; a Finish after a real change at Google shows the days and values it would replace and offers Finish anyway or Cancel; a Finish after no read goes ahead and records what it set; Put back is never refused as changed since where nothing was read; those assertions are restated for the two cases.
+
+**A3. Undo of a change to all events, in two kinds.**
+
+- The owner, 2026-11-13: plain fields (title, notes, place) are a forward change back, asking only where the same field changed since; times, rule, form and splits restore the recorded state, with a list and Cancel or Overwrite. Merge as a later option. Comparison by field.
+- 1.5.6: this undo stays off (the hidden setting `google_series_undo`).
+- Why: the second kind needs A1. A strict build was stopped by its stop rule (branch `google-156-undo`, `121c2b9d`; its second model `ae261bef`).
+- Known: with the setting on, the undo left a day half an hour short because Google keeps a record's end. `google-undo-kept-end.test.php` shows it; it passes since the read-back build (the undo is a series write through `run()`, and the day is sent because it is not as planned) and stays as a regression test. A day renamed at Google during a rename and again during its undo is the change's each time (`google-series-undo.test.php`).
+- Not known: what else the undo gets wrong with the setting on. Beyond those two tests no check written from the docs covers it; the read-back check covers an answer's undo and no other.
+- Done when: the undo model has its own generator and an oracle derived from the docs (not probes), covering undo, redo and undo of redo for every kind in the read-back check, on real Google through the replay tool.
+
+**A4. On a conflict: say what changed with values; Cancel, Overwrite, and later Merge.**
+
+- 1.5.6 builds the single-event slice (Cancel and Overwrite). A change to all events does not ask: it is last write wins while it is being sent, and what Google holds at the end against what was asked is said with both values (`GoogleSeries::outcome`).
+- Carried: Merge (issue 268), and the same choice for a change to all events between changes (before the first write), per field. The refusal there still does not name what changed ("This event changed at Google since you last saw it. Refresh and try again.").
+- Known: the shared three-way function over a normalised field map exists as a model only (branch `google-156-conflict-choice`, `bf67bef2`). `GoogleSeries::outcome` compares three states by field group for the record, and `rebase` does for Finish; neither is that function.
+
+**A5. Recovery after a stop must follow from stored state alone.** (Added 2026-11-14.)
+
+- The owner's requirement: however many times a change is stopped, finished, put back or fails again, the end result must be evident from the design. Finish ends at what the change asked for, Put back at what was there before, a refusal changes nothing and says something true.
+- Why 1.5.6 does not have it: recovery there is the older machinery, a journal of steps, each with an expectation that is sometimes a prediction and sometimes a read, plus a fall-back. Three faults in it surfaced on 2026-11-14 while the forward path was rebuilt. A failed Put back wrote the state before the change over the journaled plan. A failed Finish wrote its own reading of the plan over it. A step with no journaled expectation left a second Put back refused, in words that were not true, where the first had brought a deleted series back and stopped. Each was closed by removing a condition, not by a new design: the plan is written once ([decisions.md](decisions.md), "The journaled plan is written once"), and a step's expectation is what the run last read after it.
+- Known: all three are in `google-put-back-fails.test.php` (a Put back that fails part way after a rename, after a time change and after the whole event is deleted, each then finished and, apart, put back again; a Finish that fails part way after the place was set at Google, then finished again and, apart, put back; the same delete with nothing read after Put back's series write; a row with its expectations taken out). The interleaving mode already generates failed writes, Finish and Put back in sequence, and did not surface these.
+- What 1.5.6's recovery consults, each stored thing by name, besides the plan (`google_pending.targets_json`) and the before (`befores_json`). The last read is not stored as content at all: only its digest is, on a step.
+  1. `steps_json`, each step's `series`, `kind`, `id`, `key`, `state` (sent or done), `etag`, `back` (the change's side or Put back's) and `expect` with `extras`. Read to decide which series anything was sent for (Put back's and Finish's first loop), which steps of the same side are done and are skipped (`stepDone`), which step is the last and whether it was answered (`asLeft`), the etag a removal or an event of its own left, and the expectation itself, which is a read's digest or a prediction's and does not say which.
+  2. The prediction behind an expectation journaled before a request: `afterMaster` (with `unproven`, `addsWeekdays`, `googleOwn`) for the series' write, `heldAfter` for a day's write, the series as sent for an insert. Computed from the rows here and the first read, then stored in `expect`.
+  3. The fall-back for a step with no expectation: Google compared by content with `befores_json`, and for a series the change inserted the etag journaled with its target.
+  4. `local_json`: the rows here as they were before the change with what hangs off them (tags, people, reminders, trip links, own lists). Read by Finish to put rows back before its part here and by Put back to bring rows back (`rewind`, `reattach`, `bringBack`, `placesBack`).
+  5. `plan_json`: the change's part here (the planner's writes and the request's fields) and, for an undo or a redo, the entry it completes. Read by Finish (`commitLocal`) and by both for an undo (`GoogleUndo::entryToFinish`).
+  6. `made_json`: the rows the change's own stores made here. Read by Finish (`rewind`) and by Put back (`dropMade`).
+  7. The rows here at the moment of the recovery. Each recovery first stores what Google holds (`refresh`), then reads those rows: for the ids of the plan's days (`withStoredIds`), for what the series' write must send (`masterBody` against the stored series), for the prediction of item 2, and for the condition before its first write.
+  8. `status` and `error`, and whether a run holds the row (a row still marked running whose run holds no lock is half done).
+- Not known: whether other holes of the same kind remain in 1.5.6's recovery. There is no evidence either way beyond the independent read of the read-back build.
+- Done when: this model derives the outcome of Finish and of Put back from three stored things only (the plan, what Google held before, the last read), with no step-by-step expectations and no fall-back, so that a sequence of recoveries has nothing to accumulate; items 1 to 3 above are gone and its reader confirms no fourth stored thing decides what is sent to Google (items 4 to 6 are the change's part here, not a reading of Google, and are named in the model if they stay). No new test tool is asked for: the interleaving mode, with a failure allowed inside Finish and Put back, is enough if the design holds.
+
+### B. Faults and Limits 1.5.6 Ships With
+
+**B1. A day's notes sent back to Google are Better-Cal's cleaned copy, not what Google held** (F7 of the second independent read, 2026-11-14): a non-breaking space becomes a space, links gain attributes, text in angle brackets is lost.
+
+- Why: only the cleaned copy is stored. The read-back rule sends a day whole whenever it is not as planned, so more days are sent than before, each with the cleaned notes. Fixed by A1 (what Google held, raw).
+- Known: the 1.5.6 changelog names the limit.
+- Done when: a day's notes with markup survive a change to all events byte for byte at Google.
+
+**B2. A change of access between two requests of one change** can store an older answer after a newer one (reasoned by the second read, no probe), and Google's answers are mixed for seconds after access is restored (the access probe's second round, 2026-11-14: a write taken about a second after, an insert still refused and one list not found seconds later).
+
+- 1.5.6: a known window, corrected by the next poll or attempt. Not touched by the read-back build.
+- Carried only if this model touches how the access level is stored; otherwise it stays a documented window.
+
+**B3. An answer to an invitation has no half-done state.** The answer and its undo go through the read-back rule (`GoogleSeries::writeBesideDays`: the series' write, a read back, each day not as it was sent once, a last read). If the read after the write can't be made, the answer stands, nothing is compared, and the next poll stores what Google holds; a day's write that fails after it is not journaled either.
+
+- Known: any write to a series can clear a day's own notes, even one private property with no rule (probe 3.68, 2026-11-14); `google-answer-notes.test.php` holds the answer and its undo to leaving the day's notes. Not known: what a write of the guest list alone does at Google (never probed; the probes use no guests).
+- Done when: either the answer gets the same stop handling as a change, or a live guest case shows it is not needed.
+
+**B4. Predictions of what Google does to kept days keep one reader each.** After the read-back build nothing reads them while a change is being sent, and nothing is sent, kept or said on them.
+
+- `afterMaster`, every clause (identity through `named`; a status sent making a cancelled record live; an EXDATE line carried; proof through `unproven`; a survivor following a changed start or length; a title, notes, place, status or link sent written into every survivor; the notes cleared on a series with none): read by the expectation a series step journals before its request (`run()`), compared with only where the run never read after that write.
+- `unproven` and `addsWeekdays`: read by `afterMaster` alone. `googleOwn`: read by `afterMaster` and by the insert step's expectation. `heldAfter`: read by a day step's expectation (`sendDays`).
+- `rebase` holds no prediction any more (its two calls of `afterMaster` and its forced mode went). It stays, with `threeWay`, `dayIn`, `ownPart`, `planOver`, `rekeyed`, `notKept`, `sinceWords`, `listed` and `were`, read by Finish alone where Google does not hold a series as the change last read it.
+- Known wrong and left so: `afterMaster` does not leave a kept record's end where it was when the start moves (3.17, 3.67). Where that prediction is the expectation, Put back is refused (A2).
+- Done when: A2's stored read exists and the first two items are deleted; `rebase` goes with A5.
+
+**B5. No read is held to showing the write before it, beyond the series' own.** The read back after the series' write is asked again, up to four times, until it shows the write's etag (`readBack`, as before 1.5.6). The last read after day writes is not held to showing the last of them, so a list that lagged would be stored a write behind until the next poll.
+
+- Known: a list by iCalendar UID agreed with the write at once after 100 of 100 writes, 91 to 346 ms after the write's answer (probe group 11, 2026-11-14: inserts, repeated conditional writes of one event and of one day's record, deletes). So 1.5.6 builds nothing for a lag. One stop is left: a read back that still shows the series as it was before the write stops the change half done.
+- Not known: whether a lag exists under load, or for a series with more than one page of records.
+- Done when: this model says whether the repeated read back stays, with a measurement, or goes.
+
+**B6. The words "Google kept something else:" still open the part of an Activity line that says what Google holds.** The lines under them now say what Google Calendar holds and what was asked, and never a cause; the opening words stay because stored entries are cut on them (`GoogleUndo::KEPT`).
+
+- Done when: the words change with a format number for the entries cut on them, or the cut no longer depends on words.
+
+### C. Measurements This Model Must Make Before It Claims Anything
+
+**C1. Speed.** Series edits became 2 to 30 times slower in 1.5 and the owner wants them faster. 1.5.6 holds a change to all events at N + 4 requests for N days not as planned after the series' write, and 3 when none is (`google-series-request-count.test.php`; the table in the read-back model). This model states requests per kind of change before and after, measured alone, and compares with 1.3 and 1.4.0 as owed since 1.5.1.
+
+**C2. Real Google, not the stand-in.** Each rule this model relies on cites a live case. The read-back rule itself needs no list of Google's effects, and its check gives the stand-in two effects nobody has seen (`FakeGoogle::$masterEffect`); what it relies on is that a day's write with no condition is taken in every state (3.66) and that the list carries a write at once (group 11). Unproven today, to probe first: a guest-list write over a day with notes; guests answering (needs a second account as a guest); a day's write to a series someone deleted inside the window; deleting the last remaining day of a series (issue 272); the extra occurrence that appears a day early after switching back from all-day (issue 266); a series made non-repeating at Google and what its iCalendar UID then lists.
+
+**C3. Replay.** Five live replay rounds are recorded ([replay of 2026-11-13](research/google-series/replay-2026-11-13.md)); the sixth follows the read-back build, whose traces differ (a day at its own time is sent where it was not, and a change that sends no day makes one read fewer). This model re-records and replays before its independent read, and a scenario that differs is classified, never adjusted to agree.
+
+### D. Related, With Their Own Issues
+
+Not this model, listed so they are not mistaken for it.
+
+- Issue 266: notice when a switch made in Google Calendar hides days, and say so.
+- Issue 267: check Better-Cal's days against Google's own list after an event changes; weigh showing Google's list.
+- Issue 273: the five older Review kinds onto the one dismiss rule.
+- Issues 269, 270, 271 and 272: a zero-length repeating event; a split stopped by a lost connection; a switch left half done by 1.5.5; deleting the last remaining day.
+
+The whole of this section is tracked as issue 274.

@@ -851,6 +851,7 @@ foreach ($phraseCases as [$text, $title, $start, $end, $reminders]) {
 }
 require __DIR__ . '/quickadd-golden.php';
 require __DIR__ . '/event-day.php';
+require __DIR__ . '/google-conflict-threeway.php';
 
 $invalid = [];
 foreach ($repeatCases as [$text, , , $rrule]) {

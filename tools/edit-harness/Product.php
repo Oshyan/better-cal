@@ -31,10 +31,15 @@ final class Product
     /** The words the contract gives that refusal (decisions.md, the same entry): the harness's own copy. */
     public const SERIES_UNDO_OFF = 'Undo of a change to all events on a Google calendar comes in a later release; this change stays. Undo of a single day still works.';
 
-    /** A new account for a case, with the run's google_series_undo setting. */
+    /**
+     * A new account for a case, with the run's google_series_undo setting, and google_conflict_choice off as it ships
+     * (1.5.7): the database suite's freshUser turns it on, and the harness's expectation for a write over a change at
+     * Google not yet polled (x-conflict) is still the refusal of 1.5.6, so the harness runs exactly as before.
+     */
     public static function account(Db $db): int
     {
         $u = \freshUser($db);
+        \conflictChoice($db, $u, false);
         if (!self::$seriesUndo) {
             \seriesUndo($db, $u, false);
         }

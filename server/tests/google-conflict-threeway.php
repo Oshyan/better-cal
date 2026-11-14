@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 // The exhaustive table for GoogleConflict::threeWay (docs/design/google-conflict-choice.md, the page "1.5.7, Slice 1",
-// sections (a) and threeWay; the model's section 7). Run on its own: php server/tests/unit/google-conflict-threeway.test.php
+// sections (a) and threeWay; the model's section 7). Included by run.php.
 //
 // The only call into server/src is threeWay itself, the thing under test. Every expectation comes from the reference
 // below, written from the page's sentences and its table of equalities, and calls nothing in the product. A readable
@@ -18,20 +18,9 @@ declare(strict_types=1);
 
 use BetterCal\Domain\GoogleConflict;
 
-require_once dirname(__DIR__, 2) . '/src/bootstrap.php';
-
 if (!function_exists('check')) {
-    $GLOBALS['__pass'] = 0;
-    $GLOBALS['__fail'] = 0;
-    function check(string $name, bool $cond, string $detail = ''): void
-    {
-        if ($cond) {
-            $GLOBALS['__pass']++;
-            return;
-        }
-        $GLOBALS['__fail']++;
-        echo "FAIL: $name" . ($detail !== '' ? " — $detail" : '') . "\n";
-    }
+    fwrite(STDERR, "Run through server/tests/run.php\n");
+    exit(1);
 }
 
 /**
@@ -91,6 +80,7 @@ final class ThreeWayReference
     }
 }
 
+(static function (): void {
 $time = static fn(string $s, string $e, int $allDay = 0, string $tz = 'America/Los_Angeles'): array => ['start_utc' => $s, 'end_utc' => $e, 'all_day' => $allDay, 'tzid' => $tz];
 
 // Each field's values: B (base), Bs (another spelling the page calls the same as B, or null), G (Google's other value),
@@ -166,8 +156,11 @@ foreach ($empties as $f => [$e1, $e2]) {
         }
     }
     $full = $V[$f]['B'];
-    // Removed at Google, and removed in the change too, spelled the other way: no question.
-    $add("$f: base {$show($full)}, removed at Google as {$show($e1)}, removed here as {$show($e2)}", [$f => $full], [$f => $e1], [$f => $e2]);
+    // Removed at Google, and removed in the change too, spelled the other way: no question. Not for status, whose two
+    // "empty" spellings are both its non-tentative value: its base is itself empty, and the change wants nothing.
+    if ($f !== 'status') {
+        $add("$f: base {$show($full)}, removed at Google as {$show($e1)}, removed here as {$show($e2)}", [$f => $full], [$f => $e1], [$f => $e2]);
+    }
     // Filled at Google from empty, not touched here: kept.
     $add("$f: base empty {$show($e2)}, filled at Google {$show($full)}, not wanted", [$f => $e2], [$f => $full], []);
     if ($f !== 'status') {
@@ -258,8 +251,7 @@ $literal = [
 
 if (!class_exists(GoogleConflict::class) || !method_exists(GoogleConflict::class, 'threeWay')) {
     check('GoogleConflict::threeWay exists (server/src/Domain/GoogleConflict.php)', false, 'the class or the method is missing: the table of ' . (count($rows) + count($literal)) . ' rows did not run');
-    echo "\n{$GLOBALS['__pass']} passed, {$GLOBALS['__fail']} failed\n";
-    exit(1);
+    return;
 }
 
 $outcomeOf = static function (mixed $entry): mixed {
@@ -308,6 +300,4 @@ foreach ($rows as [$label, $base, $now, $wanted]) {
 }
 check('threeWay is pure: the same row twice gives the same answer', $product($rows[0][1], $rows[0][2], $rows[0][3]) === $product($rows[0][1], $rows[0][2], $rows[0][3]));
 
-echo count($rows) . ' generated rows, ' . count($literal) . " listed rows\n";
-echo "\n{$GLOBALS['__pass']} passed, {$GLOBALS['__fail']} failed\n";
-exit($GLOBALS['__fail'] === 0 ? 0 : 1);
+})();

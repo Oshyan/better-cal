@@ -1740,8 +1740,8 @@ final class GoogleSeries
     /**
      * The refusal of such a switch, or null when it hides no day: `days`, the
      * days it would hide, as they would show after it (dates, Y-m-d), with
-     * `deleted` those of them that are days deleted here (their record at
-     * Google a cancelled one), `toAllDay`, and `clock` (H:i in the new zone)
+     * `deleted` those of them the person deleted (a deleted day of the same
+     * date, read in the old form), `toAllDay`, and `clock` (H:i in the new zone)
      * when the switch is to timed; `words`, the sentence (hiddenWords). The
      * client composes the same sentence from the data in the person's own
      * formats (planwords.js, hiddenWords).
@@ -1758,14 +1758,19 @@ final class GoogleSeries
         }
         // The days hidden are the new form's, each where it would show after the switch: a daily series' record can
         // hide the next day's all-day day (19:00 New York is 00:00 UTC the day after).
+        // A hidden day is named, and called deleted, by the day that would be hidden (the second independent read, F4):
+        // it is deleted when the person deleted the day of that date, a deleted day's date read in the old form, never
+        // when the record at its instant is a deleted one (where the clock is 00:00 UTC the next day, that record is the
+        // day before's).
         $zone = Time::zone((int) $new['all_day'] === 1 ? 'UTC' : (string) $new['tzid']);
-        $deletedSet = array_fill_keys(array_map(static fn($k): string => Time::toDb(Time::fromDb((string) $k)), $deletedKeys), true);
+        $oldZone = Time::zone((int) $old['all_day'] === 1 ? 'UTC' : (string) $old['tzid']);
+        $deletedDates = array_fill_keys(array_map(static fn($k): string => Cal::date(Cal::dnOf(Time::fromDb((string) $k)->setTimezone($oldZone))), $deletedKeys), true);
         $days = [];
         $deleted = [];
         foreach ($hidden as $k) {
             $date = Cal::date(Cal::dnOf(Time::fromDb($k)->setTimezone($zone)));
             $days[$date] = true;
-            if (isset($deletedSet[$k])) {
+            if (isset($deletedDates[$date])) {
                 $deleted[$date] = true;
             }
         }

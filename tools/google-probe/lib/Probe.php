@@ -1258,6 +1258,105 @@ final class Probe
         $this->probeCase('3', '3.66', 'a day written with no If-Match: a live record, a revived record, a cancelled record made an edited day, a record put back to the series\' values, a record cancelled, an ordinary day cancelled', function (CaseRun $c): void {
             $this->unconditionalDays($c);
         });
+
+        // The second independent read of the 1.5.6 branch, F1 and the notes: evidence, not a test of a theory. What a
+        // kept record's start and end are after the start moves along its pattern (until now read from 3.5, whose
+        // report named no end), and whether a master write that sends no recurrence clears a day's own notes too.
+        $this->probeCase('3', '3.67', 'the first day moved a week later for all events (start along the pattern, the drag the app sends) over a day with its own time and length and an ordinary day renamed: each kept record\'s start and end before and after', function (CaseRun $c): void {
+            $this->startAlongPattern($c);
+        });
+        $this->probeCase('3', '3.68', 'a series with no notes and a day with its own notes: the master PATCHed with one private property only, then with its title only, no recurrence in either; the day read after each', function (CaseRun $c): void {
+            $this->notesWithoutRule($c);
+        });
+    }
+
+    // ---- 3.67, 3.68: a kept record's end, and notes without a rule (second read of the 1.5.6 branch) ----
+
+    /** Each exception record of $m in $read, by label: status, title, start and end, in words. */
+    private function recordTimes(CaseRun $c, array $read): string
+    {
+        $parts = [];
+        foreach (self::exceptions($read) as $key => $e) {
+            $parts[] = $this->label($c, (string) $key) . ' ' . ($e['status'] ?? '?') . ' "' . ($e['summary'] ?? '') . '" start ' . self::when($e['start'] ?? null) . ', end ' . self::when($e['end'] ?? null);
+        }
+        return $parts === [] ? 'no exception records' : implode('; ', $parts);
+    }
+
+    /**
+     * 3.67: a weekly 10:00 to 11:00 Los Angeles series of six from 2027-03-01 (an empty description, as the app makes
+     * one); occurrence 2 given its own time and length (14:00 to 15:30), occurrence 3 renamed and left at the series'
+     * time. Then the master PATCHed as the app sends a drag of the first day a week later for all events: start and end
+     * on 2027-03-08 at 10:00 to 11:00, the rule as it was, If-Match the master's read. Both days remain days of the
+     * series. The finding: every record's start and end before and after, then the standard story.
+     */
+    private function startAlongPattern(CaseRun $c): void
+    {
+        $rule = ['RRULE:FREQ=WEEKLY;COUNT=6'];
+        $body = self::timed('Probe drag', self::LA, '2027-03-01 10:00', 60, $rule);
+        $body['description'] = '';
+        $x = $this->insert($c, 'setup', 'insert the series', $body, true, false);
+        $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+        $two = $this->nth($c, $m, 2, 'own time and length');
+        $three = $this->nth($c, $m, 3, 'renamed, at the series\' time');
+        $setup = [
+            $this->send($c, 'setup', 'occurrence 2 given its own time and length (14:00 to 15:30)', 'PATCH', '/events/' . rawurlencode((string) $two['id']), [], self::clockAt(self::LA, '2027-03-08 14:00', 90)),
+            $this->send($c, 'setup', 'occurrence 3 renamed', 'PATCH', '/events/' . rawurlencode((string) $three['id']), [], ['summary' => 'Probe drag (one renamed)']),
+        ];
+        foreach ($setup as $s) {
+            if ($s['status'] >= 300) {
+                throw new \RuntimeException('setting up the days failed: HTTP ' . $s['status']);
+            }
+        }
+        $etag = self::etagNamer();
+        $answer = '';
+        $this->standard($c, function (CaseRun $c) use ($m, $rule, $etag, &$answer): void {
+            $g = $c->step('read', 'get the master for its etag', $this->api->call('GET', '/events/' . rawurlencode($m)));
+            $im = is_array($g['response']) && is_string($g['response']['etag'] ?? null) ? $g['response']['etag'] : null;
+            $x = $this->send($c, 'write', 'the first day a week later for all events', 'PATCH', '/events/' . rawurlencode($m), [], self::clockAt(self::LA, '2027-03-08 10:00', 60) + ['recurrence' => $rule], $im !== null ? ['If-Match: ' . $im] : []);
+            $answer = 'the master PATCH (start and end on 2027-03-08 10:00 to 11:00, the rule as it was): ' . self::answer($x, $etag);
+        });
+        $c->sent = 'setup: a weekly 10:00 to 11:00 Los Angeles series of six from 2027-03-01, no notes; occurrence 2 at its own 14:00 to 15:30; occurrence 3 renamed; then the master PATCHed to start 2027-03-08 10:00 to 11:00, the rule as it was, If-Match the master\'s read';
+        $c->finding = $answer . '; records before: ' . $this->recordTimes($c, $c->before[$m] ?? []) . '; records after: ' . $this->recordTimes($c, $c->after[$m] ?? []) . '; ' . $this->seriesFinding($c, $m);
+    }
+
+    /**
+     * 3.68: a weekly 10:00 Los Angeles series of six with an empty description (as the app makes one); occurrence 2
+     * given its own notes. Then two master PATCHes, neither with a recurrence, each If-Match the master's read and each
+     * followed by a GET of occurrence 2: first one private extended property only (the probe's marker sent with it, so
+     * it is kept), then the title only. No attendees, nothing that sends mail. The finding: occurrence 2's notes after
+     * each.
+     */
+    private function notesWithoutRule(CaseRun $c): void
+    {
+        $body = self::timed('Probe notes no rule', self::LA, '2027-03-01 10:00', 60, ['RRULE:FREQ=WEEKLY;COUNT=6']);
+        $body['description'] = '';
+        $x = $this->insert($c, 'setup', 'insert the series', $body, true, false);
+        $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+        $two = $this->nth($c, $m, 2, 'own notes');
+        $r = $this->send($c, 'setup', 'occurrence 2 given its own notes', 'PATCH', '/events/' . rawurlencode((string) $two['id']), [], ['description' => 'Probe own notes of the day']);
+        if ($r['status'] >= 300) {
+            throw new \RuntimeException('setting up occurrence 2 failed: HTTP ' . $r['status']);
+        }
+        $etag = self::etagNamer();
+        $story = [];
+        $this->standard($c, function (CaseRun $c) use ($m, $two, $etag, &$story): void {
+            $writes = [
+                ['one private extended property only', ['extendedProperties' => ['private' => [self::MARKER_KEY => $this->runId, 'betterCalProbeExtra' => 'one']]]],
+                ['the title only', ['summary' => 'Probe notes no rule, renamed']],
+            ];
+            foreach ($writes as [$what, $patch]) {
+                $g = $c->step('read', 'get the master for its etag', $this->api->call('GET', '/events/' . rawurlencode($m)));
+                $im = is_array($g['response']) && is_string($g['response']['etag'] ?? null) ? $g['response']['etag'] : null;
+                $x = $this->send($c, 'write', "the master PATCHed with $what", 'PATCH', '/events/' . rawurlencode($m), [], $patch, $im !== null ? ['If-Match: ' . $im] : []);
+                $d = $this->get($c, 'read', (string) $two['id']);
+                $day = is_array($d['response']) ? $d['response'] : [];
+                $story[] = "the master PATCHed with $what, no recurrence (If-Match " . $etag($im) . '): ' . self::answer($x, $etag)
+                    . '; occurrence 2 after: HTTP ' . self::status($d) . ', ' . ($day['status'] ?? '?') . ', description ' . (array_key_exists('description', $day) ? json_encode($day['description'], JSON_UNESCAPED_UNICODE) : 'absent')
+                    . ', title ' . json_encode($day['summary'] ?? null, JSON_UNESCAPED_UNICODE);
+            }
+        });
+        $c->sent = 'setup: a weekly 10:00 Los Angeles series of six, no notes; occurrence 2 given its own notes; then the master PATCHed with one private extended property only, then with its title only, neither sending a recurrence, each If-Match the master\'s read and followed by a GET of occurrence 2';
+        $c->finding = implode('; ', $story) . '; ' . $this->seriesFinding($c, $m);
     }
 
     // ---- 3.48 to 3.51: a day hidden where its two forms meet at 00:00 UTC (replay round 4, cause 1) ----

@@ -4,7 +4,7 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## 1.5.7 (unreleased)
+## 1.5.7 (2026-11-14)
 
 A change to one event on a Google calendar that someone changed in Google Calendar since you last saw it no longer stops with "Refresh and try again". It is on from the update.
 
@@ -20,6 +20,8 @@ A change to one event on a Google calendar that someone changed in Google Calend
 - A release no longer includes the tools that check the code (the edit harness, the stand-in for Google, the version comparison, the gate script): about 340 fewer files on an install ([#294](https://github.com/Oshyan/better-cal/issues/294)).
 - For maintainers: the database suite and the edit harness run with undo of a change to all events on Google off, as it ships; the tests of that undo turn it on themselves ([#290](https://github.com/Oshyan/better-cal/issues/290)).
 - An upgrade from 1.5.6 loses nothing. A delete now waits for the server's answer before the event leaves the screen, usually well under a second.
+
+Operators: no migrations; `update.php` or the update page as usual.
 
 ## 1.5.6 (2026-11-14)
 

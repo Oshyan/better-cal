@@ -17,13 +17,15 @@
 # the suites read them. GATES_LOG is where each gate's output goes (default: a new temp
 # folder, printed first). GATES_SEED fixes the fresh seed (default: drawn, and printed).
 # GATES_MUTATION_JOBS is how many mutation runs go at once (default 8).
+# GATES_INTERLEAVE_SHARDS is how many shards an interleaving seed runs on (default: the
+# logical CPUs, at most 8).
 # Exit status 0 only when every gate passed; a gate that did not finish has not passed.
 set -u
 cd "$(dirname "$0")/.." || exit 1
 LEVEL="${1:-}"
 case "$LEVEL" in
   quick | merge | full) shift ;;
-  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
 export BC_TEST_DB="${BC_TEST_DB:-127.0.0.1:3306}"
 LOG="${GATES_LOG:-$(mktemp -d "${TMPDIR:-/tmp}/bc-gates.XXXXXX")}"
@@ -32,6 +34,10 @@ RECORDED=7
 # The mutation runs at once: as many as the test database server has CPUs to take them (the server is where they wait),
 # beside the seeds the full level starts with them. GATES_MUTATION_JOBS overrides it.
 MUTATION_JOBS="${GATES_MUTATION_JOBS:-8}"
+# The interleaving seed's shards: the logical CPUs, at most 8 (README, Interleaving: Shards; past 8 the database server
+# is the wait, not the processes). GATES_INTERLEAVE_SHARDS overrides it; 1 runs it in one process.
+CORES="$(sysctl -n hw.logicalcpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
+INTERLEAVE_SHARDS="${GATES_INTERLEAVE_SHARDS:-$(( CORES < 8 ? CORES : 8 ))}"
 FRESH="${GATES_SEED:-$(( (RANDOM * 32768 + RANDOM) % 90000 + 10000 ))}"
 FAILED=0
 PIDS=()
@@ -90,7 +96,7 @@ seeds() { # seeds <seed> [extra interleave args...]
   local s="$1"; shift
   harness "local-$s" --seed "$s" --cases 1000 --shards 4
   harness "google-$s" --google --seed "$s" --cases 1000 --shards 4 --series-undo off
-  harness "interleave-$s" --interleave --seed "$s" --cases 300 --fixed --no-shrink --series-undo off "$@"
+  harness "interleave-$s" --interleave --seed "$s" --cases 300 --fixed --no-shrink --series-undo off --shards "$INTERLEAVE_SHARDS" "$@"
 }
 
 # The ids of the mutations aimed at a file changed since REF, comma separated.

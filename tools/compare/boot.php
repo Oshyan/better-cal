@@ -121,7 +121,13 @@ try {
         fwrite(STDOUT, $label . ' ' . $scenario['id'] . ' ' . ($result['error'] === null ? 'ran' : 'ERROR ' . $result['error']) . "\n");
     }
 } finally {
-    $server->exec("DROP DATABASE IF EXISTS `$dbName`");
+    // Each scenario's result is written as it runs; a drop that fails is reported, never thrown (the rule of
+    // server/tests/db/scratch.php, whose lines these are: this tool loads another checkout's code, not this tree's tests).
+    try {
+        $server->exec("DROP DATABASE IF EXISTS `$dbName`");
+    } catch (PDOException $e) {
+        fwrite(STDERR, "scratch database not dropped: $dbName: " . $e->getMessage() . "\n");
+    }
 }
 
 // ---------------------------------------------------------------------------

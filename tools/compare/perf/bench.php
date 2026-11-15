@@ -537,7 +537,14 @@ $restore();
 file_put_contents($out, json_encode($results, JSON_PRETTY_PRINT));
 fprintf(STDERR, "[%s] wrote %s\n", $label, $out);
 if (!isset($opts['keep-db'])) {
-    $server->exec("DROP DATABASE IF EXISTS `$dbName`");
-    $server->exec("DROP DATABASE IF EXISTS `$baseName`");
+    // The results are written; a drop that fails is reported, never thrown (server/tests/db/scratch.php's rule, in its
+    // own lines here: this tool loads another checkout's code, not this tree's tests).
+    foreach ([$dbName, $baseName] as $scratch) {
+        try {
+            $server->exec("DROP DATABASE IF EXISTS `$scratch`");
+        } catch (PDOException $e) {
+            fwrite(STDERR, "scratch database not dropped: $scratch: " . $e->getMessage() . "\n");
+        }
+    }
     @unlink($fixtureFile);
 }

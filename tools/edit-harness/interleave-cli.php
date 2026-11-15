@@ -33,6 +33,8 @@ $child = isset($opts['shard']);
 [$shard, $ofShards] = $child ? array_map('intval', explode('/', (string) $opts['shard'], 2)) + [1 => 1] : [0, 1];
 
 $root = dirname(__DIR__, 2);
+// Every scratch database is dropped after the result is written; the shard parent counts its children's failed drops.
+require_once $root . '/server/tests/db/scratch.php';
 if (!is_file($root . '/server/vendor/autoload.php')) {
     fwrite(STDERR, "Needs Composer's libraries: composer install in server/.\n");
     exit(1);
@@ -55,6 +57,7 @@ if ($shards > 1 && !$child) {
     $parts = [];
     foreach ($procs as $k => $p) {
         $code = proc_close($p);
+        ScratchDatabase::countIn((string) @file_get_contents("$tmp/$k.out"), true);
         $part = is_file("$tmp/$k.json") ? json_decode((string) file_get_contents("$tmp/$k.json"), true) : null;
         if (!is_array($part)) {
             fwrite(STDERR, "shard $k wrote nothing (exit $code):\n" . substr((string) @file_get_contents("$tmp/$k.out"), -3000) . "\n");
@@ -86,7 +89,9 @@ if ($shards > 1 && !$child) {
         }
     }
     usort($merged['records'], static fn(array $a, array $b): int => [isset($a['spec']['fixed']) ? 1 : 0, $a['n']] <=> [isset($b['spec']['fixed']) ? 1 : 0, $b['n']]);
-    exit(interleaveReport($merged, $findingsFile, $seed, $quiet));
+    $code = interleaveReport($merged, $findingsFile, $seed, $quiet);
+    echo ScratchDatabase::summary() . "\n";
+    exit($code);
 }
 
 if (getenv('BETTERCAL_SESSION_SECRET') === false) {
@@ -158,10 +163,12 @@ try {
         if ($name !== null) {
             $box->db = $box->domains = null;
             gc_collect_cycles();
-            $server->exec("DROP DATABASE IF EXISTS `$name`");
+            // Its cases are done and their results kept; a drop that fails is reported and counted, never a verdict.
+            ScratchDatabase::drop($server, $name);
         }
         $name = 'bc_interleave_' . bin2hex(random_bytes(4));
         $server->exec("CREATE DATABASE `$name` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        ScratchDatabase::made($server, $name);
         $box->db = new Db(['dsn' => "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4", 'user' => $user, 'pass' => $password]);
         (new Migrator($box->db, $root . '/server/migrations'))->run(static function (string $line): void {
         });
@@ -190,7 +197,11 @@ try {
         }
     };
     if (isset($opts['oracle-probes'])) {
-        exit(oracleProbes($runCase));
+        // exit skips the finally below, so the cleanup is here, after the verdict.
+        $code = oracleProbes($runCase);
+        ScratchDatabase::dropMade();
+        echo ScratchDatabase::summary() . "\n";
+        exit($code);
     }
     $out = ['records' => [], 'minimal' => [], 'counts' => ['cases' => 0, 'steps' => 0], 'runs' => [], 'na' => []];
     $count = static function (array $result) use (&$out): void {
@@ -298,16 +309,21 @@ try {
         }
     }
     $out['seconds'] = round(microtime(true) - $started, 1);
-} finally {
-    if ($name !== null) {
-        $server->exec("DROP DATABASE IF EXISTS `$name`");
+    // The result is written before the cleanup (ScratchDatabase): a shard's partial findings, or the report and its
+    // findings file, whose verdict is the exit status whatever the drop does.
+    if ($child) {
+        file_put_contents((string) $opts['partial'], json_encode($out, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
+        $code = 0;
+    } else {
+        $code = interleaveReport($out, $findingsFile, $seed, $quiet);
     }
+} finally {
+    ScratchDatabase::dropMade();
 }
-if ($child) {
-    file_put_contents((string) $opts['partial'], json_encode($out, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
-    exit(0);
+if (!$child) {
+    echo ScratchDatabase::summary() . "\n";
 }
-exit(interleaveReport($out, $findingsFile, $seed, $quiet));
+exit($code);
 
 /**
  * The oracle's own validation (README, Interleaving, Oracle probes): each probe's fixed case run clean and again with the

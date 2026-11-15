@@ -14,15 +14,17 @@
 //   BC_TEST_DB=127.0.0.1:3306 php tools/edit-harness/mutations/run.php [--only ID,...] [--jobs N] [--list FILE]
 //   ... --search ID --seed S --cases N   (which drawn cases trip a mutation, to fix as cases)
 //
-// --jobs N: how many runs at once (default 1, one after another; see the decisions register, "The mutation list runs
-// side by side", for why the default waits). --list FILE: another list in list.php's form, in place of it (to check the
-// runner itself).
+// --jobs N: how many runs at once (default: the logical CPUs, counted as server/tests/db/run.php counts them for
+// BC_TEST_JOBS; --jobs 1 runs them one after another). --list FILE: another list in list.php's form, in place of it (to
+// check the runner itself).
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli') {
     exit(1);
 }
 
 $root = dirname(__DIR__, 3);
+// Each run drops its own database after writing its result; the drops they could not make are counted (ScratchDatabase).
+require_once $root . '/server/tests/db/scratch.php';
 $opts = getopt('', ['only:', 'search:', 'seed:', 'cases:', 'jobs:', 'list:']);
 $mutations = require (isset($opts['list']) ? (string) $opts['list'] : __DIR__ . '/list.php');
 $tmp = sys_get_temp_dir() . '/bc-mutations-' . bin2hex(random_bytes(4));
@@ -31,6 +33,15 @@ if (!@mkdir($tmp, 0700)) {
     fwrite(STDERR, "Could not make a new folder $tmp for the patched copies (one by that name may already exist); nothing was run.\n");
     exit(2);
 }
+
+/** The logical CPUs, where the system says; 1 where it doesn't (as server/tests/db/run.php counts them). */
+$cpus = static function (): int {
+    if (is_readable('/proc/cpuinfo')) {
+        return max(1, (int) preg_match_all('/^processor\s*:/m', (string) file_get_contents('/proc/cpuinfo')));
+    }
+    $n = (int) @shell_exec('sysctl -n hw.logicalcpu 2>/dev/null');
+    return $n > 0 ? $n : max(1, (int) getenv('NUMBER_OF_PROCESSORS'));
+};
 
 /** A copy of the mutation's file with each find replaced, or an error when a find isn't there exactly once. */
 $apply = static function (array $m) use ($root, $tmp): string {
@@ -177,7 +188,7 @@ try {
         // Each verdict is kept by id: two mutations under one id would leave one of them unjudged.
         throw new RuntimeException('the list names an id twice: ' . implode(', ', array_keys(array_filter(array_count_values($ids), static fn(int $n): bool => $n > 1))));
     }
-    $jobsAtOnce = isset($opts['jobs']) ? max(1, (int) $opts['jobs']) : 1;
+    $jobsAtOnce = isset($opts['jobs']) ? max(1, (int) $opts['jobs']) : $cpus();
 
     // Every case the harness mutations name, unmutated: clean. A failure here
     // is a finding about the tree, named; each mutation is then judged by the
@@ -225,6 +236,9 @@ try {
 
     $started = microtime(true);
     $results = $pool($jobs, $jobsAtOnce);
+    foreach ($results as $res) {
+        ScratchDatabase::countIn($res['out'], true);
+    }
 
     // Judged only now, every run finished, in the list's order.
     $sig = static fn(array $r): string => ($r['spec']['fixed'] ?? (string) $r['n']) . '|' . json_encode([$r['invariant'], $r['what'], $r['detail']]);
@@ -325,6 +339,7 @@ try {
     $slowest = $results;
     uasort($slowest, static fn(array $a, array $b): int => $b['seconds'] <=> $a['seconds']);
     printf("\n%d runs, %d at once, in %.0f s; the longest %s (%.0f s)\n", count($results), $jobsAtOnce, microtime(true) - $started, (string) array_key_first($slowest), $slowest[array_key_first($slowest)]['seconds'] ?? 0);
+    echo ScratchDatabase::summary() . "\n";
 } catch (Throwable $e) {
     // Anything else that stops the runner fails the run: a runner that breaks must never pass.
     fwrite(STDERR, "The mutation runner stopped: " . get_class($e) . ": " . $e->getMessage() . "\n");

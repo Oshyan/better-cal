@@ -308,6 +308,8 @@ return static function (Db $db): void {
                         'a zone alone' => ['tzid' => 'America/New_York'],
                         'a typed clock alone' => ['typed' => ['start' => '2027-03-04T09:00', 'end' => '2027-03-04T10:00', 'tz' => 'UTC']],
                         'a time with no zone' => array_diff_key($moved, ['tzid' => true]),
+                        // Whole, but no state: a timed moment, as POST /events refuses it.
+                        'a timed moment (the end on the start)' => ['start' => '2027-03-04T20:00:00-05:00', 'end' => '2027-03-04T20:00:00-05:00', 'allDay' => false, 'tzid' => 'America/New_York'],
                     ];
                     foreach ($parts as $pName => $body) {
                         $refused("body in parts ($pName), over whole, $cell", $t, 'patch', $body + ['over' => $over]);
@@ -324,6 +326,7 @@ return static function (Db $db): void {
                         'an all-day time with the end on the start' => ['allDay' => true, 'start' => '2027-03-03', 'end' => '2027-03-03', 'tzid' => 'UTC'],
                         'an all-day time whose boundaries are not dates' => ['allDay' => true, 'start' => 'Wednesday', 'end' => 'Thursday', 'tzid' => 'UTC'],
                         'a timed end before its start' => ['allDay' => false, 'start' => '2027-03-03T19:00:00+00:00', 'end' => '2027-03-03T18:00:00+00:00', 'tzid' => 'UTC'],
+                        'a timed moment (the end on the start)' => ['allDay' => false, 'start' => '2027-03-03T20:00:00-05:00', 'end' => '2027-03-03T20:00:00-05:00', 'tzid' => 'America/New_York'],
                         'a zone that is no zone' => ['tzid' => 'Mars/Olympus_Mons'] + $time,
                         'an all-day setting that is no boolean' => ['allDay' => 'yes'] + $time,
                     ];

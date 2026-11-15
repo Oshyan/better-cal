@@ -922,9 +922,10 @@ final class Events
      * the conflict choice's path (the page "1.5.7, Slice 1", (b), T2 and
      * T4). False when it names none (no time key and no typed clock); true
      * when it names all four keys and they are a state: an all-day time's
-     * boundaries dates with the end after the start, a timed time's end not
-     * before its start (a moment with no length is an event, as columnPatch
-     * stores it), the zone a zone. Anything else is 400 client_outdated.
+     * boundaries dates with the end after the start, a timed time's end
+     * after its start (as POST /events holds: a moment with no length is no
+     * state here, and nothing the app shows or sends is one), the zone a
+     * zone. Anything else is 400 client_outdated.
      */
     public static function wholeTime(array $in): bool
     {
@@ -939,7 +940,7 @@ final class Events
         try {
             $state = $state && ($allDay
                 ? Time::parseAllDay($end, 'UTC') > Time::parseAllDay($start, 'UTC')
-                : Time::parseIso($end, $tzid) >= Time::parseIso($start, $tzid));
+                : Time::parseIso($end, $tzid) > Time::parseIso($start, $tzid));
         } catch (\InvalidArgumentException) {
             $state = false;
         }

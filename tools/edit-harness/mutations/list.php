@@ -1120,10 +1120,10 @@ return [
                     $rows[] = "over in parts ($part), $s";
                 }
             }
-            foreach (['a drag (start and end)', 'an end alone', 'a start alone', 'the all-day switch alone', 'a zone alone', 'a typed clock alone', 'a time with no zone'] as $p) {
+            foreach (['a drag (start and end)', 'an end alone', 'a start alone', 'the all-day switch alone', 'a zone alone', 'a typed clock alone', 'a time with no zone', 'a timed moment (the end on the start)'] as $p) {
                 $rows[] = "body in parts ($p), over whole";
             }
-            foreach (['an all-day time with the end on the start', 'an all-day time whose boundaries are not dates', 'a timed end before its start', 'a zone that is no zone', 'an all-day setting that is no boolean'] as $b) {
+            foreach (['an all-day time with the end on the start', 'an all-day time whose boundaries are not dates', 'a timed end before its start', 'a timed moment (the end on the start)', 'a zone that is no zone', 'an all-day setting that is no boolean'] as $b) {
                 $rows[] = "over no state ($b)";
             }
             $out = [];

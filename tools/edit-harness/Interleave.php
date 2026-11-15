@@ -2404,6 +2404,16 @@ final class Interleave
         $reads = count(array_filter($app, static fn(array $q): bool => $q['method'] === 'GET'));
         $writes = count($app) - $reads;
         $budget = $context + ['reads' => $reads, 'writes' => $writes, 'requests' => array_map(static fn(array $q): string => $q['method'] . ' ' . rawurldecode(basename((string) $q['path'])), $app)];
+        // The step runs "only when the request sends Google something (a non-empty `patchBody`, a delete, an answer)" (the
+        // page, (e)), and a request that changes nothing sends nothing and asks Google nothing (decisions.md, "A request that
+        // changes nothing sends nothing and is no conflict"). A change whose every field the row here already holds (a poll
+        // stored Google's Maybe and the person, still shown Planned, clicks Maybe: seed 94756 case 266) is such a request:
+        // it goes through with no read and no write, and the three-way comparison is not asked.
+        if ($action !== 'delete' && array_filter($W, static fn($v, string $f): bool => $R[$f] !== $v, ARRAY_FILTER_USE_BOTH) === []) {
+            $this->ran('x-choice', 'sends Google nothing');
+            $this->expect('x-choice', $out['ok'] && $reads === 0 && $writes === 0 && $s1['g'] == $s0['g'], "step {$this->step} ($do): a change the row here already holds goes through asking Google nothing", $budget);
+            return;
+        }
         $this->ran('x-choice', 'budget');
         $this->expect('x-choice', $action === 'delete' || $W !== [] ? $reads === 1 : $reads <= 1, "step {$this->step} ($do): a change to one event reads it from Google once", $budget);
         $this->expect('x-choice', $asks !== [] ? $writes === 0 : ($toSend ? $writes === 1 : $writes <= 1),
@@ -2931,7 +2941,12 @@ final class Interleave
                 // A row the entry made or removed whole: a newer change on the row at that day now stales it where the two
                 // grounds meet, the fields the entry's row owns and those the newer change changed (a poll changing the
                 // day's notes doesn't stale an entry about its place).
-                $mine = self::ground($fields === ['+'] ? $b : ($state['before'][$ident] ?? null));
+                // An event in no series made or removed whole (a create, a delete) is not a day of a series: the entry changed
+                // every column of its row, so every field of it is its ground ("a row or series made whole has every field of
+                // what it made as its ground", interleaving-invariants.md, x-undo-fields; decisions.md, "Staleness has one
+                // definition: grounds are fields": "a column of a row"). The day-row rule (the fields the row owns) is a
+                // day's. Seed 94756 case 79: an event made, then made Maybe, then its making undone, is stale.
+                $mine = str_starts_with($ident, 'event:') ? self::judged($ident) : self::ground($fields === ['+'] ? $b : ($state['before'][$ident] ?? null));
                 if ($fields === ['+'] && $c === null) {
                     $out[$ident] = ['row gone'];
                 } elseif ($fields === ['+']) {

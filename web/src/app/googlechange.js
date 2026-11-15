@@ -14,13 +14,19 @@
 //   sends the same request again with `over` set to what Google holds now
 //   and each asked field's value to what the question showed as the
 //   person's, and a second google_changed asks again with the newer values;
-//   Cancel sends nothing, and what shows stays what was stored;
+//   Cancel sends nothing, and what shows stays what was stored; an editor
+//   open on the event keeps the person's fields, and its base becomes what
+//   the question showed (shownAfter), so its next Save goes through unless
+//   Google changed again;
+// - a 200 that carries the event as saved (an event in no series) puts it in
+//   place of every copy held before the caller goes on, so what shows after
+//   an answer is the answer, not what a later refetch of the window brings;
 // - a 200's `kept` goes on the caller's toast (keptOf; store.js toast says it).
 //
 // The setting is on as shipped; with it off for an account (an operator's
 // switch) no answer carries google_changed or kept, and nothing here shows.
 
-import { adoptEvent } from './store.js';
+import { adoptEvent, state, set } from './store.js';
 import { api, ApiError, refreshWindow } from './api.js';
 import { askConfirm } from './ConfirmDialog.js';
 import { googleChangedAsk } from '../lib/planwords.js';
@@ -67,17 +73,42 @@ export function overOf(occ, body, { remove = false } = {}) {
  * Everything else in the body (a scope, tags) is as it was.
  */
 function overwriteOf(send, fields) {
-  const over = { ...(send.over || {}) };
   const body = { ...send };
   for (const f of fields || []) {
-    const keys = overKeys(f.field);
-    const part = (v, k) => (keys.length > 1 ? (v || {})[k] : v);
-    for (const k of keys) {
-      over[k] = part(f.now, k);
-      if (f.yours != null) body[k] = part(f.yours, k);
-    }
+    if (f.yours != null) for (const k of overKeys(f.field)) body[k] = partOf(f, f.yours, k);
   }
-  return { ...body, over };
+  return { ...body, over: { ...(send.over || {}), ...nowOf(fields) } };
+}
+
+// One key's part of a field's value: a time's three keys from its object.
+const partOf = (f, v, k) => (overKeys(f.field).length > 1 ? (v || {})[k] : v);
+
+/** What a question showed as Google's, under the keys the API serves: each asked field's `now`. */
+function nowOf(fields) {
+  const out = {};
+  for (const f of fields || []) for (const k of overKeys(f.field)) out[k] = partOf(f, f.now, k);
+  return out;
+}
+
+/**
+ * The event `occ` as the person has been shown it once a question showed
+ * `fields`: each asked field as Google holds it now, the rest as `occ` had
+ * it. Overwrite's `over` is the same values (overwriteOf).
+ */
+export function shownAfter(occ, fields) {
+  return { ...occ, ...nowOf(fields) };
+}
+
+/**
+ * An editor open on the event when a question shows: its form stays the
+ * person's (nothing here touches it; EditorDrawer seeds once per opening,
+ * lib/editfields.js sameOpening), and what it has been shown, the base its
+ * next Save sends as `over` (editorBase), takes the question's values.
+ */
+function editorShown(occ, fields) {
+  const ed = state.editor;
+  if (!ed || !ed.occ || ed.occ.eventId !== occ.eventId || ed.occ.recurring) return;
+  set({ editor: { ...ed, shown: shownAfter(ed.shown || ed.occ, fields) } });
 }
 
 const askedFields = (e) => (e && e.code === 'google_changed' && e.data && e.data.error && Array.isArray(e.data.error.fields) && e.data.error.fields.length
@@ -117,17 +148,29 @@ export async function sendEventChange(occ, path, method, body = {}, { remove = f
   let send = Object.keys(over).length ? { ...body, over } : body;
   let shown = false;
   for (;;) {
+    let answer;
     try {
-      return await api(path, { method, body: send });
+      answer = await api(path, { method, body: send });
     } catch (e) {
       const fields = askedFields(e);
       if (!fields) throw e;
       await showStored(occ, shown ? null : revert);
       shown = true;
+      editorShown(occ, fields);
       const ask = googleChangedAsk({ name: occ.title, fields, remove, back });
       if (!(await askConfirm(ask))) return CANCELLED;
       send = overwriteOf(send, fields);
+      continue;
     }
+    // The event as saved, when the answer carries it (PATCH of an event in
+    // no series): in place of every copy held, as a change that landed, so
+    // the caller's toast, a closing editor and the grid show the same thing
+    // at once, and a refetch asked before it can't put the old copy back.
+    // A change of the caller's still on its way (a drag's own copy) stands:
+    // adoptEvent leaves the event to the refetch then.
+    const saved = answer && answer.occurrence;
+    if (saved && !saved.recurring) adoptEvent(saved, { saved: true });
+    return answer;
   }
 }
 

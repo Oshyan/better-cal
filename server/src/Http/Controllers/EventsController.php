@@ -149,7 +149,28 @@ final class EventsController
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
-        return Response::json(['ok' => true] + self::split($this->events) + $this->events->keptAnswer((int) $req->user['id']));
+        return Response::json(['ok' => true] + self::split($this->events) + $this->events->keptAnswer((int) $req->user['id'])
+            + $this->saved((int) $req->user['id'], (int) $params['id']));
+    }
+
+    /**
+     * The event as saved, for an event in no series: `occurrence`, the record
+     * GET /events/:id/occurrence serves, so the app shows the answer itself
+     * (closing the editor, the grid and the toast together) instead of what
+     * it held until a refetch of the window. A series' change touches days
+     * this record doesn't hold; its answer carries none, and the app refetches.
+     */
+    private function saved(int $userId, int $id): array
+    {
+        try {
+            $row = $this->events->get($userId, $id);
+        } catch (HttpError) {
+            return []; // gone with the change: nothing to show, and the save stands
+        }
+        if (!empty($row['rrule']) || !empty($row['recurrence_parent_id'])) {
+            return [];
+        }
+        return ['occurrence' => $this->events->serializeSingle($row)];
     }
 
     public function delete(Request $req, array $params): Response

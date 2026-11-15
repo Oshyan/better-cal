@@ -220,9 +220,13 @@ const json = (status, body) => new Response(JSON.stringify(body), { status, head
 // (showStored); `reads` counts those reads, apart from the requests sent.
 let stored = null;
 let reads = 0;
+// A refetch of the window held until the test lets it go (`slowWindow`), as a
+// large calendar's week is slow to fetch again: its first request waits.
+let slowWindow = null;
 globalThis.fetch = async (url, init = {}) => {
   const path = String(url).replace('/api/v1', '');
   if (path === '/events/7/occurrence' && (init.method || 'GET') === 'GET') { reads++; return json(200, { occurrence: stored }); }
+  if (path === '/changes/cursor' && slowWindow) { slowWindow.asked = true; await slowWindow.gate; }
   if (!path.startsWith('/events/7')) return json(200, { events: [], cursor: null });
   sent.push({ path, method: init.method, body: init.body ? JSON.parse(init.body) : null });
   return answers.shift();
@@ -429,7 +433,110 @@ toast('Accepted. The reply went to the organizer.', { kept: [{ field: 'title', n
 assert.equal(state.toasts[state.toasts.length - 1].kept, "A separate change in Google Calendar was kept: the title is now 'Standup'.",
   'D: under a line that does not name Google Calendar, the kept line names it');
 
+console.log('Google changed: the question interrupts, and every view shows what Google holds');
+
+// ---- the editor: its fields are the person's, and an answer shows at once ---------
+//
+// R1: nothing that refreshes the event under an open editor makes it another
+// opening (EditorDrawer seeds its form once per opening, sameOpening), and
+// the base its save sends as `over` is what the person has been shown: the
+// copy it opened with, then what a question showed (editorBase). R2: an
+// answer that carries the saved event puts it in every view before the
+// caller goes on, so the editor closes, the grid shows it and the toast
+// says it together, with the refetch of the window still on its way.
+
+const { sameOpening, editorBase } = await import('../src/lib/editfields.js');
+const heldOf7 = () => [...state.occ.values()].filter((o) => o.eventId === 7);
+// The event as the server stores it after a save of `extra`, served whole.
+const savedAs = (extra) => ({ ...shown, ...extra, instanceId: '7:saved' });
+// Let a held refetch go, once whatever waits on it has had every chance to
+// run: turns of the event loop, counted, never a clock.
+const turns = async (until, max = 200) => { for (let i = 0; i < max && !until(); i++) await new Promise((r) => setImmediate(r)); };
+
+// The editor opened from the panel on 'Team sync'; the person types "Weekly
+// sync" and saves; Google holds "Standup". The question opens, Cancel.
+sent.length = 0; asked.length = 0; reads = 0;
+put(shown);
+const opened = { mode: 'edit', occ: shown, returnTo: { instanceId: shown.instanceId } };
+set({ popover: null, editor: opened, toasts: [] });
+stored = atGoogle({ title: 'Standup' });
+answers = [changed([t1])];
+reply = [false];
+assert.equal(await updateEvent(editorBase(state.editor), { title: 'Weekly sync' }, null, ['title']), false, 'R1: Cancel saves nothing');
+assert.deepEqual(heldOf7().map((o) => o.title), ['Standup'], 'the grid behind shows Google\'s title');
+assert.ok(sameOpening(opened, state.editor), 'R1: the question and the event read back under the editor are not another opening: its form stays the person\'s');
+assert.equal(state.editor.returnTo.instanceId, '7:google', 'Back from the editor returns to the event where it now is');
+assert.equal(editorBase(state.editor).title, 'Standup', 'R1: the editor\'s base is now what the question showed');
+assert.equal(editorBase(state.editor).location, 'Room 2', 'R1: a field the question did not show stays as the editor opened with it');
+
+// Save again after Cancel: the person has seen 'Standup' (the question showed
+// it), so the same change goes through without asking, with over from it.
+sent.length = 0; asked.length = 0;
+answers = [json(200, { kept: [], occurrence: savedAs({ title: 'Weekly sync' }) })];
+assert.equal(await updateEvent(editorBase(state.editor), { title: 'Weekly sync' }, null, ['title']), true, 'Save after Cancel goes through');
+assert.equal(asked.length, 0, 'not asked again: what Google holds was shown');
+assert.deepEqual(sent.map((s) => s.body), [{ title: 'Weekly sync', over: { title: 'Standup' } }], 'over is what the question showed');
+set({ editor: null });
+
+// The panel's time fields close as they send: with no editor holding the
+// change, Cancel leaves the event as Google has it, and the question says so.
+sent.length = 0; asked.length = 0;
+put(shown);
+set({ editor: null, popover: { instanceId: shown.instanceId } });
+stored = atGoogle({ ...googleTime });
+answers = [changed([{ field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: { ...googleTime, allDay: false }, yours: { start: at('2026-11-21', '10:00'), end: at('2026-11-21', '11:00'), allDay: false } }])];
+reply = [false];
+assert.equal(await updateEvent(shown, { start: at('2026-11-21', '10:00'), end: at('2026-11-21', '11:00') }), false);
+assert.equal(asked[0].foot, OVERWRITE_STAY, 'from the panel, Cancel does not promise a way back to a change it no longer holds');
+set({ popover: null });
+
+// Overwrite at the question, with the refetch of the window slow: the save
+// resolves on the answer, with the grid holding the saved event and the
+// toast up, while the refetch has not come back.
+sent.length = 0; asked.length = 0;
+put(shown);
+set({ editor: { mode: 'edit', occ: shown, returnTo: { instanceId: shown.instanceId } }, toasts: [] });
+stored = atGoogle({ title: 'Standup' });
+answers = [changed([t1]), json(200, { kept: [], occurrence: savedAs({ title: 'Weekly sync' }) })];
+reply = [true];
+let letGo;
+slowWindow = { asked: false, gate: new Promise((r) => { letGo = r; }) };
+let settled = null;
+const saving = updateEvent(editorBase(state.editor), { title: 'Weekly sync' }, null, ['title']).then((v) => { settled = { v, held: heldOf7().map((o) => o.title), toast: state.toasts.map((x) => x.text), windowBack: false }; });
+await turns(() => settled);
+const windowWasAsked = slowWindow.asked;
+const early = settled; // before the refetch is let go
+letGo();
+slowWindow = null;
+await saving;
+assert.ok(early, 'R2: the save resolves on the answer, not on the refetch of the window');
+assert.equal(settled.v, true, 'R2: saved, so the editor closes');
+assert.deepEqual(settled.held, ['Weekly sync'], 'R2: the grid holds the saved event when the editor closes');
+assert.deepEqual(settled.toast, ['Title changed, here and in Google Calendar'], 'R2: the toast is up when the editor closes');
+assert.ok(windowWasAsked, 'the refetch was asked for, and only confirms');
+set({ editor: null });
+
+// A drag Overwritten at the question: the block shows the saved time on the
+// answer, not Google's time until a refetch.
+sent.length = 0; asked.length = 0;
+put(shown);
+stored = atGoogle({ ...googleTime });
+{
+  const time = { field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: { ...googleTime, allDay: false }, yours: { start: at('2026-11-21', '10:00'), end: at('2026-11-21', '11:00'), allDay: false } };
+  answers = [changed([time]), json(200, { kept: [], occurrence: savedAs({ start: time.yours.start, end: time.yours.end }) })];
+  reply = [true];
+  slowWindow = { asked: false, gate: new Promise((r) => { letGo = r; }) };
+  let dragged = null;
+  const dragging = moveEvent({ instanceId: shown.instanceId, newStart: time.yours.start, newEnd: time.yours.end }).then(() => { dragged = heldOf7().map((o) => o.start); });
+  await turns(() => dragged);
+  const early = dragged;
+  letGo();
+  slowWindow = null;
+  await dragging;
+  assert.deepEqual(early, [time.yours.start], 'R2: after Overwrite the block is at the saved time on the answer');
+}
+
 off();
 globalThis.fetch = realFetch;
 assert.equal(state.confirmAsk, null);
-console.log('Google changed: the question interrupts, and every view shows what Google holds');
+console.log('Google changed: an open editor keeps the person\'s fields, and an answer shows at once');

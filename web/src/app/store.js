@@ -696,13 +696,30 @@ export function removeOccurrencesOfEvent(eventId) {
  * so no window has to cover the day the event was shown on for the old
  * copy to go. Arrived, not a change: no local mark. An open panel, and an
  * editor's way back to it, follow the event to its instanceId now (its
- * start is in it).
+ * start is in it); an open editor's form is not touched (sameOpening).
+ *
+ * `saved`: the copy is a save's answer (googlechange.js, on a 200 that
+ * carries the event). It stands as a change that landed, so only a window
+ * asked after the save replaces it, never one already on its way. While a
+ * save of the event made here is still on its way (a second drag), that
+ * save's copy is newer than this answer, and nothing changes.
  */
-export function adoptEvent(occ) {
+export function adoptEvent(occ, { saved = false } = {}) {
   if (!occ || occ.eventId == null) return;
+  if (saved) {
+    const m = local.get(localKey(occ));
+    if (m && m.saves.some((x) => !x.landed)) return;
+  }
   const old = new Set();
-  for (const [id, o] of state.occ) if (o.eventId === occ.eventId) { old.add(id); state.occ.delete(id); }
-  state.occ.set(occ.instanceId, { ...occ, full: true });
+  let was = null;
+  for (const [id, o] of state.occ) if (o.eventId === occ.eventId) { old.add(id); was = was || o; state.occ.delete(id); }
+  const copy = { ...occ, full: true };
+  state.occ.set(occ.instanceId, copy);
+  if (saved) {
+    const before = was || copy;
+    markLocal(before, copy);
+    localSaved([before]);
+  }
   recordGen++; // a record asked before this holds what it replaced
   const patch = { occVersion: state.occVersion + 1 };
   const follow = (p) => (p && old.has(p.instanceId) ? { ...p, instanceId: occ.instanceId } : p);

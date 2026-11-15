@@ -38,7 +38,7 @@ import { DateField, TimeField } from './WhenFields.js';
 import { useMarkerSuggest } from './MarkerSuggest.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
 import { editedWords, timeChange } from '../lib/changeline.js';
-import { changedFields, fieldLines } from '../lib/editfields.js';
+import { changedFields, fieldLines, sameOpening, editorBase } from '../lib/editfields.js';
 import { openSeriesChange, cancelSeriesChange, seriesPlans } from './serieschange.js';
 import { SeriesDialog } from './SeriesDialog.js';
 import { creationLine } from '../lib/seriesplan.js';
@@ -201,12 +201,22 @@ const isMineCal = (cal) => !cal || (cal.role || 'mine') === 'mine';
 
 export function EditorDrawer() {
   const editor = useStore((s) => s.editor);
+  // The opening this editor is: the state it was opened as, kept while the
+  // store only moves what may change under an open editor (lib/editfields.js
+  // sameOpening: where Back returns, what the person has been shown). The
+  // form is the person's from the moment it opens until it closes, so every
+  // effect that seeds or sets the editor up runs per opening, never because
+  // the event was refreshed underneath (a poll, a question's read-back, a
+  // split followed).
+  const openingRef = useRef(null);
+  const opening = sameOpening(openingRef.current, editor) ? openingRef.current : editor;
+  openingRef.current = opening;
   // A save for all events asking for its plan, or waiting in the dialog.
   const seriesAsk = useStore((s) => (s.seriesChange && s.seriesChange.kind === 'editor' ? (s.seriesChange.hidden ? 'asking' : 'open') : null));
   // The drawer closing (Back, Esc elsewhere) takes its dialog with it.
   useEffect(() => () => {
     if (state.seriesChange && state.seriesChange.kind === 'editor') cancelSeriesChange();
-  }, [editor]);
+  }, [opening]);
   const panelRef = useRef(null);
 
   const [form, setForm] = useState(null);
@@ -436,8 +446,8 @@ export function EditorDrawer() {
       setForm(null);
       let alive = true;
       ensureFullOccurrence(occ.instanceId).then((full) => {
-        if (!alive || state.editor !== editor) return;
-        set({ editor: { ...editor, occ: full && full.full ? full : { ...occ, _detailFailed: true } } });
+        if (!alive || !sameOpening(state.editor, editor)) return;
+        set({ editor: { ...state.editor, occ: full && full.full ? full : { ...occ, _detailFailed: true } } });
       });
       return () => { alive = false; };
     }
@@ -531,7 +541,7 @@ export function EditorDrawer() {
         .then((d) => { if (id === nlReq.current) applyNlDraft(d); })
         .catch(() => { /* assist is best-effort */ });
     }
-  }, [editor]);
+  }, [opening]);
 
   // Phone (0.6.0): the editor is a full screen, so Back closes it, the way
   // it closes the event sheet. Opened from that sheet (Edit), it takes over
@@ -570,8 +580,8 @@ export function EditorDrawer() {
   // cover the event.
   const focusedFor = useRef(null);
   useEffect(() => {
-    if (!editor || !form || focusedFor.current === editor) return;
-    focusedFor.current = editor;
+    if (!editor || !form || focusedFor.current === opening) return;
+    focusedFor.current = opening;
     if (phoneOpen && editor.occ && editor.focus !== 'date') return;
     // A duplicate opens on its date, selected, so typing replaces it.
     if (editor.focus === 'date') {
@@ -582,13 +592,13 @@ export function EditorDrawer() {
     if (!el) return;
     el.focus({ preventScroll: true });
     try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* not a text box */ }
-  }, [editor, form]); // eslint-disable-line
+  }, [opening, form]); // eslint-disable-line
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Tab') trapFocus(panelRef.current, e); };
     if (editor) document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [editor]);
+  }, [opening]);
 
   // The Repeat row's line: the rule in words and its first dates, from a
   // preview. A new rule (a new event, or the repeat controls touched) asks
@@ -874,7 +884,11 @@ export function EditorDrawer() {
         });
         return;
       }
-      ok = await updateEvent(occ, fields, scope, words);
+      // Compared at the server with what the person has been shown: the
+      // event as this editor opened it, then what a question showed
+      // (editorBase). The fields sent are still what the person changed
+      // from the form as it opened.
+      ok = await updateEvent(editorBase(state.editor) || occ, fields, scope, words);
     } else {
       const created = await createEvent(fields);
       ok = !!created;

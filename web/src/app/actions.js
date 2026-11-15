@@ -646,21 +646,32 @@ export async function updateEvent(occ, fields, scope, words = null, rescope = nu
     body.instanceStart = occ.start;
   }
   try {
-    // The editor, or the panel's time fields, stay open holding the change
-    // until it saves (EditorDrawer.js, EventPopover.js): Cancel goes back there.
-    const res = await sendSeries(occ, '/events/' + occ.eventId, 'PATCH', body, dialog, null, true);
+    // An editor open on the event holds the change until it saves
+    // (EditorDrawer.js): Cancel goes back there. The panel's time fields
+    // close as they send (EventPopover.js), so from them Cancel leaves the
+    // event as Google Calendar has it, and the question says so.
+    const held = !!(state.editor && state.editor.occ && state.editor.occ.eventId === occ.eventId);
+    const res = await sendSeries(occ, '/events/' + occ.eventId, 'PATCH', body, dialog, null, held);
     if (res === PLANNED) return null;
     // The person chose Cancel at the question: nothing was saved, and an
     // open editor stays open with their change.
     if (res === CANCELLED) return false;
+    // What the person sees after the answer is one state at one moment: the
+    // toast, the editor closing (on this returning true) and the grid
+    // showing the result, together. An answer that carries the event as
+    // saved (one in no series) is already in every view (googlechange.js),
+    // so all three follow it and the refetch only confirms. Otherwise (a
+    // series) the views hold the result once the window is fetched again,
+    // and all three wait for that.
+    const savedShown = !!(res && res.occurrence);
+    if (!savedShown) invalidateRecords(occ.eventId); // its description/reminders/rule may be what changed
+    const refreshed = refreshWindow();
+    if (!savedShown) { await refreshed; followSplit(occ, res); }
     // Tags, people, reminders and attendance are local even on a Google event; only content edits go to Google.
     const wentToGoogle = googleBacked(occ) && Object.keys(fields).some((k) => !['tagNames', 'personIds', 'personNames', 'reminders'].includes(k));
     toast(updateLine(occ, fields, occ.recurring ? (scope || 'this') : null, words, wentToGoogle), {
       title: fields.title || itemName(occ), undo: entriesOf(res), note: NO_UNDO, kept: keptOf(res),
     });
-    invalidateRecords(occ.eventId); // its description/reminders/rule may be what changed
-    await refreshWindow();
-    followSplit(occ, res);
     return true;
   } catch (e) {
     // Clearing the trip flag while events are still attached: the server

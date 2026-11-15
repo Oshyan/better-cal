@@ -82,3 +82,35 @@ export function fieldLines(changed, was, ctx = {}) {
   }
   return lines;
 }
+
+
+// What may change under an open editor without making it another opening:
+// where Back from it returns (the event it was opened from, followed when
+// that event moves), and `shown`, what the person has been shown of the
+// event since it opened (a question shows what Google Calendar holds now).
+// Neither is a field the person edits.
+const UNDER_EDITOR = new Set(['returnTo', 'shown']);
+
+/**
+ * Whether two editor states are the same opening: the editor's form belongs
+ * to the person from the moment it opens until it closes, so it is seeded
+ * once per opening (EditorDrawer.js), never again because something
+ * refreshed the event underneath. Computed from the states, not from who
+ * changed them: every key but those in UNDER_EDITOR the same.
+ */
+export function sameOpening(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (!UNDER_EDITOR.has(k) && a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
+/**
+ * The event as the open editor's person has been shown it: the base its save
+ * compares with (googlechange.js sends it as `over`). The copy it opened
+ * with, then each question's values over it (googlechange.js shownAfter),
+ * so a Save after Cancel says "I have seen what Google holds".
+ */
+export const editorBase = (editor) => (editor ? editor.shown || editor.occ : null);

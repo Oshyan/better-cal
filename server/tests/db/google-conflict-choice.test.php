@@ -190,6 +190,10 @@ return static function (Db $db): void {
         [$status, $json] = $send($t, 'patch', $overwrite($body, $json));
         checkEq('Overwrite: 200, one read and one PATCH, nothing kept', [200, ['GET', 'PATCH'], []], [$status, $methods($sent($t, $m)), $keptOf($json)]);
         checkEq('Google and the row hold your title, and the tags are written', ['Weekly sync', 'Weekly sync', ['sample-tag']], [$atG($t)['summary'] ?? null, $row($t)['title'], $row($t)['tags']]);
+        // The answer carries the event as saved, so the app shows it on the answer (the page's "What the person sees
+        // after an answer"): the record as served, with your title and the tags.
+        checkEq('the answer carries the event as saved', [$t->id, 'Weekly sync', ['sample-tag'], false],
+            [$json['occurrence']['eventId'] ?? null, $json['occurrence']['title'] ?? null, $json['occurrence']['tags'] ?? null, $json['occurrence']['recurring'] ?? null]);
         H::done($t);
     });
     scenario('second change before Overwrite asks again', function () use ($fresh, $send, $overOf, $atGoogle, $mark, $sent, $methods, $row, $overwrite): void {

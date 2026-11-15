@@ -9,9 +9,10 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 A change to one event on a Google calendar that someone changed in Google Calendar since you last saw it no longer stops with "Refresh and try again". It is on from the update.
 
 - **A change in Google Calendar to something you are not changing just stays.** Your change goes through, and the toast says what else changed there and was kept, with its value.
-- **A change to the same thing asks you.** It names what changed, shows what Google Calendar holds now and what your change would make it, and offers Cancel or Overwrite. Cancel saves nothing and leaves your change in the editor.
+- **A change to the same thing asks you.** It names what changed, shows what Google Calendar holds now and what your change would make it, and offers Cancel or Overwrite. Cancel saves nothing and leaves your change in the editor; Save then sends it, since you have seen what Google Calendar holds.
 - **A delete asks over any change in Google Calendar,** showing what changed, with Cancel or Delete. The event stays on screen until the answer comes, so Cancel leaves you where you were.
 - **The question's buttons are full-size touch targets on phones.**
+- **A saved edit shows at once.** The editor closes, the calendar shows the change and the toast says it together, without waiting for the calendar to load again.
 - **Toasts for a change sent to Google say "here and in Google Calendar".**
 - Where a change to a repeating event names what its days keep or take, it says Planned or Maybe instead of "status".
 - Not yet covered, refused as before: one day of a repeating event ([#268](https://github.com/Oshyan/better-cal/issues/268)).

@@ -31,10 +31,23 @@ final class Product
     /** The words the contract gives that refusal (decisions.md, the same entry): the harness's own copy. */
     public const SERIES_UNDO_OFF = 'Undo of a change to all events on a Google calendar comes in a later release; this change stays. Undo of a single day still works.';
 
-    /** A new account for a case, with the run's google_series_undo setting. */
+    /**
+     * The account's google_conflict_choice setting in a run (`--conflict-choice on|off`, README: Interleaving, The
+     * Conflict Choice). On, the default, as 1.5.7 ships it: a change or delete of one event in no series over a change
+     * at Google not yet read is judged by the three-way comparison of google-conflict-choice.md's first page (x-choice);
+     * off, the switch an operator can still set for an account, every such write is 1.5.6's refusal (x-conflict).
+     */
+    public static bool $conflictChoice = true;
+
+    /**
+     * A new account for a case, with the run's google_series_undo and google_conflict_choice settings. The database
+     * suite's freshUser leaves google_conflict_choice as it ships (on, nothing stored), so it is stored here only to
+     * follow `--conflict-choice`; on stores true, which reads the same as the default.
+     */
     public static function account(Db $db): int
     {
         $u = \freshUser($db);
+        \conflictChoice($db, $u, self::$conflictChoice);
         if (!self::$seriesUndo) {
             \seriesUndo($db, $u, false);
         }

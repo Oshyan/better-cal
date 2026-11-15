@@ -14,6 +14,10 @@
 // The checkout is only read: its server/ is copied (without vendor/ and
 // tests/) into --work/<label>, with a vendor/ of per-package links to the
 // checkout's own packages, so the app's runtime files land in the copy.
+// --work is workfolder/bc-perf in the checkout this tool is in unless given
+// (git ignores workfolder/). The copy's PHP is run, and a copy already there
+// is reused, so a work folder or run folder that exists and is owned by
+// another account is refused: its PHP would run as whoever runs this.
 // A database cmp_perf_<label> is made, migrated and seeded (seed.php) with
 // that version's own code, and copied to cmp_perf_<label>_base; before each
 // repetition of an edit the working database is put back from that copy.
@@ -59,7 +63,7 @@ if (!preg_match('/^[a-z0-9_]+$/', $label) || !is_file("$checkout/server/public/i
     fwrite(STDERR, "--label must be [a-z0-9_]+ and --checkout a Better-Cal checkout\n");
     exit(2);
 }
-$work = rtrim((string) ($opts['work'] ?? sys_get_temp_dir() . '/bc-perf'), '/');
+$work = rtrim((string) ($opts['work'] ?? dirname(__DIR__, 3) . '/workfolder/bc-perf'), '/');
 [$dbHost, $dbPort] = array_pad(explode(':', (string) ($opts['db'] ?? '127.0.0.1:33308'), 2), 2, '3306');
 $size = (string) ($opts['size'] ?? 'full');
 $reps = max(1, (int) ($opts['reps'] ?? 5));
@@ -74,6 +78,37 @@ $baseName = "cmp_perf_{$label}_base";
 $out = (string) ($opts['out'] ?? "$work/$label" . ($count ? '-count' : '') . '.json');
 
 // ---- The run copy ------------------------------------------------------------
+
+/** The account this process runs as. */
+function currentUid(): int
+{
+    if (function_exists('posix_geteuid')) {
+        return posix_geteuid();
+    }
+    // Without the posix extension: the owner of a file this process has just made.
+    $f = tempnam(sys_get_temp_dir(), 'bcperf-uid');
+    $uid = (int) fileowner($f);
+    unlink($f);
+    return $uid;
+}
+
+/** Makes $dir (only this account may enter it) or, when it exists, refuses it unless this account owns it. */
+function ownFolder(string $dir): void
+{
+    if (!file_exists($dir) && !is_link($dir)) {
+        if (!@mkdir($dir, 0700, true) && !is_dir($dir)) {
+            fwrite(STDERR, "Could not make the folder $dir.\n");
+            exit(2);
+        }
+    }
+    if (!is_dir($dir) || fileowner($dir) !== currentUid()) {
+        fwrite(STDERR, "The folder $dir already exists and this account does not own it, so the benchmark will not run code from it. Choose another with --work.\n");
+        exit(2);
+    }
+}
+
+ownFolder($work);
+ownFolder($run);
 
 /** Copy a tree, skipping the top-level names in $skip. */
 function copyTree(string $from, string $to, array $skip = []): void

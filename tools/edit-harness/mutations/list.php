@@ -1019,4 +1019,86 @@ return [
             ]],
         ),
     ],
+    // 1.5.7 slice 1, the conflict choice (docs/design/google-conflict-choice.md, the page and the model's section 7, "Damage
+    // it must catch"): each a one-place damage to the comparison, its base or its store, caught by the request-level
+    // scenarios of google-conflict-choice.test.php, whose expectations are written from the page alone.
+    [
+        'id' => 'choice-asks-nothing', 'file' => 'server/src/Domain/GoogleConflict.php', 'dbtest' => 'google-conflict-choice',
+        'what' => 'threeWay never asks: a field changed at Google and here to something else is sent over Google\'s value',
+        'patch' => [["\$out[\$field] = self::equal(\$field, \$n, \$b) || self::equal(\$field, \$n, \$wanted[\$field]) ? 'send' : 'ask';", "\$out[\$field] = self::equal(\$field, \$n, \$b) || self::equal(\$field, \$n, \$wanted[\$field]) ? 'send' : 'send';"]],
+        'checks' => [
+            '409 google_changed, the title with was, now and yours, nothing kept',
+            '409 google_changed about the title, was the served title; nothing written to Google',
+            '409 google_changed, the place alone, yours null',
+            'the message is whole on its own',
+            'one read and nothing written to Google; Google still holds its title',
+            'the row holds Google\'s title, nothing else changed, the tags not written',
+            'the read was stored as a poll stores it: one journal entry, from Google',
+            'the question first',
+            'Overwrite: 200, one read and one PATCH, nothing kept',
+            '409 google_changed again, with the newer value; one read, nothing written; the row holds the newer title',
+            'one read, nothing written to Google; the event lives at Google and here, here with Google\'s place',
+            'Delete: 200, one read and one DELETE; deleted at Google and here',
+            '409 google_changed about the time: was the served time, now Google\'s, yours the resized time; nothing written; the row holds Google\'s time',
+            '409 google_changed about the time: now all-day, yours the dragged time, timed',
+            'Overwrite: 200, one PATCH; Google and the row hold the dragged time, timed',
+        ],
+    ],
+    [
+        'id' => 'choice-keeps-nothing', 'file' => 'server/src/Domain/GoogleConflict.php', 'dbtest' => 'google-conflict-choice',
+        'what' => 'threeWay keeps nothing: a field changed at Google and not touched here is called the same, and the answer\'s `kept` leaves it out',
+        'patch' => [["\$out[\$field] = self::equal(\$field, \$n, \$b) ? 'same' : 'kept';", "\$out[\$field] = self::equal(\$field, \$n, \$b) ? 'same' : 'same';"]],
+        'checks' => [
+            '`kept` is the time alone, with its value now',
+            'Google and the row: tentative, Google\'s title; `kept` the title with its value now',
+            'Google holds the answer and its own title; the row holds Google\'s title; `kept` names the title',
+            'Google and the row keep Google\'s title and take the place; `kept` names the title',
+        ],
+    ],
+    [
+        'id' => 'choice-base-from-row', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-choice',
+        'what' => 'the base is the row, not the request\'s `over`: a change a poll stored while the editor was open is overwritten without a question',
+        'patch' => [["\$baseRow = array_merge(\$event, \$this->overColumns(\$userId, \$event, \$this->requestOver));", "\$baseRow = \$event;"]],
+        'checks' => ['409 google_changed about the title, was the served title; nothing written to Google'],
+    ],
+    [
+        'id' => 'choice-store-rolled-back', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-choice',
+        'what' => 'the question is thrown inside the write\'s transaction, so the store of Google\'s read rolls back with it',
+        'patch' => [["\$this->googleDeferred = new HttpError('google_changed',", "throw new HttpError('google_changed',"]],
+        'checks' => [
+            'the row holds Google\'s title, nothing else changed, the tags not written',
+            'the read was stored as a poll stores it: one journal entry, from Google',
+            '409 google_changed again, with the newer value; one read, nothing written; the row holds the newer title',
+            'one read, nothing written to Google; the event lives at Google and here, here with Google\'s place',
+            '409 google_changed about the time: was the served time, now Google\'s, yours the resized time; nothing written; the row holds Google\'s time',
+        ],
+    ],
+    [
+        'id' => 'choice-store-unjournaled', 'file' => 'server/src/Domain/GoogleWriter.php', 'dbtest' => 'google-conflict-choice',
+        'what' => 'the store of Google\'s read is written with no journal entry, so a later undo would not see it',
+        'patch' => [["\$this->apply(\$calendar, [\$read], false, [], true);", "\$this->apply(\$calendar, [\$read], false, [], false);"]],
+        'checks' => ['the read was stored as a poll stores it: one journal entry, from Google'],
+    ],
+    [
+        'id' => 'choice-tags-on-question', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-choice',
+        'what' => 'the tags of a request that asks are written anyway',
+        'patch' => [["            \$step = \$this->googleChoice(\$userId, \$calendar, \$event, \$googleFields, \$authority);\n            if (\$step === null) {\n",
+            "            \$step = \$this->googleChoice(\$userId, \$calendar, \$event, \$googleFields, \$authority);\n            if (\$step === null) {\n                if (is_array(\$in['tagNames'] ?? null)) {\n                    \$this->labels->setEventTags(\$userId, \$id, \$in['tagNames']);\n                }\n"]],
+        'checks' => ['the row holds Google\'s title, nothing else changed, the tags not written'],
+    ],
+    [
+        'id' => 'choice-base-value-sent', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-choice',
+        'what' => 'a field the request sets at its base value is sent anyway, putting it back over Google\'s change after the store',
+        'patch' => [["foreach (GoogleConflict::having(\$step['outcomes'], 'send') as \$field) {", "foreach (array_unique(array_merge(GoogleConflict::having(\$step['outcomes'], 'send'), GoogleConflict::fieldsIn(\$columns ?? []))) as \$field) {"]],
+        'checks' => [
+            '200; one read, one PATCH of the place alone',
+            'Google and the row keep Google\'s title and take the place; `kept` names the title',
+        ],
+    ],
+    [
+        'id' => 'choice-time-by-end', 'file' => 'server/src/Domain/GoogleConflict.php', 'dbtest' => 'google-conflict-choice',
+        'what' => 'the time is compared by its end alone, so a resize over a start moved at Google is sent without a question',
+        'patch' => [["return [\$f['start_utc'], \$f['end_utc'], \$f['all_day']];", "return [\$f['end_utc']];"]],
+        'checks' => ['409 google_changed about the time: was the served time, now Google\'s, yours the resized time; nothing written; the row holds Google\'s time'],
+    ],
 ];

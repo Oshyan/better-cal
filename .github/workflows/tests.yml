@@ -124,11 +124,13 @@ jobs:
       # category the mode can run is required, as on the full seed above.
       # Only this mode checks what Google holds after each edit (8-google,
       # e-google) and Undo through Google; a shard that ran without --google
-      # fails the run.
+      # fails the run. As shipped, the same as tools/gates.sh runs it: undo of
+      # a change to all events on Google off (--series-undo off), so the gate
+      # is what a release holds (CONTRIBUTING.md, "Gates: Three Levels").
       - name: Edit harness, Google mode
         env:
           BC_TEST_DB: mariadb:3306
-        run: ./tools/edit-harness/run.sh --google --seed 7 --cases 1000 --quiet --shards 4
+        run: ./tools/edit-harness/run.sh --google --seed 7 --cases 1000 --quiet --shards 4 --series-undo off
       # The interleaving mode: Google-backed series through runs of writes here,
       # changes at Google, polls, failures injected into a write, Finish, Put
       # back, undo and redo (docs/design/interleaving-invariants.md), a seed of
@@ -136,10 +138,11 @@ jobs:
       # minutes (one process, a fresh database every 50 cases: the load known
       # not to crash MariaDB's fulltext cache).
       # A gate: every check has its oracle probe (the mutation step runs them).
+      # As shipped, as the Google mode above: --series-undo off.
       - name: Edit harness, interleaving
         env:
           BC_TEST_DB: mariadb:3306
-        run: ./tools/edit-harness/run.sh --interleave --seed 7 --cases 300 --fixed --quiet --no-shrink
+        run: ./tools/edit-harness/run.sh --interleave --seed 7 --cases 300 --fixed --quiet --no-shrink --series-undo off
 
   # A fresh install on the lowest PHP: Composer installs from the lock file
   # exactly as docs/install.md says, and the suite runs again with the real

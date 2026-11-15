@@ -201,6 +201,54 @@ check('refusal: a calendar with other events is refused without --allow-other-ev
 check('refusal: and nothing was written', writes($fake) === []);
 check('refusal: the report says why', str_contains((string) file_get_contents($report->mdPath), 'Refused before any write'));
 
+// ---- An event that is not the probe's, changed mid-run (issue 279) ------------
+// With --allow-other-events, another event changes while the cases run, so the deltas the cases record carry it. Only
+// its id and status may reach either file: the probe did not make it.
+$fake = new FakeGoogle(CAL);
+$fake->seed(['id' => 'other01', 'summary' => 'Sample choir practice', 'description' => 'Invented notes, not the probe\'s', 'location' => 'Example Hall',
+    'start' => ['dateTime' => '2027-03-03T18:00:00-08:00', 'timeZone' => 'America/Los_Angeles'], 'end' => ['dateTime' => '2027-03-03T19:00:00-08:00', 'timeZone' => 'America/Los_Angeles']]);
+$inner = $fake->transport();
+$sent = 0;
+$changing = static function (string $method, string $url, array $headers, ?array $payload) use ($inner, &$sent): array {
+    if (in_array(++$sent, [12, 30, 60], true)) {
+        $inner('PATCH', Api::BASE . '/calendars/' . rawurlencode(CAL) . '/events/other01', ['Authorization: Bearer fake-token'], [
+            'summary' => "Sample choir practice, moved $sent", 'description' => "Invented notes, changed $sent", 'location' => "Example Annex $sent",
+        ]);
+    }
+    return $inner($method, $url, $headers, $payload);
+};
+$api = new Api($changing, static fn(): string => 'fake-token', CAL, $sleep, 0.25);
+$report = new Report($tmp . '/other-changes');
+$report->secret($fake->owner, '{account}');
+$report->secret(CAL, '{calendar}');
+$error = null;
+try {
+    (new Probe($api, $report, $sleep, ['only' => ['7'], 'allowOtherEvents' => true]))->run();
+} catch (\Throwable $e) {
+    $error = $e;
+}
+check('other events: the run finishes', $error === null, $error?->getMessage() ?? '');
+$jsonText = (string) file_get_contents($report->jsonPath);
+$mdText = (string) file_get_contents($report->mdPath);
+$shown = [];
+$walk = static function (mixed $v) use (&$walk, &$shown): void {
+    if (!is_array($v)) {
+        return;
+    }
+    if (($v['id'] ?? null) === 'other01') {
+        $shown[] = array_keys($v);
+    }
+    foreach ($v as $item) {
+        $walk($item);
+    }
+};
+$walk(json_decode($jsonText, true));
+check('other events: the changed event reached a recorded delta (the check below is not empty)', $shown !== []);
+check('other events: where it appears it is its id and status alone', array_filter($shown, static fn(array $keys) => array_diff($keys, ['id', 'status']) !== []) === [], json_encode($shown));
+foreach (['Sample choir', 'Invented notes', 'Example Hall', 'Example Annex', '2027-03-03T18:00'] as $text) {
+    check("other events: \"$text\" is in neither the JSON nor the markdown", !str_contains($jsonText, $text) && !str_contains($mdText, $text));
+}
+
 $fake = new FakeGoogle(CAL);
 $fake->primary = true;
 [, $error] = probeRun($fake, $tmp . '/primary', [], $sleep);

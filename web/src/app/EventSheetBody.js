@@ -308,7 +308,8 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
   const locIsMeeting = meet && loc && loc.includes(meet.url.slice(0, 24));
   const role = (cal && cal.role) || (isFeed ? 'opportunities' : 'mine');
   const suggested = role === 'opportunities';
-  const onDelete = () => (occ.recurring ? set({ deletePrompt: occ.instanceId }) : (close(), deleteEvent(occ)));
+  // The panel closes when the event is deleted (actions.js deleteEvent), not before.
+  const onDelete = () => (occ.recurring ? set({ deletePrompt: occ.instanceId }) : deleteEvent(occ));
   // Pulled up (0.5.3): the map, invitation replies, plugin data and where the
   // event came from join the sheet. The map's address lookup waits until then.
   const geo = useEventGeo(occ, full);
@@ -379,7 +380,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
     <div class="bc-pop-body bc-es-body" ref=${bodyRef}>
       ${panel && tools}
       ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${close} />`}
-      ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} compact onDone=${() => set({ deletePrompt: null, popover: null })} onCancel=${() => set({ deletePrompt: null })} />`}
+      ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} compact onDone=${() => set({ deletePrompt: null })} onCancel=${() => set({ deletePrompt: null })} />`}
       ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_SERIES_NOTE : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope, null, () => setTimeScope(f)); }} onCancel=${() => setTimeScope(null)} />`}
       ${panel && attendScope}
 

@@ -11,7 +11,7 @@
 // the oracle's own validation instead (OracleProbes.php): each probe's fixed case clean and with its damage injected.
 declare(strict_types=1);
 
-$opts = getopt('', ['interleave', 'cases:', 'seed:', 'case:', 'no-shrink', 'quiet', 'fixed::', 'findings:', 'model:', 'save-spec:', 'shards:', 'shard:', 'partial:', 'oracle-probes', 'flips:', 'day-shapes:', 'series-undo:']);
+$opts = getopt('', ['interleave', 'cases:', 'seed:', 'case:', 'no-shrink', 'quiet', 'fixed::', 'findings:', 'model:', 'save-spec:', 'shards:', 'shard:', 'partial:', 'oracle-probes', 'flips:', 'day-shapes:', 'singles:', 'series-undo:', 'conflict-choice:']);
 // The interleaving mode checks this tree's product only: --product (the forward mode's other checkout) is refused,
 // never ignored, so a run never reports on the wrong tree.
 foreach ($argv as $arg) {
@@ -45,7 +45,7 @@ if ($shards > 1 && !$child) {
     $procs = [];
     for ($k = 0; $k < $shards; $k++) {
         $cmd = [PHP_BINARY, __FILE__, '--interleave', '--cases', (string) $cases, '--seed', (string) $seed, '--shard', "$k/$shards", '--partial', "$tmp/$k.json", '--quiet'];
-        foreach (['no-shrink', 'model', 'fixed', 'flips', 'day-shapes', 'series-undo'] as $o) {
+        foreach (['no-shrink', 'model', 'fixed', 'flips', 'day-shapes', 'singles', 'series-undo', 'conflict-choice'] as $o) {
             if (array_key_exists($o, $opts)) {
                 $cmd[] = $opts[$o] === false ? "--$o" : "--$o=" . $opts[$o];
             }
@@ -113,9 +113,19 @@ if (isset($opts['flips'])) {
 if (isset($opts['series-undo'])) {
     BetterCal\EditHarness\Product::$seriesUndo = (string) $opts['series-undo'] !== 'off';
 }
+// --conflict-choice on|off: the account's google_conflict_choice setting (Product::$conflictChoice); on, the default
+// and as 1.5.7 ships it, judges a change to one event in no series over a change at Google by the three-way comparison
+// (x-choice), off by 1.5.6's refusal (x-conflict).
+if (isset($opts['conflict-choice'])) {
+    BetterCal\EditHarness\Product::$conflictChoice = (string) $opts['conflict-choice'] !== 'off';
+}
 // --day-shapes F: the share of drawn cases given a day shape (Interleave::withDayShape); 0 turns it off.
 if (isset($opts['day-shapes'])) {
     BetterCal\EditHarness\Interleave::$dayShapes = (float) $opts['day-shapes'];
+}
+// --singles F: the share of drawn cases given an event in no series changed at Google and here (Interleave::withSingle); 0 turns it off.
+if (isset($opts['singles'])) {
+    BetterCal\EditHarness\Interleave::$singleShapes = (float) $opts['singles'];
 }
 BetterCal\EditHarness\Product::use($root);
 
@@ -353,6 +363,9 @@ function interleaveReport(array $out, string $findingsFile, int $seed, bool $qui
         echo "  $check: " . array_sum($byRole) . " runs\n";
     }
     $required = ['x-alone', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-agree', 'x-structure', 'x-identity', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-conditional', 'x-empty', 'x-overlap', 'x-budget', 'x-readback'];
+    if (BetterCal\EditHarness\Product::$conflictChoice) {
+        $required[] = 'x-choice'; // the conflict choice on (Product::$conflictChoice): a change to an event in no series over a change at Google
+    }
     $missing = array_values(array_filter($required, static fn(string $c): bool => array_sum($out['runs'][$c] ?? []) === 0));
     foreach ($out['na'] as $why => $n) {
         echo "  not applicable ($n): $why\n";

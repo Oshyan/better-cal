@@ -172,7 +172,7 @@ final class Probe
 
     private function probeCase(string $group, string $id, string $title, \Closure $fn): void
     {
-        $c = new CaseRun($group, $id, $title);
+        $c = new CaseRun($this->report, $group, $id, $title);
         try {
             $fn($c);
             $this->failuresInARow = 0;

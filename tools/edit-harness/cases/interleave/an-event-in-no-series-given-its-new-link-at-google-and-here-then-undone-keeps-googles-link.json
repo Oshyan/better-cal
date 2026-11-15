@@ -1,0 +1,46 @@
+{
+    "about": "An event in no series given a link at Google, then given the same link and a new place here (seed 7 case 119, where the url was the field): the read is stored as a poll stores it, with its own entry, so the change's own entry starts from Google's link, and the bare Undo puts back the place and leaves the link Google gave it (x-undo-fields, x-choice).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-create",
+            "pick": 0.2,
+            "single": true
+        },
+        {
+            "do": "r-single",
+            "pick": 0.0,
+            "fields": [
+                "url"
+            ],
+            "same": [
+                "url"
+            ]
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "edit",
+            "fields": [
+                "url",
+                "location"
+            ],
+            "shown": "earlier"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.0
+        }
+    ]
+}

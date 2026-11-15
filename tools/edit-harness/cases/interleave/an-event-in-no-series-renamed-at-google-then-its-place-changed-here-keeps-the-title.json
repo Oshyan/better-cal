@@ -1,0 +1,39 @@
+{
+    "about": "An event in no series renamed at Google, then its place changed here before a poll, the conflict choice on: the place is sent, the title is kept as Google has it here and there and named in kept, one read and one write (x-choice).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-create",
+            "pick": 0.2,
+            "single": true
+        },
+        {
+            "do": "r-single",
+            "pick": 0.0,
+            "fields": [
+                "title"
+            ],
+            "same": []
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "edit",
+            "fields": [
+                "location"
+            ],
+            "shown": "earlier"
+        }
+    ]
+}

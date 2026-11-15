@@ -725,6 +725,37 @@ final class GoogleWriter
     }
 
     /**
+     * The conflict choice's read (docs/design/google-conflict-choice.md, the
+     * page "1.5.7, Slice 1", the step): an event in no series read as every
+     * write's first read is (readNow, decided by the access rule there),
+     * compared field by field with $base and $wanted (GoogleConflict::threeWay,
+     * the one comparison), and stored as a poll stores what it finds, with
+     * its Activity entry, so the calendar shows what Google holds whatever
+     * the caller does next and the write's condition finds the rows equal to
+     * the read. Gone at Google: refused as the write would be (deleted). Made
+     * repeating there: the 1.5.6 refusal, nothing stored (the rule is no
+     * field of the comparison).
+     *
+     * @param array<string,mixed> $base GoogleConflict::mapOf of what the person was shown
+     * @param array<string,mixed> $wanted the fields the change sets (GoogleConflict::DELETE each, for a delete)
+     * @return array{outcomes:array<string,string>, read:array, items:list<array>}
+     */
+    public function readAndStore(array $calendar, string $googleId, array $base, array $wanted, ?\Closure $beforeSend = null): array
+    {
+        [$read, $items] = $this->readNow($calendar, $googleId, $beforeSend);
+        $parsed = GoogleSync::toParsedList([$read])[0] ?? null;
+        if (!is_array($parsed) || !empty($parsed['cancelled'])) {
+            throw self::deleted();
+        }
+        if (!empty($parsed['rrule'])) {
+            throw new HttpError('google_conflict', self::CONFLICT_MESSAGE, 409);
+        }
+        $outcomes = GoogleConflict::threeWay($base, GoogleConflict::mapOf($parsed), $wanted);
+        $this->apply($calendar, [$read], false, [], true);
+        return ['outcomes' => $outcomes, 'read' => $read, 'items' => $items];
+    }
+
+    /**
      * One request for a caller that runs its own sequence of them
      * (GoogleSeries): the method, path, body, query and If-Match as given,
      * no stored etag looked up and no read-back after. Google's answer,
@@ -893,18 +924,23 @@ final class GoogleWriter
      * stand (GoogleSync::applyChanges, rule 7). The writer knows what it
      * sent, and says so at every call.
      *
+     * $journal: a read stored before a change (the conflict choice,
+     * Events::googleChoice) is stored as a poll stores what it finds, with
+     * its Activity entry and touches, so an older entry's undo sees it; a
+     * write's own answer is not (the caller records what the person did).
+     *
      * @param list<array> $resources Google event resources
      * @param list<array{cancelled:true,uid:string,recurrence_instance_utc:?string}> $tombstones
      */
-    public function apply(array $calendar, array $resources, bool $sentRecurrence, array $tombstones = []): void
+    public function apply(array $calendar, array $resources, bool $sentRecurrence, array $tombstones = [], bool $journal = false): void
     {
         $changes = array_merge(GoogleSync::toParsedList($resources), $tombstones);
         $snapshot = GoogleSync::applyChanges(GoogleSync::rowsToParsed($this->db->all(
             'SELECT * FROM events WHERE calendar_id = ? AND deleted_at IS NULL',
             [(int) $calendar['id']]
         )), $changes, $sentRecurrence);
-        // No feed roll-up in Activity: the caller records what the person did.
-        $this->feeds->sync($calendar, $snapshot, journal: false);
+        // No feed roll-up in Activity for a write's answer: the caller records what the person did.
+        $this->feeds->sync($calendar, $snapshot, journal: $journal);
     }
 
     /**

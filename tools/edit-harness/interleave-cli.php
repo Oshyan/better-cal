@@ -40,14 +40,25 @@ if (!is_file($root . '/server/vendor/autoload.php')) {
     exit(1);
 }
 
+// --oracle-probes runs in one process (README, Oracle Probes): a sharded parent would hand its children the drawn cases
+// instead, so the two together are refused rather than one silently dropped.
+if (isset($opts['oracle-probes']) && $shards > 1) {
+    fwrite(STDERR, "--shards is not supported with --oracle-probes: the probes run in one process.\n");
+    exit(1);
+}
+
 if ($shards > 1 && !$child) {
     // N processes, each on a database of its own, cases by number modulo N; the fixed cases on the first; merged here.
+    // The parent loads nothing of the product or the harness: everything the report needs (how the run was configured,
+    // the checks and step kinds it counts against, which cases ran) comes from the children's results (README,
+    // Interleaving: Shards). More shards than cases would only make and drop databases that run nothing.
+    $shards = min($shards, max(1, $cases));
     $tmp = sys_get_temp_dir() . '/interleave-' . bin2hex(random_bytes(4));
     mkdir($tmp);
     $procs = [];
     for ($k = 0; $k < $shards; $k++) {
         $cmd = [PHP_BINARY, __FILE__, '--interleave', '--cases', (string) $cases, '--seed', (string) $seed, '--shard', "$k/$shards", '--partial', "$tmp/$k.json", '--quiet'];
-        foreach (['no-shrink', 'model', 'fixed', 'flips', 'day-shapes', 'singles', 'series-undo', 'conflict-choice'] as $o) {
+        foreach (['no-shrink', 'model', 'fixed', 'flips', 'day-shapes', 'singles', 'series-undo', 'conflict-choice', 'save-spec'] as $o) {
             if (array_key_exists($o, $opts)) {
                 $cmd[] = $opts[$o] === false ? "--$o" : "--$o=" . $opts[$o];
             }
@@ -55,40 +66,35 @@ if ($shards > 1 && !$child) {
         $procs[$k] = proc_open($cmd, [1 => ['file', "$tmp/$k.out", 'w'], 2 => ['redirect', 1]], $pipes);
     }
     $parts = [];
+    $broken = [];
     foreach ($procs as $k => $p) {
         $code = proc_close($p);
-        ScratchDatabase::countIn((string) @file_get_contents("$tmp/$k.out"), true);
+        $output = (string) @file_get_contents("$tmp/$k.out");
+        ScratchDatabase::countIn($output, true);
         $part = is_file("$tmp/$k.json") ? json_decode((string) file_get_contents("$tmp/$k.json"), true) : null;
-        if (!is_array($part)) {
-            fwrite(STDERR, "shard $k wrote nothing (exit $code):\n" . substr((string) @file_get_contents("$tmp/$k.out"), -3000) . "\n");
-            exit(1);
+        // A shard that wrote no results, or exited other than 0 (a child's own verdict is the parent's to give, so a child
+        // exits 0 once its results are written), leaves the run partial: no verdict is reported for it.
+        if (!is_array($part) || $code !== 0) {
+            $broken[] = "shard $k of $shards " . (is_array($part) ? "exited $code" : "wrote no results (exit $code)");
+            fwrite(STDERR, "shard $k of $shards: " . (is_array($part) ? "exited $code" : "wrote no results (exit $code)") . ":\n" . substr($output, -3000) . "\n");
+            continue;
         }
-        $parts[] = $part;
+        $parts[$k] = $part;
     }
     array_map('unlink', glob("$tmp/*") ?: []);
     rmdir($tmp);
-    $merged = ['records' => [], 'minimal' => [], 'counts' => ['cases' => 0, 'steps' => 0], 'runs' => [], 'na' => [], 'seconds' => 0];
-    foreach ($parts as $part) {
-        $merged['records'] = array_merge($merged['records'], $part['records']);
-        $merged['minimal'] += $part['minimal'];
-        $merged['counts']['cases'] += $part['counts']['cases'];
-        $merged['counts']['steps'] += $part['counts']['steps'];
-        foreach ($part['runs'] as $c => $byRole) {
-            foreach ($byRole as $role => $n) {
-                $merged['runs'][$c][$role] = ($merged['runs'][$c][$role] ?? 0) + $n;
-            }
-        }
-        foreach ($part['na'] as $why => $n) {
-            $merged['na'][$why] = ($merged['na'][$why] ?? 0) + $n;
-        }
-        $merged['seconds'] = max($merged['seconds'], $part['seconds']);
-        foreach ($part['pairs'] ?? [] as $a => $bs) {
-            foreach ($bs as $b => $n) {
-                $merged['pairs'][$a][$b] = ($merged['pairs'][$a][$b] ?? 0) + $n;
-            }
+    $broken = array_merge($broken, $broken === [] ? interleaveShardsAgree($parts, $cases, interleaveFixedFiles($fixed, $cases, null)) : []);
+    if ($broken !== []) {
+        echo "\nInterleaving: no verdict, the sharded run is partial or inconsistent: " . implode('; ', $broken) . "\n";
+        echo ScratchDatabase::summary() . "\n";
+        exit(1);
+    }
+    $merged = interleaveMerge($parts);
+    if (!$quiet) {
+        foreach ($merged['records'] as $rec) {
+            echo (isset($rec['spec']['fixed']) ? $rec['spec']['fixed'] : "case {$rec['n']}") . ": {$rec['invariant']}: {$rec['what']}\n";
         }
     }
-    usort($merged['records'], static fn(array $a, array $b): int => [isset($a['spec']['fixed']) ? 1 : 0, $a['n']] <=> [isset($b['spec']['fixed']) ? 1 : 0, $b['n']]);
     $code = interleaveReport($merged, $findingsFile, $seed, $quiet);
     echo ScratchDatabase::summary() . "\n";
     exit($code);
@@ -137,6 +143,11 @@ if (isset($opts['singles'])) {
     BetterCal\EditHarness\Interleave::$singleShapes = (float) $opts['singles'];
 }
 BetterCal\EditHarness\Product::use($root);
+// How this process is configured, read back from the statics the options set (or left at their defaults), and the
+// oracle it judges by: written into the result, so a shard parent reports from what its children actually ran.
+$config = ['conflictChoice' => BetterCal\EditHarness\Product::$conflictChoice, 'seriesUndo' => BetterCal\EditHarness\Product::$seriesUndo,
+    'flips' => BetterCal\EditHarness\Interleave::$flips, 'dayShapes' => BetterCal\EditHarness\Interleave::$dayShapes, 'singles' => BetterCal\EditHarness\Interleave::$singleShapes,
+    'model' => isset($opts['model']) ? sha1_file((string) $opts['model']) : null, 'shrink' => $shrink];
 
 use BetterCal\EditHarness\GoogleStand;
 use BetterCal\EditHarness\Interleave;
@@ -203,7 +214,7 @@ try {
         echo ScratchDatabase::summary() . "\n";
         exit($code);
     }
-    $out = ['records' => [], 'minimal' => [], 'counts' => ['cases' => 0, 'steps' => 0], 'runs' => [], 'na' => []];
+    $out = ['records' => [], 'minimal' => [], 'counts' => ['cases' => 0, 'steps' => 0], 'runs' => [], 'na' => [], 'config' => $config, 'universe' => interleaveUniverse(), 'ran' => [], 'fixedRan' => []];
     $count = static function (array $result) use (&$out): void {
         $spec = $result['spec'];
         $out['counts']['cases']++;
@@ -240,6 +251,7 @@ try {
         }
         $result = $runCase(Interleave::draw($seed, $i));
         $count($result);
+        $out['ran'][$i] = interleaveDigest($result['spec']);
         if ($saveSpec !== null) {
             file_put_contents("$saveSpec/interleave-seed$seed-case$i.json", json_encode(array_diff_key($result['spec'], ['create' => 1]), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
         }
@@ -252,13 +264,8 @@ try {
             }
         }
     }
-    if ($shard === 0 && ($fixed !== null || ($cases >= 500 && $onlyCase === null))) {
-        $files = glob(__DIR__ . '/cases/interleave/*.json') ?: [];
-        sort($files);
-        if ($fixed !== null && $fixed !== []) {
-            $files = array_map(static fn(string $f): string => is_file($f) ? $f : __DIR__ . '/cases/interleave/' . preg_replace('/\.json$/', '', $f) . '.json', $fixed);
-        }
-        foreach ($files as $file) {
+    if ($shard === 0) {
+        foreach (interleaveFixedFiles($fixed, $cases, $onlyCase) as $file) {
             $spec = json_decode((string) file_get_contents($file), true, 512, JSON_THROW_ON_ERROR);
             $spec['fixed'] = basename($file, '.json');
             $spec += ['seed' => 0, 'n' => 0];
@@ -267,6 +274,7 @@ try {
             }
             $result = $runCase($spec);
             $count($result);
+            $out['fixedRan'][$spec['fixed']] = interleaveDigest($result['spec']);
             if (!$quiet) {
                 foreach ($result['records'] as $rec) {
                     echo "{$spec['fixed']}: {$rec['invariant']}: {$rec['what']}\n";
@@ -312,7 +320,16 @@ try {
     // The result is written before the cleanup (ScratchDatabase): a shard's partial findings, or the report and its
     // findings file, whose verdict is the exit status whatever the drop does.
     if ($child) {
-        file_put_contents((string) $opts['partial'], json_encode($out, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
+        // BC_INTERLEAVE_SHARD_FAULT=K:die|K:silent is the seam that proves the parent gives no verdict on a partial run:
+        // shard K exits 3 before writing its results, or exits 0 having written none (README, Interleaving: Shards).
+        $fault = (string) getenv('BC_INTERLEAVE_SHARD_FAULT');
+        if ($fault === "$shard:die") {
+            ScratchDatabase::dropMade(); // exit skips the finally; the seam leaves no database behind
+            exit(3);
+        }
+        if ($fault !== "$shard:silent") {
+            file_put_contents((string) $opts['partial'], json_encode($out, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
+        }
         $code = 0;
     } else {
         $code = interleaveReport($out, $findingsFile, $seed, $quiet);
@@ -360,6 +377,156 @@ function oracleProbes(callable $runCase): int
     return $failed === 0 ? 0 : 1;
 }
 
+/**
+ * The fixed cases a run takes (cases/interleave/*.json): those --fixed names, every one for a bare --fixed or a run of 500
+ * cases or more, none otherwise or for one --case. A file name only, so a shard parent can say what its first child owes.
+ *
+ * @return list<string>
+ */
+function interleaveFixedFiles(?array $fixed, int $cases, ?int $onlyCase): array
+{
+    if ($fixed === null && ($cases < 500 || $onlyCase !== null)) {
+        return [];
+    }
+    if ($fixed !== null && $fixed !== []) {
+        return array_map(static fn(string $f): string => is_file($f) ? $f : __DIR__ . '/cases/interleave/' . preg_replace('/\.json$/', '', $f) . '.json', $fixed);
+    }
+    $files = glob(__DIR__ . '/cases/interleave/*.json') ?: [];
+    sort($files);
+    return $files;
+}
+
+/** One case as it ran: its series, its drawn steps and each step's outcome. Equal digests, the same case run the same way. */
+function interleaveDigest(array $spec): string
+{
+    return sha1((string) json_encode(['series' => $spec['series'] ?? null, 'single' => $spec['single'] ?? null, 'steps' => $spec['steps']], JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
+}
+
+/**
+ * What the report counts against, read where the harness is loaded (a serial run or a shard): the step kinds and setup
+ * kinds of the coverage of pairs, the checks, and the checks no oracle probe validates.
+ */
+function interleaveUniverse(): array
+{
+    $kinds = [];
+    foreach (array_keys(BetterCal\EditHarness\Interleave::WEIGHTS) as $k) {
+        if (in_array($k, BetterCal\EditHarness\Interleave::COMPOSITE, true)) {
+            continue; // drawn as the steps it is made of
+        }
+        if (in_array($k, BetterCal\EditHarness\Interleave::UNDO_KINDS, true)) {
+            foreach (BetterCal\EditHarness\Interleave::UNDO_TAGS as $tag) {
+                $kinds[] = "{$k}[{$tag}]";
+            }
+            continue;
+        }
+        $kinds[] = $k;
+    }
+    return ['kinds' => $kinds, 'setup' => array_values(array_unique(BetterCal\EditHarness\Interleave::SETUP)),
+        'unprobed' => array_values(array_diff(BetterCal\EditHarness\Interleave::CHECKS, BetterCal\EditHarness\OracleProbes::checks()))];
+}
+
+/**
+ * Why a set of shard results is no whole run, empty when it is: every shard ran on the same configuration and judged by
+ * the same oracle, each drawn case 1..N ran exactly once across them, and the fixed cases owed ran exactly once.
+ *
+ * @param array<int, array> $parts
+ * @param list<string> $fixedFiles
+ * @return list<string>
+ */
+function interleaveShardsAgree(array $parts, int $cases, array $fixedFiles): array
+{
+    $why = [];
+    $first = reset($parts);
+    foreach ($parts as $k => $part) {
+        if (($part['config'] ?? null) !== $first['config']) {
+            $why[] = "shard $k ran on another configuration (" . json_encode($part['config'] ?? null) . ' against ' . json_encode($first['config']) . ')';
+        }
+        if (($part['universe'] ?? null) !== $first['universe']) {
+            $why[] = "shard $k judged by another oracle";
+        }
+    }
+    $seen = [];
+    foreach ($parts as $k => $part) {
+        foreach (array_keys($part['ran'] ?? []) as $i) {
+            if (isset($seen[$i])) {
+                $why[] = "case $i ran on shard {$seen[$i]} and on shard $k";
+            }
+            $seen[$i] = $k;
+        }
+    }
+    $missing = array_diff(range(1, max(1, $cases)), array_keys($seen));
+    if ($cases > 0 && $missing !== []) {
+        $why[] = count($missing) . ' cases ran on no shard (first ' . reset($missing) . ')';
+    }
+    $fixedSeen = [];
+    foreach ($parts as $part) {
+        foreach (array_keys($part['fixedRan'] ?? []) as $name) {
+            $fixedSeen[$name] = ($fixedSeen[$name] ?? 0) + 1;
+        }
+    }
+    $owed = array_map(static fn(string $f): string => basename($f, '.json'), $fixedFiles);
+    sort($owed);
+    $ran = array_keys($fixedSeen);
+    sort($ran);
+    if ($ran !== $owed || array_filter($fixedSeen, static fn(int $n): bool => $n !== 1) !== []) {
+        $why[] = 'the fixed cases owed (' . count($owed) . ') did not each run exactly once (' . array_sum($fixedSeen) . ' runs of ' . count($fixedSeen) . ')';
+    }
+    return $why;
+}
+
+/**
+ * The shards' results as one run's, in the shape a serial run writes: records in case order, the fixed cases after;
+ * counts, runs, the not-applicable reasons and the pairs summed; the slowest shard's seconds; for each signature the
+ * reproduction its first failure's shard shrank, as a serial run shrinks its first failure.
+ *
+ * @param array<int, array> $parts
+ */
+function interleaveMerge(array $parts): array
+{
+    $order = static fn(array $r): array => [isset($r['spec']['fixed']) ? 1 : 0, $r['n']];
+    $first = reset($parts);
+    $merged = ['records' => [], 'minimal' => [], 'counts' => ['cases' => 0, 'steps' => 0], 'runs' => [], 'na' => [], 'seconds' => 0,
+        'config' => $first['config'], 'universe' => $first['universe'], 'ran' => [], 'fixedRan' => []];
+    $firstOf = [];
+    foreach ($parts as $part) {
+        $merged['records'] = array_merge($merged['records'], $part['records']);
+        foreach ($part['records'] as $rec) {
+            $sig = interleaveSignature($rec);
+            if (isset($part['minimal'][$sig]) && (!isset($firstOf[$sig]) || $order($rec) < $firstOf[$sig][0])) {
+                $firstOf[$sig] = [$order($rec), $part['minimal'][$sig]];
+            }
+        }
+        $merged['counts']['cases'] += $part['counts']['cases'];
+        $merged['counts']['steps'] += $part['counts']['steps'];
+        foreach ($part['runs'] as $c => $byRole) {
+            foreach ($byRole as $role => $n) {
+                $merged['runs'][$c][$role] = ($merged['runs'][$c][$role] ?? 0) + $n;
+            }
+        }
+        foreach ($part['na'] as $why => $n) {
+            $merged['na'][$why] = ($merged['na'][$why] ?? 0) + $n;
+        }
+        $merged['seconds'] = max($merged['seconds'], $part['seconds']);
+        foreach ($part['pairs'] ?? [] as $a => $bs) {
+            foreach ($bs as $b => $n) {
+                $merged['pairs'][$a][$b] = ($merged['pairs'][$a][$b] ?? 0) + $n;
+            }
+        }
+        $merged['ran'] += $part['ran'];
+        $merged['fixedRan'] += $part['fixedRan'];
+    }
+    usort($merged['records'], static fn(array $a, array $b): int => $order($a) <=> $order($b));
+    foreach ($merged['records'] as $rec) {
+        $sig = interleaveSignature($rec);
+        if (isset($firstOf[$sig])) {
+            $merged['minimal'][$sig] = $firstOf[$sig][1];
+        }
+    }
+    ksort($merged['ran']);
+    ksort($merged['fixedRan']);
+    return $merged;
+}
+
 /** A failure's signature, for one reproduction each: the invariant and the step kind it failed after. */
 function interleaveSignature(array $rec): string
 {
@@ -368,6 +535,9 @@ function interleaveSignature(array $rec): string
 
 function interleaveReport(array $out, string $findingsFile, int $seed, bool $quiet): int
 {
+    // In name order, not the order a process first met them, so a serial and a sharded run print the same lines.
+    ksort($out['runs']);
+    ksort($out['na']);
     file_put_contents($findingsFile, json_encode(['mode' => 'interleave', 'seed' => $seed] + $out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE) . "\n");
     $bySig = [];
     foreach ($out['records'] as $rec) {
@@ -383,8 +553,8 @@ function interleaveReport(array $out, string $findingsFile, int $seed, bool $qui
         echo "  $check: " . array_sum($byRole) . " runs\n";
     }
     $required = ['x-alone', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-agree', 'x-structure', 'x-identity', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-conditional', 'x-empty', 'x-overlap', 'x-budget', 'x-readback'];
-    if (BetterCal\EditHarness\Product::$conflictChoice) {
-        $required[] = 'x-choice'; // the conflict choice on (Product::$conflictChoice): a change to an event in no series over a change at Google
+    if ($out['config']['conflictChoice']) {
+        $required[] = 'x-choice'; // the conflict choice on (the run's configuration): a change to an event in no series over a change at Google
     }
     $missing = array_values(array_filter($required, static fn(string $c): bool => array_sum($out['runs'][$c] ?? []) === 0));
     foreach ($out['na'] as $why => $n) {
@@ -392,25 +562,13 @@ function interleaveReport(array $out, string $findingsFile, int $seed, bool $qui
     }
     // Coverage by pair of consecutive step kinds that ran: every kind can follow every kind, and a setup kind the start, so the pairs a
     // run never exercised are listed by their first step, with how often each first step ran at all.
-    require_once __DIR__ . '/Interleave.php'; // the parent of --shards loads nothing else
-    $kinds = [];
-    foreach (array_keys(Interleave::WEIGHTS) as $k) {
-        if (in_array($k, Interleave::COMPOSITE, true)) {
-            continue; // drawn as the steps it is made of
-        }
-        if (in_array($k, Interleave::UNDO_KINDS, true)) {
-            foreach (Interleave::UNDO_TAGS as $tag) {
-                $kinds[] = "{$k}[{$tag}]";
-            }
-            continue;
-        }
-        $kinds[] = $k;
-    }
+    $kinds = $out['universe']['kinds'];
+    $setup = $out['universe']['setup'];
     $never = [];
     $ran = 0;
     foreach (array_merge(['start'], $kinds) as $a) {
         // A case starts with its setup steps only.
-        foreach ($a === 'start' ? array_values(array_unique(Interleave::SETUP)) : $kinds as $b) {
+        foreach ($a === 'start' ? $setup : $kinds as $b) {
             if (($out['pairs'][$a][$b] ?? 0) > 0) {
                 $ran++;
             } else {
@@ -418,7 +576,7 @@ function interleaveReport(array $out, string $findingsFile, int $seed, bool $qui
             }
         }
     }
-    $all = count($kinds) * count($kinds) + count(array_unique(Interleave::SETUP));
+    $all = count($kinds) * count($kinds) + count($setup);
     echo "  step pairs run: $ran of $all the generator can draw\n";
     if (!$quiet) {
         foreach ($never as $a => $bs) {
@@ -427,8 +585,7 @@ function interleaveReport(array $out, string $findingsFile, int $seed, bool $qui
     }
     $out['coverage'] = ['pairsRun' => $ran, 'pairsDrawable' => $all, 'never' => $never];
     file_put_contents($findingsFile, json_encode(['mode' => 'interleave', 'seed' => $seed] + $out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE) . "\n");
-    require_once __DIR__ . '/OracleProbes.php';
-    $unprobed = array_values(array_diff(Interleave::CHECKS, OracleProbes::checks()));
+    $unprobed = $out['universe']['unprobed'];
     echo '  unvalidated (no oracle probe; run --oracle-probes): ' . ($unprobed === [] ? 'none' : implode(', ', $unprobed)) . "\n";
     echo count($out['records']) . " failing checks, " . count($bySig) . " signatures\n";
     foreach ($bySig as $sig => $list) {

@@ -136,15 +136,17 @@ jobs:
       # The interleaving mode: Google-backed series through runs of writes here,
       # changes at Google, polls, failures injected into a write, Finish, Put
       # back, undo and redo (docs/design/interleaving-invariants.md), a seed of
-      # 300 cases on one process with the fixed cases, about two and a half
-      # minutes (one process, a fresh database every 50 cases: the load known
-      # not to crash MariaDB's fulltext cache).
+      # 300 cases with the fixed cases, on four processes as the modes above
+      # (each a database of its own, fresh every 50 cases: the load known not
+      # to crash MariaDB's fulltext cache). The parent fails the run when a
+      # shard dies, writes nothing, ran on another configuration or left a
+      # case unrun (README, Interleaving: Shards).
       # A gate: every check has its oracle probe (the mutation step runs them).
       # As shipped, as the Google mode above: --series-undo off.
       - name: Edit harness, interleaving
         env:
           BC_TEST_DB: mariadb:3306
-        run: ./tools/edit-harness/run.sh --interleave --seed 7 --cases 300 --fixed --quiet --no-shrink --series-undo off
+        run: ./tools/edit-harness/run.sh --interleave --seed 7 --cases 300 --fixed --quiet --no-shrink --series-undo off --shards 4
 
   # A fresh install on the lowest PHP: Composer installs from the lock file
   # exactly as docs/install.md says, and the suite runs again with the real

@@ -495,6 +495,16 @@ final class OracleProbes
                 }],
             // T4: on a request carrying `over`, a timed time whose end is not after its start is no state, so a moment sent
             // whole is refused like any other.
+            // T4, narrowed: an all-day boundary is read as its date whatever clock it carries, so such a time is valid.
+            ['check' => 'x-choice', 'what' => 'an all-day time sent whole with clocks on its boundaries, in the body and in over, is refused as client_outdated', 'case' => 'an-all-day-event-in-no-series-dragged-here-with-clocks-on-its-boundaries-goes-through', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'client_outdated', 'status' => 400, 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s0];
+                }],
+            // T4, narrowed: the one validity check is on the resolved time, typed clocks included.
+            ['check' => 'x-choice', 'what' => 'a whole time whose typed start clock resolves it to a moment is accepted', 'case' => 'an-event-in-no-series-given-a-typed-start-at-its-end-is-refused', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => true, 'error' => null, 'status' => null, 'answer' => ['kept' => []]] + $out, $s0, $s1];
+                }],
             ['check' => 'x-choice', 'what' => 'a timed moment (its end at its start), sent whole with over, is accepted', 'case' => 'an-event-in-no-series-made-a-moment-here-is-refused', 'step' => 3,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => true, 'error' => null, 'status' => null, 'answer' => ['kept' => []]] + $out, $s0, $s1];

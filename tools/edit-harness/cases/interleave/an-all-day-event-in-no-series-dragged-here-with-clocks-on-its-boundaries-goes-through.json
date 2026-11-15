@@ -1,0 +1,57 @@
+{
+    "about": "An all-day event in no series of two days, its notes changed at Google, then dragged a day here, the time sent whole with a clock on each all-day boundary (23:30 at -08:00) and over's all-day boundaries carrying 15:00 UTC: the API reads an all-day boundary as its date and ignores the clock, so this is a whole valid time equal to its dates (T4, narrowed 2026-11-15); the drag goes through over those dates and Google's notes are kept (x-choice).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-create",
+            "pick": 0.4,
+            "single": true,
+            "allDay": 2,
+            "zone": "UTC",
+            "clock": "15:00"
+        },
+        {
+            "do": "r-single",
+            "pick": 0.0,
+            "fields": [
+                "description"
+            ],
+            "same": []
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "edit",
+            "fields": [
+                "time"
+            ],
+            "shown": "earlier",
+            "time": {
+                "form": "drag",
+                "days": 1,
+                "secs": 0,
+                "zone": "UTC",
+                "tz": "utc",
+                "typed": false,
+                "clocks": "T23:30:00-08:00"
+            },
+            "overClock": true
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "overwrite"
+        }
+    ]
+}

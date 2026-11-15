@@ -400,6 +400,8 @@ return static function (Db $db): void {
     // stand-in that counts every call, the token refresh among them.
     scenario('writers: a Google event\'s new title with a refused trip flag sends Google nothing', function () use ($db, $trip, $trips, $refusal, $state, $flag): void {
         $u = freshUser($db);
+        // With the conflict choice on, whose read is Google's first call: the rules still come before it.
+        conflictChoice($db, $u, true);
         $d = domains($db);
         $cal = (int) Settings::defaultCalendarId($db, $u);
         $calls = [];
@@ -443,5 +445,12 @@ return static function (Db $db): void {
         $events->patch($u, $meeting, $edit);
         checkEq('out of its trip, the same edit: read, then sent to Google once conditional on that read, renamed and a trip', [['token', 'GET', 'PATCH'], 'Sample meeting, renamed', 1],
             [$calls, (string) $db->scalar('SELECT title FROM events WHERE id = ?', [$meeting]), $flag($meeting)]);
+        // The trip rules pass, Google is read once, and the title
+        // changed there since it was shown is asked about: Google's title stored, the flag the edit carried not written.
+        $resource['summary'] = 'Sample meeting, moved at Google';
+        $calls = [];
+        $got = $refusal(fn() => $events->patch($u, $meeting, ['title' => 'Sample meeting, mine', 'isContainer' => false, 'over' => ['title' => 'Sample meeting, renamed']]));
+        checkEq('a question over the title: 409, one read and no write, Google\'s title stored, the trip flag as it was', ['409 google_changed', ['GET'], 'Sample meeting, moved at Google', 1],
+            [$got[0], $calls, (string) $db->scalar('SELECT title FROM events WHERE id = ?', [$meeting]), $flag($meeting)]);
     });
 };

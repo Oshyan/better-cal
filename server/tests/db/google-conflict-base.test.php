@@ -181,15 +181,22 @@ return static function (Db $db): void {
         return [$t, $shown];
     };
 
-    // A refusal: 400 client_outdated with the page's words, nothing sent to Google (not even the read), the row's time
-    // and Google's as they were, no entry written.
-    $refused = static function (string $name, object $t, string $action, array $body) use ($send, $mark, $sentSince, $rowHolds, $googleHolds, $entries, $outdated): void {
-        [$row, $google, $count, $m] = [$rowHolds($t), $googleHolds($t), $entries($t), $mark($t)];
-        [$status, $json] = $send($t, $action, $body);
-        checkEq("$name: 400 client_outdated, the page's words; nothing read from Google or sent; the row, Google and Activity as they were",
-            [400, 'client_outdated', $outdated, [], $row, $google, $count],
-            [$status, $json['error']['code'] ?? null, $json['error']['message'] ?? null, $sentSince($t, $m), $rowHolds($t), $googleHolds($t), $entries($t)]);
+    // A refusal: 400 with the code and words given, nothing sent to Google (not even the read), the row's time and
+    // Google's as they were, no entry written. A time in parts is client_outdated with the page's words (an old client);
+    // a whole time that does not end after its start is invalid_request, in the words of POST /events for a moment and of
+    // the API's reading for an end before the start (an invalid time).
+    $refusedAs = static function (string $code, string $words, string $said) use ($send, $mark, $sentSince, $rowHolds, $googleHolds, $entries): \Closure {
+        return static function (string $name, object $t, string $action, array $body) use ($code, $words, $said, $send, $mark, $sentSince, $rowHolds, $googleHolds, $entries): void {
+            [$row, $google, $count, $m] = [$rowHolds($t), $googleHolds($t), $entries($t), $mark($t)];
+            [$status, $json] = $send($t, $action, $body);
+            checkEq("$name: 400 $code, $said; nothing read from Google or sent; the row, Google and Activity as they were",
+                [400, $code, $words, [], $row, $google, $count],
+                [$status, $json['error']['code'] ?? null, $json['error']['message'] ?? null, $sentSince($t, $m), $rowHolds($t), $googleHolds($t), $entries($t)]);
+        };
     };
+    $refused = $refusedAs('client_outdated', $outdated, "the page's words");
+    $notAfter = $refusedAs('invalid_request', 'end must be after start', 'the words of POST /events');
+    $backwards = $refusedAs('invalid_request', 'end must not be before start', 'the words of the API\'s reading');
 
     // A whole request, by the three-way reading: the time compared with $base (what `over` says was shown, or the row
     // with no `over`), Google's now and yours. Asked: 409 about the time with was, now and yours, only the read sent,
@@ -334,17 +341,22 @@ return static function (Db $db): void {
 
                 // The one check of the values, on the resolved time (T4): a time whose end, once read, is not after its
                 // start is refused before Google is read, whether the request's own time, `over`'s, or a typed clock makes
-                // it so (a typed start with no typed end, on the request's end: the third outside read's case).
-                scenario("resolved time not after its start, $cell", function () use ($setUp, $shownAllDay, $change, $polled, $timeKeys, $refused, $shift, $cell): void {
+                // it so (a typed start with no typed end, on the request's end: the third outside read's case). A whole time
+                // is no old client: it is an invalid time, invalid_request, whether the API's reading refuses it first (an end
+                // before the start) or the resolved check does (a moment).
+                scenario("resolved time not after its start, $cell", function () use ($setUp, $shownAllDay, $change, $polled, $timeKeys, $notAfter, $backwards, $shift, $cell): void {
                     [$t, $shown] = $setUp($shownAllDay, $change, $polled);
                     $time = array_intersect_key($shown, array_flip($timeKeys));
                     $moment = ['allDay' => false, 'start' => '2027-03-04T20:00:00-05:00', 'end' => '2027-03-04T20:00:00-05:00', 'tzid' => 'America/New_York'];
                     $overMoment = ['start' => '2027-03-03T20:00:00-05:00', 'end' => '2027-03-03T20:00:00-05:00', 'allDay' => false, 'tzid' => 'America/New_York'] + $shown;
-                    $refused("resolved time a moment (the body), $cell", $t, 'patch', $moment + ['over' => $shown]);
-                    $refused("resolved time a moment (over), $cell", $t, 'patch', $shift($time, '+2 days') + ['over' => $overMoment]);
-                    $refused("resolved time a moment (a typed start with no typed end), $cell", $t, 'patch',
+                    $notAfter("resolved time a moment (the body), $cell", $t, 'patch', $moment + ['over' => $shown]);
+                    $notAfter("resolved time a moment (over), $cell", $t, 'patch', $shift($time, '+2 days') + ['over' => $overMoment]);
+                    $notAfter("resolved time a moment (a typed start with no typed end), $cell", $t, 'patch',
                         ['allDay' => false, 'start' => '2027-03-04T18:00:00Z', 'end' => '2027-03-04T19:00:00Z', 'tzid' => 'UTC', 'typed' => ['start' => '2027-03-04T19:00', 'tz' => 'UTC'], 'over' => $shown]);
-                    $refused("resolved time a moment (a delete over a moment), $cell", $t, 'delete', ['over' => $overMoment]);
+                    $notAfter("resolved time a moment (a delete over a moment), $cell", $t, 'delete', ['over' => $overMoment]);
+                    $before = ['allDay' => false, 'start' => '2027-03-04T19:00:00Z', 'end' => '2027-03-04T18:00:00Z', 'tzid' => 'UTC'];
+                    $backwards("resolved time ends before it starts (the body), $cell", $t, 'patch', $before + ['over' => $shown]);
+                    $backwards("resolved time ends before it starts (over), $cell", $t, 'patch', $shift($time, '+2 days') + ['over' => $before + $shown]);
                     H::done($t);
                 });
 

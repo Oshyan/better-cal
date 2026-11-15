@@ -1102,10 +1102,11 @@ return [
         'checks' => ['409 google_changed about the time: was the served time, now Google\'s, yours the resized time; nothing written; the row holds Google\'s time'],
     ],
     // A time is one value (the page's (b), T1 to T4). The labels of google-conflict-base.test.php's refusals for the rows
-    // given, in every cell of its table.
+    // given, in every cell of its table: a time in parts is client_outdated in the page's words, a whole time that does not
+    // end after its start invalid_request in POST /events's.
     ...(static function (): array {
-        $refusals = static function (array $rows): array {
-            $refused = ": 400 client_outdated, the page's words; nothing read from Google or sent; the row, Google and Activity as they were";
+        $refusals = static function (array $rows, string $as = "client_outdated, the page's words"): array {
+            $refused = ": 400 $as; nothing read from Google or sent; the row, Google and Activity as they were";
             $out = [];
             foreach (['shown timed', 'shown all-day'] as $kind) {
                 foreach (['Google timed west of UTC', 'Google timed east of UTC', 'Google timed in UTC', 'Google all-day'] as $g) {
@@ -1153,7 +1154,7 @@ return [
                 'id' => 'choice-resolved-time-unchecked', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-base',
                 'what' => 'the resolved time is not checked, so a time whose end is not after its start, by any reading, is read from and sent to Google',
                 'patch' => [["            self::resolvedTime(\$baseRow);\n            self::resolvedTime(\$wantedRow);\n", ""]],
-                'checks' => $refusals($resolved),
+                'checks' => $refusals($resolved, 'invalid_request, the words of POST /events'),
             ],
         ];
     })(),

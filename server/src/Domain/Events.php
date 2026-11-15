@@ -921,7 +921,7 @@ final class Events
     /** A time's keys, one value (the page "1.5.7, Slice 1", (b), T1): the clock-time flag is a field of its own. */
     public const TIME_KEYS = ['start', 'end', 'allDay', 'tzid'];
 
-    /** The refusal of a time sent in parts, or resolved to no event state, on a request carrying `over` (T2, T4). */
+    /** The refusal of a time sent in parts on a request carrying `over`, which only a client older than the rule sends (T2). */
     public const CLIENT_OUTDATED = 'Better-Cal was updated. Reload the page and make the change again.';
 
     /**
@@ -961,15 +961,17 @@ final class Events
     /**
      * The one check of a time's values (the page "1.5.7, Slice 1", (b), T4):
      * a row's time as it will be compared and written, its end after its
-     * start, else 400 client_outdated. Called by googleChoice, which every
-     * change and delete on the conflict choice's path passes through right
-     * before Google is read, for the base read from `over` and the time
-     * resolved from the request.
+     * start, else 400 invalid_request in POST /events's words: a whole time
+     * that is no event is an invalid time, not an old client (client_outdated
+     * is a time in parts alone). Called by googleChoice, which every change
+     * and delete on the conflict choice's path passes through right before
+     * Google is read, for the base read from `over` and the time resolved
+     * from the request.
      */
     private static function resolvedTime(array $row): void
     {
         if (Time::fromDb((string) $row['end_utc']) <= Time::fromDb((string) $row['start_utc'])) {
-            throw new HttpError('client_outdated', self::CLIENT_OUTDATED, 400);
+            throw HttpError::badRequest('end must be after start');
         }
     }
 

@@ -203,23 +203,48 @@ final class Interleave
             $mine[0] = $remote[0]; // the same field changed on both sides, half the time it would not be by chance
             $mine = array_values(array_unique($mine));
         }
-        $same = array_values(array_filter(array_intersect($remote, $mine), static fn(string $f): bool => $r->chance(0.35)));
-        $poll = $remote !== [] && $r->chance(0.3);
-        $block = [['do' => 'w-create', 'pick' => $r->int(0, 999) / 1000, 'single' => true]];
+        // A time changed here meets a time changed at Google half the time it would not by chance, so a request that sets
+        // part of the time is drawn over Google's change of the same field (the review of 2026-11-14, finding 3).
+        if ($how === 'edit' && $remote !== [] && in_array('time', $mine, true) && !in_array('time', $remote, true) && $r->chance(0.5)) {
+            $remote[0] = 'time';
+            $remote = array_values(array_unique($remote));
+        }
+        // How the time is set here, as the app sends it or an API caller may (google-conflict-choice.md, (c): "a request
+        // that set only part of the time"): a drag (start and end, no allDay), the app's resize (the start sent back as
+        // shown, a new end), an end alone, a start alone, the editor's all-day switch (start, end and allDay together).
+        $mineTime = in_array('time', $mine, true) ? ['form' => $r->weighted(['drag' => 4, 'resize' => 2, 'end' => 2, 'start' => 2, 'toggle' => 2]),
+            'days' => $r->pick([0, 0, 1, 2, -1]), 'secs' => $r->pick([3600, 0, 1800])] : null;
+        // A start alone leaves the end to the contract, which states no reading between the shown end and the shown length
+        // (x-choice accepts either): Google set to one of them is not drawn as "the same value".
+        $same = array_values(array_filter(array_intersect($remote, $mine), static fn(string $f): bool => $r->chance(0.35) && !($f === 'time' && $mineTime['form'] === 'start')));
+        // How the time changes at Google: shifted whole, its start alone, its end alone, or its kind (timed made all-day over
+        // one to three days, all-day made timed).
+        $remoteTime = in_array('time', $remote, true) && !in_array('time', $same, true) ? ['how' => $r->weighted(['shift' => 3, 'start' => 2, 'end' => 2, 'kind' => 4]), 'days' => $r->int(1, 3)] : null;
+        // A poll between the change at Google and the change here, more often when Google changed the time's kind; after it
+        // the request carries the record shown before it (a stale client, the page's case 5) or the one served after it.
+        $poll = $remote !== [] && $r->chance(($remoteTime['how'] ?? '') === 'kind' ? 0.6 : 0.3);
+        $created = ['do' => 'w-create', 'pick' => $r->int(0, 999) / 1000, 'single' => true];
+        if ($r->chance(0.3)) {
+            $created['allDay'] = $r->int(1, 3); // an all-day event of one to three days
+        }
+        $block = [$created];
         if ($remote !== []) {
-            $block[] = ['do' => 'r-single', 'pick' => 0.0, 'fields' => $remote, 'same' => $same];
+            $block[] = ['do' => 'r-single', 'pick' => 0.0, 'fields' => $remote, 'same' => $same] + ($remoteTime === null ? [] : ['time' => $remoteTime]) + (in_array('time', $same, true) ? ['mineTime' => $mineTime] : []);
         }
         if ($poll) {
             $block[] = ['do' => 'p-delta', 'pick' => 0.0];
         }
-        $block[] = ['do' => 'w-single', 'pick' => 0.0, 'how' => $how, 'fields' => $mine, 'tags' => $how === 'edit' && $r->chance(0.3), 'shown' => $poll && $r->chance(0.3) ? 'now' : 'earlier'];
+        $shown = $poll && $r->chance(0.3) ? 'now' : 'earlier';
+        $block[] = ['do' => 'w-single', 'pick' => 0.0, 'how' => $how, 'fields' => $mine, 'tags' => $how === 'edit' && $r->chance(0.3), 'shown' => $shown] + ($mineTime === null ? [] : ['time' => $mineTime]);
         $block[] = ['do' => 'w-single', 'pick' => 0.0, 'how' => 'overwrite'];
         $steps = $case['steps'];
         $keep = max(1, count($steps) - count($block));
         $steps = array_slice($steps, 0, $keep);
         array_splice($steps, $r->int(1, count($steps)), 0, $block);
         $case['steps'] = $steps;
-        $case['single'] = $how . ($remote === [] ? ', nothing at Google' : ' over ' . implode('+', $remote)) . ($poll ? ', polled between' : '');
+        $case['single'] = (isset($created['allDay']) ? 'all-day ' : 'timed ') . $how . ($mineTime === null ? '' : " (time: {$mineTime['form']})")
+            . ($remote === [] ? ', nothing at Google' : ' over ' . implode('+', $remote) . ($remoteTime === null ? '' : " (time: {$remoteTime['how']})"))
+            . ($poll ? ', polled between, ' . ($shown === 'now' ? 'shown after the poll' : 'shown before the poll (stale)') : '');
         return $case;
     }
 
@@ -571,6 +596,78 @@ final class Interleave
             'time' => is_array($v) ? [self::instantOf((string) ($v['start'] ?? '')), self::instantOf((string) ($v['end'] ?? '')), (bool) ($v['allDay'] ?? false)] : null,
             default => trim(is_string($v) ? $v : ''),
         };
+    }
+
+    /**
+     * A change of the time of an event in no series as a client sends it, from the record the person was shown: the
+     * request's time keys only (`over` is the caller's). The app's drag sends start and end and no allDay
+     * (web/src/app/actions.js, moveEvent), its resize the start back as shown and a new end (resizeEvent, monthmath.js
+     * resizedDates), the editor the time row whole with allDay (EditorDrawer.js, changedFields); an API caller may send
+     * an end alone or a start alone. An all-day event's ends are sent as dates, as the app's bars send them
+     * (api-contract.md, Time Zones and All-Day Events: "send "YYYY-MM-DD", end exclusive"). `$t`: form (drag, resize,
+     * end, start, toggle), days and secs (a drag's move; a timed resize or end or start moves by secs, or half an hour).
+     * A start alone moves earlier, so the start stays before the end whichever reading of the end applies.
+     */
+    private static function timeRequest(array $shown, array $t): array
+    {
+        $form = (string) ($t['form'] ?? 'drag');
+        $days = (int) ($t['days'] ?? 0);
+        $secs = (int) ($t['secs'] ?? 3600);
+        $iso = static fn(int $at): string => gmdate('Y-m-d\TH:i:s', $at) . '+00:00';
+        $date = static fn(int $at): string => gmdate('Y-m-d', $at);
+        if (!empty($shown['allDay'])) {
+            $s = self::instantOf(substr((string) $shown['start'], 0, 10));
+            $e = self::instantOf(substr((string) $shown['end'], 0, 10));
+            $k = $days !== 0 ? $days : 1;
+            return match ($form) {
+                'resize' => ['start' => $shown['start'], 'end' => $date($e + 86400)],
+                'end' => ['end' => $date($e + 86400)],
+                'start' => ['start' => $date($s - 86400)],
+                'toggle' => ['start' => $iso($s + 15 * 3600), 'end' => $iso($s + 16 * 3600), 'allDay' => false, 'tzid' => 'UTC'],
+                default => ['start' => $date($s + $k * 86400), 'end' => $date($e + $k * 86400)],
+            };
+        }
+        $s = self::instantOf((string) $shown['start']);
+        $e = self::instantOf((string) $shown['end']);
+        $by = $days * 86400 + $secs;
+        $by = $by !== 0 ? $by : 3600;
+        $edge = $secs !== 0 ? $secs : 1800;
+        return match ($form) {
+            'resize' => ['start' => $shown['start'], 'end' => $iso($e + $edge)],
+            'end' => ['end' => $iso($e + $edge)],
+            'start' => ['start' => $iso($s - $edge)],
+            'toggle' => ['start' => $date($s), 'end' => $date($e - 1 + 86400), 'allDay' => true],
+            default => ['start' => $iso($s + $by), 'end' => $iso($e + $by)],
+        };
+    }
+
+    /**
+     * The time a request sets, read against what the person was shown, B = [start, end, allDay]
+     * (google-conflict-choice.md, (b): the base is what was shown, and (c): "a request that set only part of the time (a
+     * drag sends `start` and `end`) was read against what the person was shown when it was first sent"). The kind is the
+     * request's allDay where it sends one, else the shown kind; each end sent is read in that kind (an all-day end as its
+     * date, api-contract.md: "only its date is read"); each end not sent is the shown one. A start sent alone has two
+     * readings of what was shown, the shown end or the shown length from the new start, and the contract states neither
+     * (api-contract.md, PATCH /events/:id, names no rule for a start without an end): both are returned, and x-choice
+     * accepts either, never one read from the row. A change of kind with an end left out has no stated reading: [].
+     *
+     * @return list<array{0:int,1:int,2:bool}>
+     */
+    private static function wantedTime(array $body, array $B): array
+    {
+        $allDay = array_key_exists('allDay', $body) ? (bool) $body['allDay'] : $B[2];
+        $read = static fn(string $v): int => $allDay ? self::instantOf(substr($v, 0, 10)) : self::instantOf($v);
+        $hasStart = isset($body['start']);
+        $hasEnd = isset($body['end']);
+        if ($allDay !== $B[2] && !($hasStart && $hasEnd)) {
+            return [];
+        }
+        $s = $hasStart ? $read((string) $body['start']) : $B[0];
+        $e = $hasEnd ? $read((string) $body['end']) : $B[1];
+        if ($hasStart && !$hasEnd && $s !== $B[0]) {
+            return [[$s, $B[1], $allDay], [$s, $s + ($B[1] - $B[0]), $allDay]];
+        }
+        return [[$s, $e, $allDay]];
     }
 
     /**
@@ -954,8 +1051,11 @@ final class Interleave
         if ($do === 'w-create') {
             $day = Days::date(Days::ofDate('2027-02-01') + (int) floor($step['pick'] * 200));
             $this->lastAsked = ['kind' => 'create', 'gid' => null, 'fields' => [], 'days' => [$day]];
-            $id = (int) $this->events->create($this->userId, ['calendarId' => $this->stand->calendarId, 'title' => "Sample event {$this->step}", 'start' => $day . 'T15:00:00+00:00', 'end' => $day . 'T16:00:00+00:00',
-                'allDay' => false, 'tzid' => 'UTC', 'tagNames' => ['single'], 'location' => 'Sample single hall', 'description' => 'Sample single event notes', 'url' => 'https://example.test/single-event'])['eventId'];
+            // Timed at 15:00 to 16:00 UTC, or all-day over `allDay` days (the single shape's all-day share).
+            $days = (int) ($step['allDay'] ?? 0);
+            $when = $days > 0 ? ['start' => $day, 'end' => Days::date(Days::ofDate($day) + $days), 'allDay' => true] : ['start' => $day . 'T15:00:00+00:00', 'end' => $day . 'T16:00:00+00:00', 'allDay' => false];
+            $id = (int) $this->events->create($this->userId, ['calendarId' => $this->stand->calendarId, 'title' => "Sample event {$this->step}"] + $when + [
+                'tzid' => 'UTC', 'tagNames' => ['single'], 'location' => 'Sample single hall', 'description' => 'Sample single event notes', 'url' => 'https://example.test/single-event'])['eventId'];
             $this->events->throwDeferred();
             // The event in no series is the case's from here on: what each side holds of it is recorded (gstate, ldigest),
             // and the record the API serves for it now is what the person was shown (withSingle's change sends it as `over`).
@@ -1160,8 +1260,7 @@ final class Interleave
         $body = ['over' => []];
         foreach ((array) ($step['fields'] ?? []) as $f) {
             if ($f === 'time') {
-                $body['start'] = Clock::iso(Clock::plus(Clock::parse((string) $shown['start']), 3600));
-                $body['end'] = Clock::iso(Clock::plus(Clock::parse((string) $shown['end']), 3600));
+                $body = self::timeRequest($shown, (array) ($step['time'] ?? [])) + $body;
                 $body['over'] += ['start' => $shown['start'], 'end' => $shown['end'], 'allDay' => $shown['allDay']];
             } elseif ($f === 'status') {
                 $body['status'] = $other;
@@ -1652,11 +1751,11 @@ final class Interleave
                     $body['status'] = 'tentative';
                     break;
                 case 'time':
-                    $secs = $mine ? 3600 : 7200;
-                    foreach (['start', 'end'] as $k) {
-                        $t = (new \DateTimeImmutable((string) $g[$k]['dateTime']))->setTimezone(new \DateTimeZone('UTC'))->modify("+$secs seconds");
-                        $body[$k] = ['dateTime' => $t->format('Y-m-d\TH:i:sP'), 'timeZone' => 'UTC'];
+                    $time = $this->remoteTime($g, $step, $mine);
+                    if ($time === []) {
+                        continue 2;
                     }
+                    $body += $time;
                     break;
             }
             $touched[] = $f;
@@ -1675,6 +1774,52 @@ final class Interleave
             $this->touches[] = ['step' => $this->step, 'gid' => $gid, 'remote' => true, 'polled' => false, 'field' => $f, 'key' => null];
         }
         return ['asked' => ['kind' => 'remote', 'gid' => $gid, 'fields' => [], 'days' => []]];
+    }
+
+    /**
+     * Google's change of the event's time (remoteSingle): with `same`, to what the change here will set (the request the
+     * w-single step builds from the record shown when the event was made, read against it; none where that has two
+     * readings); else by the step's `time.how`: shifted whole (two hours, or a day for an all-day event), its start
+     * earlier (an hour, a day), its end later, or its kind changed (a timed event made all-day from its start's date over
+     * `time.days` days, an all-day event made timed at 18:00 to 19:00 UTC on its first day), set whole as another client
+     * changes the form at Google (FakeGoogle::asSet).
+     */
+    private function remoteTime(array $g, array $step, bool $mine): array
+    {
+        $allDay = isset($g['start']['date']);
+        $at = static fn(array $w): int => self::instantOf((string) ($w['date'] ?? $w['dateTime'] ?? '1970-01-01'));
+        $s = $at((array) $g['start']);
+        $e = $at((array) $g['end']);
+        $toAllDay = $allDay;
+        if ($mine) {
+            $shown = $this->served[(string) $this->single] ?? null;
+            $want = $shown === null ? [] : self::wantedTime(self::timeRequest($shown, (array) ($step['mineTime'] ?? [])), self::servedValue('time', $shown));
+            if (count($want) !== 1) {
+                return [];
+            }
+            [$s, $e, $toAllDay] = $want[0];
+        } else {
+            $time = (array) ($step['time'] ?? []);
+            switch ((string) ($time['how'] ?? 'shift')) {
+                case 'start':
+                    $s -= $allDay ? 86400 : 3600;
+                    break;
+                case 'end':
+                    $e += $allDay ? 86400 : 3600;
+                    break;
+                case 'kind':
+                    $day = intdiv($s, 86400) * 86400;
+                    $toAllDay = !$allDay;
+                    [$s, $e] = $toAllDay ? [$day, $day + 86400 * max(1, (int) ($time['days'] ?? 1))] : [$day + 18 * 3600, $day + 19 * 3600];
+                    break;
+                default:
+                    $s += $allDay ? 86400 : 7200;
+                    $e += $allDay ? 86400 : 7200;
+            }
+        }
+        $when = static fn(int $t): array => $toAllDay ? ['date' => gmdate('Y-m-d', $t)] : ['dateTime' => gmdate('Y-m-d\TH:i:s', $t) . '+00:00', 'timeZone' => 'UTC'];
+        $body = ['start' => $when($s), 'end' => $when($e)];
+        return $toAllDay !== $allDay ? \BetterCal\GoogleProbe\FakeGoogle::asSet($body) : $body;
     }
 
     private function poll(string $do, array $step = [], array $s0 = []): array
@@ -2367,36 +2512,48 @@ final class Interleave
             $B['time'] = [isset($over['start']) ? self::instantOf((string) $over['start']) : $R['time'][0], isset($over['end']) ? self::instantOf((string) $over['end']) : $R['time'][1],
                 array_key_exists('allDay', $over) ? (bool) $over['allDay'] : $R['time'][2]];
         }
-        // What the change sets, only where it differs from what was shown ((a): "a field sent at its base value is not wanted").
+        // What the change sets, only where it differs from what was shown ((a): "a field sent at its base value is not wanted"),
+        // each field as the list of its readings: one, but for a start sent alone, whose end the contract leaves to the shown
+        // end or the shown length (wantedTime). A time is read against what was shown, never against the row ((c)).
         $W = [];
         if ($action !== 'delete') {
             foreach (['title', 'description', 'location', 'url', 'status'] as $f) {
                 if (array_key_exists($f, $body)) {
-                    $W[$f] = self::servedValue($f, $body[$f]);
+                    $W[$f] = [self::servedValue($f, $body[$f])];
                 }
             }
             if ($action === 'relationship') {
-                $W['status'] = ($body['relationship'] ?? '') === 'maybe';
+                $W['status'] = [($body['relationship'] ?? '') === 'maybe'];
             }
             if (array_intersect(['start', 'end', 'allDay'], array_keys($body)) !== []) {
-                $W['time'] = [isset($body['start']) ? self::instantOf((string) $body['start']) : $B['time'][0], isset($body['end']) ? self::instantOf((string) $body['end']) : $B['time'][1],
-                    array_key_exists('allDay', $body) ? (bool) $body['allDay'] : $B['time'][2]];
+                $W['time'] = self::wantedTime($body, $B['time']);
+                if ($W['time'] === []) {
+                    $this->ran('x-choice', 'a change of kind with an end left out: no reading stated (contract undefined)');
+                    return;
+                }
             }
-            $W = array_filter($W, static fn($v, string $f): bool => $v !== $B[$f], ARRAY_FILTER_USE_BOTH);
+            $W = array_filter($W, static fn(array $vs, string $f): bool => array_filter($vs, static fn($v): bool => $v !== $B[$f]) !== [], ARRAY_FILTER_USE_BOTH);
         }
+        $isW = static fn(string $f, mixed $v): bool => in_array($v, $W[$f] ?? [], true);
         $outcome = [];
         foreach (self::CHOICE_FIELDS as $f) {
             $wanted = $action === 'delete' || array_key_exists($f, $W);
             $outcome[$f] = !$wanted ? ($G[$f] === $B[$f] ? 'same' : 'kept')
-                : ($G[$f] === $B[$f] || ($action !== 'delete' && $G[$f] === $W[$f]) ? 'send' : 'ask');
+                : ($G[$f] === $B[$f] || ($action !== 'delete' && $isW($f, $G[$f])) ? 'send' : 'ask');
+        }
+        // Google holding one reading of a start sent alone and not what was shown: the other reading would ask, and the
+        // contract does not say which applies, so nothing is asserted (never drawn: r-single's `same` leaves it out).
+        if (count($W['time'] ?? []) > 1 && $G['time'] !== $B['time'] && $isW('time', $G['time'])) {
+            $this->ran('x-choice', 'Google holds one reading of a start sent alone (contract undefined)');
+            return;
         }
         $asks = array_keys(array_filter($outcome, static fn(string $o): bool => $o === 'ask'));
         $kept = array_keys(array_filter($outcome, static fn(string $o): bool => $o === 'kept'));
         sort($asks);
         sort($kept);
-        $toSend = $action === 'delete' || array_filter($W, static fn($v, string $f): bool => $G[$f] !== $v, ARRAY_FILTER_USE_BOTH) !== [];
+        $toSend = $action === 'delete' || array_filter($W, static fn(array $vs, string $f): bool => !in_array($G[$f], $vs, true), ARRAY_FILTER_USE_BOTH) !== [];
         $error = $out['ok'] ? null : (string) $out['error'];
-        $context += ['action' => $action, 'outcomes' => $outcome];
+        $context += ['action' => $action, 'outcomes' => $outcome, 'shown' => $B['time'], 'google' => $G['time'], 'row' => $R['time']] + (isset($W['time']) ? ['wantedTime' => $W['time']] : []);
         $this->ran('x-choice', $action . ($sent['overwriting'] !== null ? ' (overwrite)' : '') . ': ' . ($asks !== [] ? 'asks' : ($kept !== [] ? 'keeps' : ($G === $B ? 'nothing changed at Google since shown' : 'sends'))));
 
         // The request budget (case 1: "one read, one conditional write"; case 3: "nothing is sent").
@@ -2409,7 +2566,7 @@ final class Interleave
         // changes nothing sends nothing and is no conflict"). A change whose every field the row here already holds (a poll
         // stored Google's Maybe and the person, still shown Planned, clicks Maybe: seed 94756 case 266) is such a request:
         // it goes through with no read and no write, and the three-way comparison is not asked.
-        if ($action !== 'delete' && array_filter($W, static fn($v, string $f): bool => $R[$f] !== $v, ARRAY_FILTER_USE_BOTH) === []) {
+        if ($action !== 'delete' && array_filter($W, static fn(array $vs, string $f): bool => !in_array($R[$f], $vs, true), ARRAY_FILTER_USE_BOTH) === []) {
             $this->ran('x-choice', 'sends Google nothing');
             $this->expect('x-choice', $out['ok'] && $reads === 0 && $writes === 0 && $s1['g'] == $s0['g'], "step {$this->step} ($do): a change the row here already holds goes through asking Google nothing", $budget);
             return;
@@ -2448,9 +2605,11 @@ final class Interleave
                 $byField = $told((array) ($out['extra']['fields'] ?? []));
                 $this->expect('x-choice', array_keys($byField) == $asks, "step {$this->step} ($do): the question names exactly the fields asked about", $context + ['fields' => $out['extra']['fields'] ?? null]);
                 foreach (array_intersect_key($byField, array_flip($asks)) as $f => $item) {
-                    $this->expect('x-choice', self::servedValue($f, $item['was'] ?? null) === $B[$f] && self::servedValue($f, $item['now'] ?? null) === $G[$f]
-                        && ($action === 'delete' ? ($item['yours'] ?? null) === null : self::servedValue($f, $item['yours'] ?? null) === $W[$f]),
-                        "step {$this->step} ($do): the question gives each field as shown (was), at Google now (now) and as the change sets it (yours, null for a delete)", $context + ['field' => $f, 'told' => $item]);
+                    $this->expect('x-choice', self::servedValue($f, $item['was'] ?? null) === $B[$f] && self::servedValue($f, $item['now'] ?? null) === $G[$f],
+                        "step {$this->step} ($do): the question gives each field as shown (was) and at Google now (now)", $context + ['field' => $f, 'told' => $item]);
+                    // yours: the request read against what was shown, a time's parts not sent taken from the shown time ((c)).
+                    $this->expect('x-choice', $action === 'delete' ? ($item['yours'] ?? null) === null : $isW($f, self::servedValue($f, $item['yours'] ?? null)),
+                        "step {$this->step} ($do): the question gives each field as the change sets it, read against what was shown (yours, null for a delete)", $context + ['field' => $f, 'told' => $item]);
                 }
                 $keptRight((array) ($out['extra']['kept'] ?? []), 'the question');
             }
@@ -2462,12 +2621,21 @@ final class Interleave
             if ($out['ok'] && $action === 'delete') {
                 $this->expect('x-choice', $now === null && $g1 === null, "step {$this->step} ($do): the delete removes the event here and at Google", $context + ['here' => $now !== null, 'google' => $g1 !== null]);
             } elseif ($out['ok']) {
+                // Each field's expected values: a sent one any reading of the request (one, but for a start sent alone).
                 $E = [];
                 foreach (self::CHOICE_FIELDS as $f) {
-                    $E[$f] = match ($outcome[$f]) { 'send' => $W[$f], 'kept' => $G[$f], default => $B[$f] };
+                    $E[$f] = match ($outcome[$f]) { 'send' => $W[$f], 'kept' => [$G[$f]], default => [$B[$f]] };
                 }
-                $this->expect('x-choice', $now !== null && self::rowSix($now) === $E, "step {$this->step} ($do): here, each field sent holds the change's value and each kept one Google's", $context + ['here' => $now === null ? null : self::rowSix($now), 'expected' => $E]);
-                $this->expect('x-choice', $g1 !== null && array_diff_key($g1, ['single' => 1]) === $E, "step {$this->step} ($do): at Google, each field sent holds the change's value and each kept one Google's", $context + ['google' => $g1, 'expected' => $E]);
+                $holds = static function (?array $six) use ($E): bool {
+                    foreach ($E as $f => $vs) {
+                        if ($six === null || !in_array($six[$f], $vs, true)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                };
+                $this->expect('x-choice', $now !== null && $holds(self::rowSix($now)), "step {$this->step} ($do): here, each field sent holds the change's value and each kept one Google's", $context + ['here' => $now === null ? null : self::rowSix($now), 'expected' => $E]);
+                $this->expect('x-choice', $g1 !== null && $holds(array_diff_key($g1, ['single' => 1])), "step {$this->step} ($do): at Google, each field sent holds the change's value and each kept one Google's", $context + ['google' => $g1, 'expected' => $E]);
                 if (isset($body['tagNames'])) {
                     $want = (array) $body['tagNames'];
                     sort($want);
@@ -2482,6 +2650,20 @@ final class Interleave
             // Overwrite, sent as the question says right after it (nothing changed at Google since): it goes through.
             $this->ran('x-choice', 'overwrite');
             $this->expect('x-choice', $out['ok'], "step {$this->step} ($do): Overwrite, sent as the question says with nothing changed at Google since, goes through", $context);
+            // What lands is exactly what the question showed as the person's ((c): "Overwrite sends what the question showed
+            // as yours"), here and at Google, for every field it asked about with a value (a delete's yours is null).
+            if ($out['ok']) {
+                foreach ((array) ($sent['overwriting']['extra']['fields'] ?? []) as $item) {
+                    $f = (string) ($item['field'] ?? '');
+                    if (!in_array($f, self::CHOICE_FIELDS, true) || ($item['yours'] ?? null) === null) {
+                        continue;
+                    }
+                    $yours = self::servedValue($f, $item['yours']);
+                    $this->ran('x-choice', 'overwrite lands yours');
+                    $this->expect('x-choice', $now !== null && self::rowSix($now)[$f] === $yours && $g1 !== null && $g1[$f] === $yours,
+                        "step {$this->step} ($do): Overwrite lands exactly what the question showed as yours, here and at Google", $context + ['field' => $f, 'yours' => $yours, 'here' => $now === null ? null : self::rowSix($now)[$f], 'google' => $g1[$f] ?? null]);
+                }
+            }
         }
         // Nothing else of the case changes, here or at Google.
         $others = static fn(array $l): array => array_diff_key($l, [$id => 1]);
@@ -3257,6 +3439,13 @@ final class Interleave
         foreach ($a0 as $day => $items) {
             foreach ($items as $item => $rowId) {
                 if (isset($a1[$day][$item]) || ($day === '*' && isset($a1['*'][$item])) || self::allowed($allow, $day, $item)) {
+                    continue;
+                }
+                // An event in no series is its row, not a day of anything: its own tag moves with it when its date moves (a
+                // poll storing Google's new date, a drag here), and is gone only when its row no longer holds it.
+                $after = $s1['rows'][$rowId] ?? null;
+                if ($after !== null && $after['recurrence_parent_id'] === null && $after['rrule'] === null
+                    && isset(self::alone([$rowId => $after])[self::dayOf($after, null)][$item])) {
                     continue;
                 }
                 $row = $s0['rows'][$rowId] ?? null;

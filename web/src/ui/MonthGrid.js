@@ -28,7 +28,7 @@ import {
   spanRowCount, rowSegmentAt, clampDayRange, LONG_SPAN_ROWS,
   rowIndexOfDayKey, firstEpochDayOfRow, dayKeysOfRow, isWeekendEpochDay,
   monthStartsInRange, dominantMonthOfRows, ANCHOR_LINE,
-  planCell, fixedGeometry, fitGeometry, weekRangeIn, dominantMonthOfWeeks,
+  planCell, fixedGeometry, fitGeometry, weekRangeIn, visibleMonthOf,
 } from './monthmath.js';
 import { assignLanes } from './layout.js';
 import { EventChip, EventBar, TripBand, HiddenMark } from './EventChip.js';
@@ -352,8 +352,8 @@ export function MonthGrid({
   // component life. A version with rowH captured in its closure can be invoked
   // late (rAF-throttled scroll events) after rowH changed, computing the range
   // against the wrong geometry and blanking the grid.
-  const geomRef = useRef({ rowH, minWeek, maxWeek, geo });
-  geomRef.current = { rowH, minWeek, maxWeek, geo };
+  const geomRef = useRef({ rowH, minWeek, maxWeek, geo, columns });
+  geomRef.current = { rowH, minWeek, maxWeek, geo, columns };
   const recompute = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -377,7 +377,14 @@ export function MonthGrid({
     }
     topWeekRef.current = r.top;
     topFracRef.current = r.topOffset || 0;
-    setRange((prev) => (prev.first === r.first && prev.last === r.last && prev.top === r.top
+    // The month on screen at this very position (visibleMonthOf), so the
+    // label follows a scroll that stops within a tenth of a row of where
+    // the range last changed: near the line between two months, the range
+    // held back that tenth and the label named the month of a position the
+    // grid had already left.
+    const vm = visibleMonthOf(g.geo, el.scrollTop, el.clientHeight, g.columns);
+    r.month = vm.year * 12 + vm.month;
+    setRange((prev) => (prev.first === r.first && prev.last === r.last && prev.top === r.top && prev.month === r.month
       && Math.abs((prev.topOffset ?? 0) - r.topOffset) < 0.1 ? prev : r));
   }, []);
 
@@ -599,45 +606,26 @@ export function MonthGrid({
     // geometry effect whenever an anchor is still pending.)
     if (!anchoredRef.current) return;
     if (onVisibleMonthChange) {
-      // Dominant month over the WHOLE visible window, not just the top row:
-      // with the tail of an old month as the top row, the window is mostly
-      // the next month and the toolbar/mini-month should say so.
-      //
-      // Start from the first row that is at least half on screen. Counting a
-      // row that is 90% scrolled off gave the outgoing month a full vote, and
-      // once rows grew tall enough that only ~4 fit, that single phantom row
-      // could carry the count — the label kept naming the previous month, and
-      // Next-month (which steps from the reported month) recomputed the month
-      // already on screen and appeared to do nothing at all.
+      // The month the label names (visibleMonthOf): the one filling most of
+      // the visible day area, each row counted by the pixels of it that
+      // show, for fixed and fitted rows and any number of columns alike.
+      // Counting whole rows from the first one at least half on screen gave
+      // a row 60% on screen a full vote and a row peeking in at the bottom
+      // none: on the phone's three-column grid, Next to January 2027 or
+      // April 2027 left the old month named over a screen mostly the new one.
+      // With the day gone to pinned at the top (gridAnchor 'top', #91) the
+      // top row is where you are: it names the month, so today's month
+      // stays the label until its row scrolls away.
       const topRaw = range.top != null ? range.top : range.first;
       const top = Math.min(range.last, topRaw + ((range.topOffset ?? 0) > 0.5 ? 1 : 0));
-      let rows;
-      let month;
-      if (geo.fit) {
-        // Rows differ in height: count the weeks actually on screen, and
-        // weigh each by how much of it shows, so one tall week of the old
-        // month doesn't outvote the new month filling the rest.
-        const el = scrollRef.current;
-        const st = el ? el.scrollTop : geo.top(topRaw);
-        const lastW = Math.min(range.last, geo.weekAt(st + viewH - 1));
-        const weeks = [];
-        for (let w = topRaw; w <= lastW; w++) {
-          const t = geo.top(w);
-          weeks.push({ weekIndex: w, px: Math.min(t + geo.height(w), st + viewH) - Math.max(t, st) });
-        }
-        rows = Math.max(1, lastW - top + 1);
-        month = anchorAtTop ? dominantMonthOfRows(top, 1, columns) : dominantMonthOfWeeks(weeks, columns);
-      } else {
-        rows = Math.min(
-          Math.max(1, Math.round(viewH / rowH)), // rows the viewport shows
-          range.last - top + 1,                  // never beyond rendered rows
-        );
-        // With the day gone to pinned at the top (gridAnchor 'top', #91) the
-        // top row is where you are: it names the month, so today's month
-        // stays the label until its row scrolls away, even with the next
-        // month filling the rest of the screen.
-        month = dominantMonthOfRows(top, anchorAtTop ? 1 : rows, columns);
-      }
+      const el = scrollRef.current;
+      const st = el ? el.scrollTop : geo.top(topRaw);
+      const vh = el && el.clientHeight > 0 ? el.clientHeight : viewH;
+      const month = anchorAtTop ? dominantMonthOfRows(top, 1, columns) : visibleMonthOf(geo, st, vh, columns);
+      // The rows the days on screen are read from, as before.
+      const rows = geo.fit
+        ? Math.max(1, Math.min(range.last, geo.weekAt(st + vh - 1)) - top + 1)
+        : Math.min(Math.max(1, Math.round(viewH / rowH)), range.last - top + 1);
       // The days on screen, so the mini-month can keep the selected day in
       // view (MiniMonth.js).
       const days = {
@@ -651,7 +639,7 @@ export function MonthGrid({
       const end = dateOfDayKey(keyOfEpochDay(firstEpochDayOfRow(range.last + 1, columns) + 28));
       onRequestWindow({ start: toISOWithOffset(start), end: toISOWithOffset(end) });
     }
-  }, [range.first, range.last, range.top, range.topOffset, columns, viewH, rowH, anchorAtTop, geo]);
+  }, [range.first, range.last, range.top, range.topOffset, range.month, columns, viewH, rowH, anchorAtTop, geo]);
 
   // --- drag helpers ---------------------------------------------------------
 

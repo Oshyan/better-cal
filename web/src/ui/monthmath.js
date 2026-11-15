@@ -476,6 +476,26 @@ export function weekRangeIn(geo, scrollTop, viewportH, minWeek, maxWeek, buffer 
   };
 }
 
+/**
+ * The month the label names: the one filling most of the grid's visible
+ * day area, as a person sees it. `geo` is the grid's row geometry (fixed or
+ * fit), `scrollTop` and `viewH` the scroller's position and height (the
+ * scroller sits between the bars, so its height is what shows). Every row
+ * any part of which is on screen counts each of its `columns` days by the
+ * pixels of the row that show: a row half scrolled off counts half, a row
+ * only peeking in at the bottom counts what peeks. Whatever the number of
+ * columns; ties go to the later month (dominantMonthOfWeeks).
+ */
+export function visibleMonthOf(geo, scrollTop, viewH, columns = 7) {
+  const bottom = scrollTop + Math.max(1, viewH);
+  const weeks = [];
+  for (let w = geo.weekAt(scrollTop), last = geo.weekAt(bottom - 1); w <= last; w++) {
+    const t = geo.top(w);
+    weeks.push({ weekIndex: w, px: Math.min(t + geo.height(w), bottom) - Math.max(t, scrollTop) });
+  }
+  return dominantMonthOfWeeks(weeks, columns);
+}
+
 // The month covering most of the screen when rows differ in height: each
 // week's days count by how much of that week is on screen, so one tall week
 // of the old month doesn't outvote the screenful of the new one. weeks:

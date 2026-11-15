@@ -10,6 +10,7 @@ A change to one event on a Google calendar that someone changed in Google Calend
 
 - **A change in Google Calendar to something you are not changing just stays.** Your change goes through, and the toast says what else changed there and was kept, with its value.
 - **A change to the same thing asks you.** It names what changed, shows what Google Calendar holds now and what your change would make it, and offers Cancel or Overwrite. Cancel saves nothing and leaves your change in the editor; Save then sends it, since you have seen what Google Calendar holds.
+- **Two questions at once are asked one after the other,** each naming its event; one that waited reads Google Calendar again before it shows.
 - **A delete asks over any change in Google Calendar,** showing what changed, with Cancel or Delete. The event stays on screen until the answer comes, so Cancel leaves you where you were.
 - **The question's buttons are full-size touch targets on phones.**
 - **A saved edit shows at once.** The editor closes, the calendar shows the change and the toast says it together, without waiting for the calendar to load again.

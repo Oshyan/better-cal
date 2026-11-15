@@ -540,3 +540,7 @@ off();
 globalThis.fetch = realFetch;
 assert.equal(state.confirmAsk, null);
 console.log('Google changed: an open editor keeps the person\'s fields, and an answer shows at once');
+
+// The same choice at its callers, in the stand-in DOM: the editor's one base,
+// and questions one at a time.
+await import('./google-conflict-callers.mjs');

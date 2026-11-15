@@ -105,12 +105,14 @@ jobs:
       # series model, or of the Undo gate, and must trip the check it names
       # while every other check passes. Then the interleaving oracle's own
       # probes (OracleProbes.php): damage injected into what a check reads,
-      # which the check must fail on.
+      # which the check must fail on. Four runs at once: the hosted runner
+      # for a public repository has four CPUs, shared with the MariaDB
+      # service; each run has its own patched copy, result file and database.
       - name: Edit harness mutations
         env:
           BC_TEST_DB: mariadb:3306
         run: |
-          php tools/edit-harness/mutations/run.php
+          php tools/edit-harness/mutations/run.php --jobs 4
           ./tools/edit-harness/run.sh --interleave --oracle-probes
       # A full run of one seed (the fixed cases included, every required
       # category of the plan-data checks executed), on four processes at once.

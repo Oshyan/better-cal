@@ -4,7 +4,7 @@
 import {
   epochDayOfKey, keyOfEpochDay, weekIndexOfEpochDay, firstEpochDayOfWeek,
   dayKeyOfISO, parseISO, dayKeyOf, addDaysDate, toISOWithOffset,
-  pad, addDaysInZone, sameClock, localTz,
+  pad, addDaysInZone, ownClock,
   MINUTES_DAY, wallMinutes, wallMinutesOf, wallRangeInstants,
 } from '../lib/dates.js';
 
@@ -277,7 +277,10 @@ export function shiftOccurrenceDays(occ, deltaDays) {
       newEnd: keyOfEpochDay(epochDayOfKey(endKey) + 1 + deltaDays), // exclusive
     };
   }
-  const own = occ.tzid && occ.tzid !== 'UTC' && !sameClock(occ.tzid, localTz()) ? occ.tzid : null;
+  // Shifted on the clock its times are on (dates.js ownClock): its own
+  // zone's, or this device's for an event with the same clock time in any
+  // zone, whose times are served on the device's clock.
+  const own = ownClock(occ);
   const shift = (iso) => (own ? addDaysInZone(parseISO(iso), deltaDays, own) : addDaysDate(parseISO(iso), deltaDays));
   return {
     newStart: toISOWithOffset(shift(occ.start)),

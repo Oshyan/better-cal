@@ -7,6 +7,7 @@ import './credentials.mjs';
 import './mail.mjs';
 import './resources.mjs';
 import './google-changed.mjs';
+import './dayshift-clock.mjs';
 // The series panel never guesses a clock's zone: under test a clock with none throws.
 import { setStrictClocks } from '../src/lib/planwords.js';
 setStrictClocks(true);
@@ -4343,6 +4344,12 @@ console.log('');
     const at = new Date(2026, 10, 7, 15, 35);
     const tide = { allDay: false, title: 'Low tide -0.4 ft', start: at.toISOString(), end: at.toISOString(), tzid: 'UTC', icon: 'tideLow' };
     eq('context token: a UTC-stored plugin moment reads on the device clock', contextToken(tide).time, compactTime(at, null));
+    // Same clock time in any zone: its times are this device's whatever zone
+    // it was stored in, so no other zone's clock and no zone label.
+    const far = Intl.DateTimeFormat().resolvedOptions().timeZone === 'Asia/Tokyo' ? 'America/New_York' : 'Asia/Tokyo';
+    const local = { ...tide, tzid: far, floating: true };
+    eq('context token: a same-clock-time moment reads on the device clock, unlabelled', [contextToken(local).time, contextToken(local).zone], [compactTime(at, null), '']);
+    eq('context token: the same moment in a far zone says its zone', !!contextToken({ ...tide, tzid: far }).zone, true);
   }
   eq('context token: AQI keeps the number, the category goes to the tooltip', [contextToken(aqi).icon, contextToken(aqi).text], ['air', '54']);
   eq('context token: a sunset is its icon and time', [contextToken(sunset).icon, contextToken(sunset).text, contextToken(sunset).time], ['sunset', '', '7:10p']);

@@ -496,6 +496,22 @@ export function typedInstants(startWall, endWall, tz) {
   return [s, at(e.getUTCFullYear() + '-' + pad(e.getUTCMonth() + 1) + '-' + pad(e.getUTCDate()) + 'T' + pad(e.getUTCHours()) + ':' + pad(e.getUTCMinutes()))];
 }
 
+/**
+ * The zone an occurrence's served times keep their clock in, when that is
+ * not this device's clock: its own zone. Null when its times are on this
+ * device's clock: an event with the same clock time in any zone (#167; the
+ * API's `floating`, whose times are served on the device's clock whatever
+ * `tzid` it carries), an all-day event (dates), an unknown zone (UTC, what
+ * imports write), or a zone that keeps this device's clock (around `at`,
+ * the moment it is read for; now by default). The one reading
+ * of which clock an event's times are on: what is shown (zoneNote) and how
+ * a move by days keeps its time (shiftOccurrenceDays) both go by it.
+ */
+export function ownClock(occ, at = new Date()) {
+  if (!occ || occ.allDay || occ.floating || !occ.tzid || occ.tzid === 'UTC' || sameClock(occ.tzid, localTz(), at)) return null;
+  return occ.tzid;
+}
+
 // "Thu, Jun 4, 3:00 PM to 4:00 PM in New York" for a timed event whose own zone
 // keeps a different clock from this device; '' otherwise. UTC is what imports
 // write when the zone is unknown, so it is never announced as a place. A
@@ -511,17 +527,18 @@ export function zoneNote(occ) {
       : dayKeyOf(s) === dayKeyOf(e) ? fmtTime(s) + ' to ' + fmtTime(e) : fmtRange(s, e, false);
     return times + ' local';
   }
-  if (!occ || occ.allDay || !occ.tzid || occ.tzid === 'UTC' || sameClock(occ.tzid, localTz())) return '';
+  const tz = ownClock(occ);
+  if (!tz) return '';
   // Reuse the local formatters (and the 12/24-hour setting they follow) by
   // shifting the instant so that the device's clock reads what the zone's does.
   const inZone = (iso) => {
     const d = new Date(iso);
-    const off = tzOffsetMinutes(occ.tzid, d);
+    const off = tzOffsetMinutes(tz, d);
     return off == null || isNaN(d) ? null : new Date(d.getTime() + (off + d.getTimezoneOffset()) * 60000);
   };
   const s = inZone(occ.start);
   const e = inZone(occ.end);
-  return s && e ? fmtRange(s, e, false) + ' in ' + tzCity(occ.tzid) : '';
+  return s && e ? fmtRange(s, e, false) + ' in ' + tzCity(tz) : '';
 }
 
 // Do two zones keep the same clock? Names alone over-report: a browser in

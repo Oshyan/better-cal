@@ -17,8 +17,8 @@
 //   Cancel sends nothing, and what shows stays what was stored;
 // - a 200's `kept` goes on the caller's toast (keptOf; store.js toast says it).
 //
-// With the setting off (as shipped) no answer carries google_changed or
-// kept, and nothing here shows.
+// The setting is on as shipped; with it off for an account (an operator's
+// switch) no answer carries google_changed or kept, and nothing here shows.
 
 import { adoptEvent } from './store.js';
 import { api, ApiError, refreshWindow } from './api.js';

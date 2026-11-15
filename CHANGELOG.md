@@ -6,15 +6,17 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## 1.5.7 (unreleased)
 
-A change to one event on a Google calendar that someone changed in Google Calendar since you last saw it. Built and off as shipped: until it is switched on, such a change is refused as in 1.5.6 ("This event changed at Google since you last saw it. Refresh and try again.").
+A change to one event on a Google calendar that someone changed in Google Calendar since you last saw it no longer stops with "Refresh and try again". It is on from the update.
 
 - **A change in Google Calendar to something you are not changing just stays.** Your change goes through, and the toast says what else changed there and was kept, with its value.
 - **A change to the same thing asks you.** It names what changed, shows what Google Calendar holds now and what your change would make it, and offers Cancel or Overwrite. Cancel saves nothing and leaves your change in the editor.
-- **A delete asks over any change in Google Calendar,** showing what changed, with Cancel or Delete.
+- **A delete asks over any change in Google Calendar,** showing what changed, with Cancel or Delete. The event stays on screen until the answer comes, so Cancel leaves you where you were.
+- **The question's buttons are full-size touch targets on phones.**
+- **Toasts for a change sent to Google say "here and in Google Calendar".**
 - Where a change to a repeating event names what its days keep or take, it says Planned or Maybe instead of "status".
 - Not yet covered, refused as before: one day of a repeating event ([#268](https://github.com/Oshyan/better-cal/issues/268)).
 - For maintainers: the Google probe's reports hold nothing of an event the probe did not make ([#279](https://github.com/Oshyan/better-cal/issues/279)), the benchmark works in a folder inside the checkout ([#280](https://github.com/Oshyan/better-cal/issues/280)), and CI runs the edit harness as shipped.
-- An upgrade from 1.5.6 loses nothing.
+- An upgrade from 1.5.6 loses nothing. A delete now waits for the server's answer before the event leaves the screen, usually well under a second.
 
 ## 1.5.6 (2026-11-14)
 

@@ -113,9 +113,9 @@ if (isset($opts['flips'])) {
 if (isset($opts['series-undo'])) {
     BetterCal\EditHarness\Product::$seriesUndo = (string) $opts['series-undo'] !== 'off';
 }
-// --conflict-choice on|off: the account's google_conflict_choice setting (Product::$conflictChoice); on, the default,
-// judges a change to one event in no series over a change at Google by the three-way comparison (x-choice), off by
-// 1.5.6's refusal (x-conflict), as 1.5.7 ships it.
+// --conflict-choice on|off: the account's google_conflict_choice setting (Product::$conflictChoice); on, the default
+// and as 1.5.7 ships it, judges a change to one event in no series over a change at Google by the three-way comparison
+// (x-choice), off by 1.5.6's refusal (x-conflict).
 if (isset($opts['conflict-choice'])) {
     BetterCal\EditHarness\Product::$conflictChoice = (string) $opts['conflict-choice'] !== 'off';
 }

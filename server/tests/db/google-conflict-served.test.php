@@ -12,6 +12,7 @@ declare(strict_types=1);
 // stores it and by the field's equality. Invented data.
 
 use BetterCal\Domain\GoogleConflict;
+use BetterCal\Domain\Settings;
 use BetterCal\EditHarness\GoogleStand;
 use BetterCal\Infra\Db;
 
@@ -19,6 +20,18 @@ require_once dirname(__DIR__, 3) . '/tools/edit-harness/lib.php';
 
 return static function (Db $db): void {
     $u = freshUser($db);
+    // The setting's reading (Settings::DEFAULTS, on as 1.5.7 ships): an account that stores nothing for it, or an
+    // empty settings object, reads on; only an explicit false reads off. Nothing is rewritten to get there.
+    $stored = static fn(int $id): mixed => $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$id]);
+    check('a new account stores no google_conflict_choice', !array_key_exists('google_conflict_choice', json_decode((string) $stored($u), true) ?: []));
+    check('a missing google_conflict_choice reads on', Settings::googleConflictChoice($db, $u) === true);
+    $bare = freshUser($db);
+    $db->update('users', ['settings_json' => '{}'], 'id = ?', [$bare]);
+    check('empty stored settings read on', Settings::googleConflictChoice($db, $bare) === true);
+    conflictChoice($db, $bare, false);
+    check('an explicit false reads off', Settings::googleConflictChoice($db, $bare) === false);
+    conflictChoice($db, $bare, true);
+    check('an explicit true reads on', Settings::googleConflictChoice($db, $bare) === true);
     $d = domains($db);
     $s = GoogleStand::make($db, $d->undo, $u);
     $e = $s->events;
@@ -46,14 +59,15 @@ return static function (Db $db): void {
     }
 
     // The `kept` key of the 200s of PATCH, relationship and rsvp (Events::keptAnswer, which all three add):
-    // absent with the setting off, as shipped, so those answers are 1.5.6's key for key; present, empty or not, with it on.
+    // absent with the setting off (on as shipped; off is an operator's switch), so those answers are 1.5.6's key for key;
+    // present, empty or not, with it on.
     conflictChoice($db, $u, false);
     checkEq('setting off: no kept key in the answers', [[], []], [$e->keptAnswer($u), $e->keptAnswer($u, [['field' => 'title', 'now' => 'Sample']])]);
     conflictChoice($db, $u, true);
     checkEq('setting on: the kept key, empty or the answer\'s own', [['kept' => []], ['kept' => [['field' => 'title', 'now' => 'Sample']]]],
         [$e->keptAnswer($u), $e->keptAnswer($u, [['field' => 'title', 'now' => 'Sample']])]);
 
-    // With the setting off, as shipped, `over` is read by nothing: the same rename of two equal events, one with an
+    // With the setting off, `over` is read by nothing: the same rename of two equal events, one with an
     // invented `over` for every field, sends Google the same requests and leaves the two rows the same.
     conflictChoice($db, $u, false);
     $twin = static fn(): int => (int) $e->create($u, ['calendarId' => $s->calendarId, 'title' => 'Sample review', 'start' => '2027-05-04T09:00:00+00:00',

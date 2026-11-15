@@ -33,17 +33,16 @@ final class Product
 
     /**
      * The account's google_conflict_choice setting in a run (`--conflict-choice on|off`, README: Interleaving, The
-     * Conflict Choice). On, the default: a change or delete of one event in no series over a change at Google not yet
-     * read is judged by the three-way comparison of google-conflict-choice.md's first page (x-choice); off, as 1.5.7
-     * ships it, every such write is 1.5.6's refusal (x-conflict). The setting is a one-release caution, so recorded runs
-     * measure it on.
+     * Conflict Choice). On, the default, as 1.5.7 ships it: a change or delete of one event in no series over a change
+     * at Google not yet read is judged by the three-way comparison of google-conflict-choice.md's first page (x-choice);
+     * off, the switch an operator can still set for an account, every such write is 1.5.6's refusal (x-conflict).
      */
     public static bool $conflictChoice = true;
 
     /**
      * A new account for a case, with the run's google_series_undo and google_conflict_choice settings. The database
-     * suite's freshUser leaves google_conflict_choice as it ships (off) unless BC_TEST_CONFLICT_CHOICE=1, so it is set
-     * here either way.
+     * suite's freshUser leaves google_conflict_choice as it ships (on, nothing stored), so it is stored here only to
+     * follow `--conflict-choice`; on stores true, which reads the same as the default.
      */
     public static function account(Db $db): int
     {

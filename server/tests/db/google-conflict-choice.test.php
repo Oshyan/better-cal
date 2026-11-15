@@ -370,7 +370,7 @@ return static function (Db $db): void {
         H::done($t);
     });
 
-    // Case 9: the setting off, as shipped: exactly 1.5.6.
+    // Case 9: the setting off (an operator's switch; on as shipped): exactly 1.5.6.
     scenario('setting off: the 1.5.6 refusal for each of the above', function () use ($fresh, $invite, $send, $overOf, $allKeys, $atGoogle, $googleTime, $mark, $sent, $methods, $row): void {
         $refused = [409, 'google_conflict', GoogleWriter::CONFLICT_MESSAGE, ['GET']];
         $cases = [

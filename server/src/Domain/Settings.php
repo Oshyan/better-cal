@@ -115,12 +115,16 @@ final class Settings
         return is_array($settings) && ($settings['google_series_undo'] ?? false) === true;
     }
 
-    /** Whether a change to one Google event asks over a change made at Google since it was shown (DEFAULTS google_conflict_choice). */
+    /**
+     * Whether a change to one Google event asks over a change made at Google since it was shown (DEFAULTS
+     * google_conflict_choice): the stored value when there is one, else the default, so an account whose settings
+     * lack the key reads on and only an explicit false reads off.
+     */
     public static function googleConflictChoice(Db $db, int $userId): bool
     {
         $raw = $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
         $settings = is_string($raw) ? json_decode($raw, true) : null;
-        return is_array($settings) && ($settings['google_conflict_choice'] ?? false) === true;
+        return self::withDefaults(is_array($settings) ? $settings : [])['google_conflict_choice'] === true;
     }
 
     /** Store the default calendar (setup, a calendar made or deleted, migration 058). */
@@ -273,10 +277,11 @@ final class Settings
         'google_series_undo' => false,
         // A change to one Google event read against what Google holds first,
         // asking only where the same field changed there (GoogleConflict;
-        // docs/design/google-conflict-choice.md). An operator or test switch,
-        // never client-writable and not in the Settings page: off as 1.5.7
-        // ships, on in the test suites (tests/db/lib.php freshUser).
-        'google_conflict_choice' => false,
+        // docs/design/google-conflict-choice.md). On as 1.5.7 ships (the
+        // owner's choice); an operator switch, never client-writable and not
+        // in the Settings page, so an account can be turned off by storing
+        // false. To be removed in a later release.
+        'google_conflict_choice' => true,
     ];
     public const WELCOME_STEPS = ['subscribe', 'import', 'google', 'install', 'reminders', 'plugins'];
     // Every view the app has (web/src/app/actions.js VIEWS). It listed a

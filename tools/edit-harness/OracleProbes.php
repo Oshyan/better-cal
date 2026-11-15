@@ -422,6 +422,34 @@ final class OracleProbes
                     $out['extra']['fields'] = [];
                     return [$out, $s0, $s1];
                 }],
+            // x-choice, a time set in part (the review of 2026-11-14, finding 3): the request is read against what the person
+            // was shown, never against the row a poll refreshed (google-conflict-choice.md, (b) and (c)). Each probe is on a
+            // case the product answers right before and after that fix, so it shows the check, not the product.
+            ['check' => 'x-choice', 'what' => "a drag of an all-day event shown all-day, made timed at Google and polled, is asked about with its dates read as times against the row (yours midnight to midnight, timed)", 'case' => 'an-all-day-event-in-no-series-made-timed-at-google-polled-then-dragged-as-shown-asks-then-overwrite-lands', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $sent = (array) ($this->lastSingle['body'] ?? []);
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        if (($f['field'] ?? '') === 'time') {
+                            $out['extra']['fields'][$i]['yours'] = ['start' => substr((string) $sent['start'], 0, 10) . 'T00:00:00+00:00', 'end' => substr((string) $sent['end'], 0, 10) . 'T00:00:00+00:00', 'allDay' => false];
+                        }
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "a start sent alone is asked about with an end that is neither the shown end nor the shown length from the new start", 'case' => 'an-event-in-no-series-whose-start-moved-at-google-polled-then-its-start-alone-moved-here-asks', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        if (($f['field'] ?? '') === 'time' && is_array($f['yours'] ?? null)) {
+                            $end = (new \DateTimeImmutable((string) $f['yours']['end']))->modify('+1 hour');
+                            $out['extra']['fields'][$i]['yours']['end'] = $end->format('Y-m-d\TH:i:sP');
+                        }
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'Overwrite lands a time other than the yours the question showed (the event left timed here)', 'case' => 'an-all-day-event-in-no-series-made-timed-at-google-polled-then-dragged-as-shown-asks-then-overwrite-lands', 'step' => 5,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $s1['rows'][$this->singles[(string) $this->single]]['all_day'] = 0;
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
         ];
     }
 

@@ -1,0 +1,57 @@
+{
+    "about": "An event in no series whose start Google moved an hour earlier, polled while the person still saw 15:00 to 16:00, then given a start half an hour earlier alone here, as an API caller may send it: the request is read against what was shown, so the question's yours ends at the shown end or after the shown length, never at an end read from the row; Overwrite lands it (x-choice, google-conflict-choice.md (b) and (c)).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-create",
+            "pick": 0.2,
+            "single": true
+        },
+        {
+            "do": "r-single",
+            "pick": 0.0,
+            "fields": [
+                "time"
+            ],
+            "same": [],
+            "time": {
+                "how": "start",
+                "days": 1
+            }
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.0
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "edit",
+            "fields": [
+                "time"
+            ],
+            "shown": "earlier",
+            "time": {
+                "form": "start",
+                "days": 0,
+                "secs": 1800
+            }
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "overwrite"
+        }
+    ]
+}

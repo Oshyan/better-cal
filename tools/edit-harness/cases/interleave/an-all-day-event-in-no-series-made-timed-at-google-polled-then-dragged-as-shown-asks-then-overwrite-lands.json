@@ -1,0 +1,58 @@
+{
+    "about": "An all-day event in no series made timed at Google and polled while the person still saw it all-day, then dragged two days here as the app drags an all-day bar (start and end as dates, no allDay): the request is read against what was shown, so the question's yours is all-day two days later, never the dates read as times against the polled row; Overwrite lands exactly that yours (x-choice, google-conflict-choice.md (b) and (c)).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-create",
+            "pick": 0.2,
+            "single": true,
+            "allDay": 1
+        },
+        {
+            "do": "r-single",
+            "pick": 0.0,
+            "fields": [
+                "time"
+            ],
+            "same": [],
+            "time": {
+                "how": "kind",
+                "days": 1
+            }
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.0
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "edit",
+            "fields": [
+                "time"
+            ],
+            "shown": "earlier",
+            "time": {
+                "form": "drag",
+                "days": 2,
+                "secs": 0
+            }
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "overwrite"
+        }
+    ]
+}

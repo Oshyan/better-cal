@@ -1,0 +1,53 @@
+{
+    "about": "A timed event in no series at 19:00 to 20:00 in New York, its notes changed at Google, then moved an hour here and made a moment (its end at its start), sent whole over the shown time whole: a timed end at its start is a valid event state (T4 as the design page reads it), so nothing is refused; the change goes through, a moment here and at Google, and Google's notes are kept (x-choice).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-create",
+            "pick": 0.35,
+            "single": true,
+            "zone": "America/New_York",
+            "clock": "19:00"
+        },
+        {
+            "do": "r-single",
+            "pick": 0.0,
+            "fields": [
+                "description"
+            ],
+            "same": []
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "edit",
+            "fields": [
+                "time"
+            ],
+            "shown": "earlier",
+            "time": {
+                "form": "moment",
+                "days": 0,
+                "secs": 3600,
+                "zone": "UTC",
+                "tz": "utc"
+            }
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "overwrite"
+        }
+    ]
+}

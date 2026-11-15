@@ -484,6 +484,20 @@ final class OracleProbes
                     }
                     return [$out, $s0, $s1];
                 }],
+            ['check' => 'x-choice', 'what' => "the question's all-day yours names a zone other than UTC", 'case' => 'an-all-day-event-in-no-series-made-timed-in-new-york-at-google-polled-then-its-end-moved-here-whole-asks-then-overwrite-lands', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        if (($f['field'] ?? '') === 'time' && is_array($f['yours'] ?? null)) {
+                            $out['extra']['fields'][$i]['yours']['tzid'] = 'America/New_York';
+                        }
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            // T4 as the design page reads it: a timed end at its start is a valid moment, never refused.
+            ['check' => 'x-choice', 'what' => 'a drag of a timed moment (its end its start), sent whole, is refused as client_outdated', 'case' => 'a-timed-moment-in-no-series-dragged-here-whole-goes-through', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'client_outdated', 'status' => 400, 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s0];
+                }],
             ['check' => 'x-choice', 'what' => 'Overwrite lands the yours instants in another zone here', 'case' => 'an-event-in-no-series-whose-start-moved-at-google-polled-then-its-start-moved-here-whole-asks', 'step' => 5,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     $s1['rows'][$this->singles[(string) $this->single]]['tzid'] = 'Pacific/Honolulu';

@@ -3700,9 +3700,9 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-boot-side { display: none; }
 }
 
-/* Toasts on a narrow screen: the message keeps a readable width and the
-   choices wrap beneath it, instead of the message being crushed into a
-   one-word column beside buttons that refuse to wrap. */
+/* Toasts on a narrow screen take the screen's width, less a margin. Whether
+   the choices sit beside the message or under it is one rule at every width
+   (.bc-toast-acts; Toasts.js fitToast). */
 @media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-toasts { left: 12px; right: 12px; transform: none; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
   .bc-toast { max-width: 100%; }
@@ -4666,6 +4666,15 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-toast-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* What else changed in Google Calendar and stayed (googlechange.js keptLine): a line of its own. */
 .bc-toast-kept { display: block; opacity: 0.8; font-size: 13px; }
+/* The choices (Undo, a note, actions, close): on the message's line, each its
+   own column, unless the message beside them would be narrower than a
+   readable measure (Toasts.js fitToast, the one rule for every toast); then
+   they take a row of their own under it, and wrap among themselves if they
+   must. Measuring reads the message unwrapped. */
+.bc-toast-acts { display: contents; }
+.bc-toast.is-stacked { grid-auto-flow: row; row-gap: 4px; }
+.bc-toast.is-stacked .bc-toast-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; }
+.bc-toast.is-measuring .bc-toast-text, .bc-toast.is-measuring .bc-toast-text * { white-space: nowrap; }
 .bc-toast-life {
   position: absolute; left: 0; bottom: 0; height: 4px; width: 100%;
   background: color-mix(in srgb, var(--accent) 75%, var(--bg)); transform-origin: left center;

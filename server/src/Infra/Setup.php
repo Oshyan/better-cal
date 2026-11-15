@@ -219,9 +219,12 @@ final class Setup
 
     /**
      * The owner's account, with a first calendar, as bin/seed.php makes it.
-     * A new account opens on the first-run welcome.
+     * A new account opens on the first-run welcome. $passwordHash: the hash
+     * of $password, made by the caller with password_hash($password,
+     * PASSWORD_DEFAULT), when it has one already (the test suites make many
+     * accounts with one password and hash it once); null hashes it here.
      */
-    public static function createOwner(Db $db, string $email, string $password, string $name = ''): int
+    public static function createOwner(Db $db, string $email, string $password, string $name = '', ?string $passwordHash = null): int
     {
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             throw new \InvalidArgumentException('That email address is not valid.');
@@ -231,7 +234,7 @@ final class Setup
         }
         $userId = $db->insert('users', [
             'email' => $email,
-            'password_hash' => password_hash($password, PASSWORD_DEFAULT),
+            'password_hash' => $passwordHash ?? password_hash($password, PASSWORD_DEFAULT),
             'display_name' => $name !== '' ? $name : explode('@', $email)[0],
             'settings_json' => json_encode(['welcomeDone' => false]),
         ]);

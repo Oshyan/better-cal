@@ -197,7 +197,10 @@ try {
     $modeArgs = static fn(array $m): array => !empty($m['interleave']) ? ['--interleave'] : [];
     $cases = array_values(array_unique(array_merge(...array_map(static fn(array $m): array => empty($m['interleave']) ?($m['cases'] ?? []) : [], $selected ?: [['cases' => []]]))));
     $icases = array_values(array_unique(array_merge(...array_map(static fn(array $m): array => !empty($m['interleave']) ? ($m['cases'] ?? []) : [], $selected ?: [['cases' => []]]))));
-    $tests = array_values(array_unique(array_filter(array_map(static fn(array $m): ?string => $m['dbtest'] ?? null, $selected))));
+    // A database-test mutation names one file or several (`dbtest`: a name or a list of names, a table split into files the
+    // suite runs side by side); its files are judged as one run.
+    $testsOf = static fn(array $m): array => isset($m['dbtest']) ? array_values((array) $m['dbtest']) : [];
+    $tests = array_values(array_unique(array_merge(...array_map($testsOf, $selected ?: [[]]))));
 
     // Every run, keyed; each writes only its own file in $tmp, named by its key, and makes its own database.
     $jobs = [];
@@ -219,10 +222,14 @@ try {
             $verdicts[$m['id']] = [false, "FAIL  {$m['id']}: the patch does not apply: " . $e->getMessage()];
             continue;
         }
-        $out = "$tmp/mutated-{$m['id']}.json";
-        $jobs["m:{$m['id']}"] = isset($m['dbtest'])
-            ? $dbtestJob($m['dbtest'], $copy, $out)
-            : $harnessJob($copy, array_merge($modeArgs($m), ['--cases', '0', '--fixed=' . implode(',', $m['cases'])]), $out);
+        if (isset($m['dbtest'])) {
+            // One run per file it names, each with the patched copy, its own report and its own database.
+            foreach ($testsOf($m) as $test) {
+                $jobs["m:{$m['id']}:$test"] = $dbtestJob($test, $copy, "$tmp/mutated-{$m['id']}-$test.json");
+            }
+        } else {
+            $jobs["m:{$m['id']}"] = $harnessJob($copy, array_merge($modeArgs($m), ['--cases', '0', '--fixed=' . implode(',', $m['cases'])]), "$tmp/mutated-{$m['id']}.json");
+        }
         $judgeLater[] = $m['id'];
     }
     // Database-test runs first, the rest in list order after them.
@@ -278,28 +285,42 @@ try {
     $byId = array_column($selected, null, 'id');
     foreach ($judgeLater as $id) {
         $m = $byId[$id];
+        if (isset($m['dbtest'])) {
+            // Judged as the harness branch is: by the assertions it adds to the unmutated run, by label, over every file it
+            // names as one run. It must fail every named one and no other; a throw (caught by scenario() or by run.php), a
+            // crash, or any of its files not running to the end fails the mutation run whatever it adds. With no
+            // clean-running baseline for each of its files it is not judged, and fails.
+            $files = $testsOf($m);
+            $names = implode(', ', array_map(static fn(string $t): string => "$t.test.php", $files));
+            $unjudged = array_values(array_filter(array_map(static fn(string $t): ?string => $dbBase[$t]['broke'] === null ? null : "$t.test.php: {$dbBase[$t]['broke']}", $files)));
+            if ($unjudged !== []) {
+                $verdicts[$id] = [false, "FAIL  $id: {$m['what']}: not judged, did not run unmutated: " . implode('; ', $unjudged)];
+                continue;
+            }
+            $failing = [];
+            $baseFailing = [];
+            $broken = [];
+            foreach ($files as $test) {
+                $key = "m:$id:$test";
+                $r = isset($results[$key]) ? $readDbtest($jobs[$key], $results[$key]) : ['failing' => [], 'broke' => 'its run has no result'];
+                $failing = array_merge($failing, $r['failing']);
+                $baseFailing = array_merge($baseFailing, $dbBase[$test]['failing']);
+                if ($r['broke'] !== null) {
+                    $broken[] = "$test.test.php: {$r['broke']}";
+                }
+            }
+            $added = array_values(array_diff(array_unique($failing), $baseFailing));
+            $missing = array_values(array_diff($m['checks'], $added));
+            $others = array_values(array_diff($added, $m['checks']));
+            $ok = $missing === [] && $others === [] && $broken === [];
+            $verdicts[$id] = [$ok, ($ok ? 'ok  ' : 'FAIL') . "  $id: {$m['what']}: $names " . (count($files) > 1 ? 'fail ' : 'fails ') . (count($m['checks']) - count($missing)) . ' of ' . (count($files) > 1 ? 'their ' : 'its ') . count($m['checks']) . ' named assertions'
+                . ($missing === [] ? '' : '; did not fail ' . json_encode($missing)) . ($others === [] ? '' : '; other assertions failed ' . json_encode($others))
+                . ($broken === [] ? '' : '; the run broke: ' . implode('; ', $broken))];
+            continue;
+        }
         $key = "m:$id";
         if (!isset($results[$key])) {
             $verdicts[$id] = [false, "FAIL  $id: its run has no result"];
-            continue;
-        }
-        if (isset($m['dbtest'])) {
-            // Judged as the harness branch is: by the assertions it adds to the unmutated run, by label. It must fail every
-            // named one and no other; a throw (caught by scenario() or by run.php), a crash, or the file not running to the end
-            // fails the mutation run whatever it adds. With no clean-running baseline it is not judged, and fails.
-            if ($dbBase[$m['dbtest']]['broke'] !== null) {
-                $verdicts[$id] = [false, "FAIL  $id: {$m['what']}: not judged, {$m['dbtest']}.test.php did not run unmutated: {$dbBase[$m['dbtest']]['broke']}"];
-                continue;
-            }
-            $r = $readDbtest($jobs[$key], $results[$key]);
-            $added = array_values(array_diff($r['failing'], $dbBase[$m['dbtest']]['failing']));
-            $missing = array_values(array_diff($m['checks'], $added));
-            $others = array_values(array_diff($added, $m['checks']));
-            $broke = $r['broke'];
-            $ok = $missing === [] && $others === [] && $broke === null;
-            $verdicts[$id] = [$ok, ($ok ? 'ok  ' : 'FAIL') . "  $id: {$m['what']}: {$m['dbtest']}.test.php fails " . (count($m['checks']) - count($missing)) . ' of its ' . count($m['checks']) . ' named assertions'
-                . ($missing === [] ? '' : '; did not fail ' . json_encode($missing)) . ($others === [] ? '' : '; other assertions failed ' . json_encode($others))
-                . ($broke === null ? '' : "; the run broke: $broke")];
             continue;
         }
         $mode = !empty($m['interleave']) ? 'interleave' : 'harness';

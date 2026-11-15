@@ -16,6 +16,11 @@ declare(strict_types=1);
 // east of UTC, in UTC, or all-day; polled before the request or not. Every expectation is worked out here from the
 // shown time, Google's time and the request by the page's reading; nothing in server/src is called to compute one.
 // Invented data throughout.
+//
+// This file holds the whole table once; the database suite runs it as four files, google-conflict-base-<slice>.test.php,
+// one for each of Google's copies (GOOGLE_CONFLICT_BASE_SLICES), so the runner gives each its own process and database
+// and they run side by side. A row or a cell is added here, never in a slice file. Each slice checks that the slices
+// cover Google's four copies exactly once and that every slice has its file, so a slice cannot be left out unnoticed.
 
 use BetterCal\Domain\Auth;
 use BetterCal\Domain\RequestAuthority;
@@ -31,7 +36,21 @@ use BetterCal\Support\Time;
 
 require_once __DIR__ . '/google-hunt-lib.php';
 
-return static function (Db $db): void {
+/**
+ * The slices of the table, each a file of its own: Google's copies it runs, and whether it also runs the scenarios that
+ * are not cells of the table (the question's keys, the window, a floating drag, the setting off).
+ */
+const GOOGLE_CONFLICT_BASE_SLICES = [
+    'west' => [['Google timed west of UTC'], true],
+    'east' => [['Google timed east of UTC'], false],
+    'utc' => [['Google timed in UTC'], false],
+    'all-day' => [['Google all-day'], false],
+];
+
+/** One slice of the table (GOOGLE_CONFLICT_BASE_SLICES), run by google-conflict-base-$slice.test.php. */
+function googleConflictBase(Db $db, string $slice): void
+{
+    [$only, $rest] = GOOGLE_CONFLICT_BASE_SLICES[$slice];
     // The words of the refusal, from the page's (b) and the API contract.
     $outdated = 'Better-Cal was updated. Reload the page and make the change again.';
 
@@ -110,6 +129,19 @@ return static function (Db $db): void {
         'Google all-day' => [['start' => ['date' => '2027-03-07', 'dateTime' => null, 'timeZone' => null], 'end' => ['date' => '2027-03-08', 'dateTime' => null, 'timeZone' => null]],
             [$day('2027-03-07'), $day('2027-03-08'), true]],
     ];
+    // The slices cover Google's copies exactly once, the rest of the scenarios once, and each has its file; else the slice
+    // stops before its first scenario, and the runner fails it as not run to the end (the table's checks stay the same
+    // set whatever the slicing, so this is a stop and not a check of its own).
+    $covered = array_merge(...array_column(GOOGLE_CONFLICT_BASE_SLICES, 0));
+    $sorted = static function (array $a): array {
+        sort($a);
+        return $a;
+    };
+    $missing = array_values(array_filter(array_keys(GOOGLE_CONFLICT_BASE_SLICES), static fn(string $k): bool => !is_file(__DIR__ . "/google-conflict-base-$k.test.php")));
+    if ($sorted($covered) !== $sorted(array_keys($googles)) || count(array_filter(array_column(GOOGLE_CONFLICT_BASE_SLICES, 1))) !== 1 || $missing !== []) {
+        throw new \RuntimeException('the slices of google-conflict-base do not cover each of Google\'s copies once and the other scenarios once, each slice in its file: '
+            . json_encode(['covered' => $covered, 'missing files' => $missing]));
+    }
     $atGoogle = static function (object $t, array $body): void {
         [$status] = H::atGoogle($t, 'PATCH', '/events/' . rawurlencode($t->gid), $body);
         if ($status !== 200) {
@@ -240,7 +272,7 @@ return static function (Db $db): void {
     };
 
     foreach ($shownKinds as $kind => $shownAllDay) {
-        foreach ($googles as $gName => [$change, $theirs]) {
+        foreach (array_intersect_key($googles, array_flip($only)) as $gName => [$change, $theirs]) {
             foreach ($orders as $order => $polled) {
                 $cell = "$kind, $gName, $order";
 
@@ -421,6 +453,11 @@ return static function (Db $db): void {
         }
     }
 
+    // The scenarios that are not cells of the table run in one slice.
+    if (!$rest) {
+        return;
+    }
+
     // The question's time values are the whole time, the zone with it, so Overwrite can send `over` and the body whole
     // from them: was, now and yours each name all four keys, in the served form.
     scenario('the question names the time whole: was, now and yours each carry start, end, allDay and tzid', function () use ($setUp, $googles, $send, $timeKeys): void {
@@ -483,4 +520,4 @@ return static function (Db $db): void {
         checkEq('200; the row 17:30 to 19:00', [200, [(int) strtotime('2027-03-03T17:30:00Z'), (int) strtotime('2027-03-03T19:00:00Z'), false]], [$status, $rowHolds($t)]);
         H::done($t);
     });
-};
+}

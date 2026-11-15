@@ -341,10 +341,17 @@ function refusal(callable $fn): ?string
     }
 }
 
-/** A new account (Setup, as an install makes one): its first calendar and default. */
+/**
+ * A new account (Setup, as an install makes one): its first calendar and default. Every account has the same password,
+ * hashed once per process with the product's own algorithm and options and handed to createOwner: a real hash at the
+ * real cost, made once instead of for each of the suite's accounts (one hash cost 0.22 s, about three quarters of a
+ * file that makes an account per scenario).
+ */
 function freshUser(Db $db): int
 {
-    $u = Setup::createOwner($db, 'owner-' . bin2hex(random_bytes(4)) . '@example.test', 'correct horse battery');
+    static $hash = null;
+    $hash ??= password_hash('correct horse battery', PASSWORD_DEFAULT);
+    $u = Setup::createOwner($db, 'owner-' . bin2hex(random_bytes(4)) . '@example.test', 'correct horse battery', '', $hash);
     // Undo of a whole-series change on a Google calendar is off as shipped
     // (Settings google_series_undo, off by default until #274 rebuilds it),
     // so a new account has it off with nothing stored, as an install does.

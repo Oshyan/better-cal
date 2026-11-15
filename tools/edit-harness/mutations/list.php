@@ -1101,10 +1101,13 @@ return [
         'patch' => [["return [\$f['start_utc'], \$f['end_utc'], \$f['all_day']];", "return [\$f['end_utc']];"]],
         'checks' => ['409 google_changed about the time: was the served time, now Google\'s, yours the resized time; nothing written; the row holds Google\'s time'],
     ],
-    // A time is one value (the page's (b), T1 to T4). The labels of google-conflict-base.test.php's refusals for the rows
-    // given, in every cell of its table: a time in parts is client_outdated in the page's words, a whole time that does not
-    // end after its start invalid_request in POST /events's.
+    // A time is one value (the page's (b), T1 to T4). The labels of google-conflict-base's refusals (one table, four
+    // files) for the rows given, in every cell of its table: a time in parts is client_outdated in the page's words, a
+    // whole time that does not end after its start invalid_request in POST /events's.
     ...(static function (): array {
+        // The table is one file run as four (server/tests/db/google-conflict-base.php, GOOGLE_CONFLICT_BASE_SLICES): a
+        // mutation of it names every slice, and the runner judges them as one run.
+        $conflictBaseSlices = array_map(static fn(string $f): string => basename($f, '.test.php'), glob(dirname(__DIR__, 3) . '/server/tests/db/google-conflict-base-*.test.php') ?: []);
         $refusals = static function (array $rows, string $as = "client_outdated, the page's words"): array {
             $refused = ": 400 $as; nothing read from Google or sent; the row, Google and Activity as they were";
             $out = [];
@@ -1140,7 +1143,7 @@ return [
             // the base's zone: an `over` with no zone is read over the polled row's zone again, so the question's `was`
             // names the row's zone, and Maybe over that same event keeps nothing (the R1 base, its dates moved a day).
             [
-                'id' => 'choice-time-in-parts', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-base',
+                'id' => 'choice-time-in-parts', 'file' => 'server/src/Domain/Events.php', 'dbtest' => $conflictBaseSlices,
                 'what' => 'a time in parts (in the body or in `over`) is not refused but read over the base, filling its missing parts',
                 'patch' => [["if (array_intersect_key(\$in, array_flip([...self::TIME_KEYS, 'typed'])) === []) {", "if (true) {"]],
                 'checks' => array_merge($refusals($parts), [
@@ -1151,7 +1154,7 @@ return [
             // The one check of the resolved time removed: a moment reached by the body, by `over`, by a typed start with
             // no typed end (the third outside read's R2) or by a delete over a moment goes to Google.
             [
-                'id' => 'choice-resolved-time-unchecked', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-base',
+                'id' => 'choice-resolved-time-unchecked', 'file' => 'server/src/Domain/Events.php', 'dbtest' => $conflictBaseSlices,
                 'what' => 'the resolved time is not checked, so a time whose end is not after its start, by any reading, is read from and sent to Google',
                 'patch' => [["            self::resolvedTime(\$baseRow);\n            self::resolvedTime(\$wantedRow);\n", ""]],
                 'checks' => $refusals($resolved, 'invalid_request, the words of POST /events'),

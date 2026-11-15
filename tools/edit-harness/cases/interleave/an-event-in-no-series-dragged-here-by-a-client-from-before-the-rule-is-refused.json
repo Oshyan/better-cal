@@ -1,5 +1,5 @@
 {
-    "about": "An event in no series whose start Google moved an hour earlier, polled while the person still saw 15:00 to 16:00, then given a start half an hour earlier alone here, as an API caller may send it: the request is read against what was shown, so the question's yours ends at the shown end or after the shown length, never at an end read from the row; Overwrite lands it (x-choice, google-conflict-choice.md (b) and (c)).",
+    "about": "An event in no series at 19:00 to 20:00 in Los Angeles, renamed at Google, then dragged an hour here by a client from before the rule: start and end alone in the body (no allDay, no zone), over the shown time whole. The time is not whole on a request carrying over, so it is refused: 400 client_outdated, nothing read from Google, nothing written here or there (x-choice; T2).",
     "series": {
         "family": "weekly_bare",
         "rrule": "FREQ=WEEKLY",
@@ -15,24 +15,18 @@
     "steps": [
         {
             "do": "w-create",
-            "pick": 0.2,
-            "single": true
+            "pick": 0.25,
+            "single": true,
+            "zone": "America/Los_Angeles",
+            "clock": "19:00"
         },
         {
             "do": "r-single",
             "pick": 0.0,
             "fields": [
-                "time"
+                "title"
             ],
-            "same": [],
-            "time": {
-                "how": "start",
-                "days": 1
-            }
-        },
-        {
-            "do": "p-delta",
-            "pick": 0.0
+            "same": []
         },
         {
             "do": "w-single",
@@ -43,10 +37,13 @@
             ],
             "shown": "earlier",
             "time": {
-                "form": "start",
+                "form": "drag",
                 "days": 0,
-                "secs": 1800
-            }
+                "secs": 3600,
+                "zone": "UTC",
+                "tz": "utc"
+            },
+            "outdated": "pair"
         },
         {
             "do": "w-single",

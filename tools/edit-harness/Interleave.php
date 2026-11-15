@@ -209,23 +209,31 @@ final class Interleave
             $remote[0] = 'time';
             $remote = array_values(array_unique($remote));
         }
-        // How the time is set here, as the app sends it or an API caller may (google-conflict-choice.md, (c): "a request
-        // that set only part of the time"): a drag (start and end, no allDay), the app's resize (the start sent back as
-        // shown, a new end), an end alone, a start alone, the editor's all-day switch (start, end and allDay together).
-        $mineTime = in_array('time', $mine, true) ? ['form' => $r->weighted(['drag' => 4, 'resize' => 2, 'end' => 2, 'start' => 2, 'toggle' => 2]),
-            'days' => $r->pick([0, 0, 1, 2, -1]), 'secs' => $r->pick([3600, 0, 1800])] : null;
-        // A start alone leaves the end to the contract, which states no reading between the shown end and the shown length
-        // (x-choice accepts either): Google set to one of them is not drawn as "the same value".
-        $same = array_values(array_filter(array_intersect($remote, $mine), static fn(string $f): bool => $r->chance(0.35) && !($f === 'time' && $mineTime['form'] === 'start')));
-        // How the time changes at Google: shifted whole, its start alone, its end alone, or its kind (timed made all-day over
-        // one to three days, all-day made timed).
-        $remoteTime = in_array('time', $remote, true) && !in_array('time', $same, true) ? ['how' => $r->weighted(['shift' => 3, 'start' => 2, 'end' => 2, 'kind' => 4]), 'days' => $r->int(1, 3)] : null;
+        // How the time is set here, as a client carrying `over` sends it: whole (T2), in the forms of timeRequest (a drag, a
+        // resize, a start moved, the editor's all-day switch, the editor's zone picker), `zone` the other zone a form names.
+        $mineTime = in_array('time', $mine, true) ? ['form' => $r->weighted(['drag' => 4, 'resize' => 2, 'start' => 2, 'toggle' => 2, 'zone' => 2]),
+            'days' => $r->pick([0, 0, 1, 2, -1]), 'secs' => $r->pick([3600, 0, 1800]), 'zone' => $r->pick(self::SINGLE_ZONES), 'tz' => $r->pick(['utc', 'shown'])] : null;
+        $same = array_values(array_filter(array_intersect($remote, $mine), static fn(string $f): bool => $r->chance(0.35)));
+        // How the time changes at Google: shifted whole, its start alone, its end alone, its kind (timed made all-day over
+        // one to three days from the date it shows in its zone, all-day made timed at 18:00 to 19:00 in `zone`), or its zone
+        // alone (the instants kept; an all-day event's kind changed instead).
+        $remoteTime = in_array('time', $remote, true) && !in_array('time', $same, true)
+            ? ['how' => $r->weighted(['shift' => 3, 'start' => 2, 'end' => 2, 'kind' => 4, 'zone' => 1]), 'days' => $r->int(1, 3), 'zone' => $r->pick(self::SINGLE_ZONES)] : null;
         // A poll between the change at Google and the change here, more often when Google changed the time's kind; after it
         // the request carries the record shown before it (a stale client, the page's case 5) or the one served after it.
         $poll = $remote !== [] && $r->chance(($remoteTime['how'] ?? '') === 'kind' ? 0.6 : 0.3);
-        $created = ['do' => 'w-create', 'pick' => $r->int(0, 999) / 1000, 'single' => true];
+        // The event made: timed for an hour at a wall clock in a zone (the clocks put its UTC date on either side of its
+        // own in the zones away from UTC), or all-day over one to three days, sent with the zone too (which the server
+        // ignores for an all-day event).
+        $created = ['do' => 'w-create', 'pick' => $r->int(0, 999) / 1000, 'single' => true, 'zone' => $r->pick(self::SINGLE_ZONES), 'clock' => $r->pick(['07:00', '15:00', '19:00', '23:30'])];
         if ($r->chance(0.3)) {
             $created['allDay'] = $r->int(1, 3); // an all-day event of one to three days
+        }
+        // A small share of the blocks send what a client from before the rule sends with `over` (T2, T4): the time not
+        // whole in the body or in `over`, or `over`'s time no real state; the refusal is the expectation (outdated).
+        $outdated = null;
+        if (in_array($how, ['edit', 'delete'], true) && $r->chance(0.12)) {
+            $outdated = $r->pick($mineTime !== null ? ['pair', 'start', 'end', 'noTz', 'overNoTz', 'overPair', 'overInvalid'] : ($how === 'delete' ? ['overNoTz', 'overPair', 'overInvalid'] : ['overNoTz', 'overPair']));
         }
         $block = [$created];
         if ($remote !== []) {
@@ -235,15 +243,18 @@ final class Interleave
             $block[] = ['do' => 'p-delta', 'pick' => 0.0];
         }
         $shown = $poll && $r->chance(0.3) ? 'now' : 'earlier';
-        $block[] = ['do' => 'w-single', 'pick' => 0.0, 'how' => $how, 'fields' => $mine, 'tags' => $how === 'edit' && $r->chance(0.3), 'shown' => $shown] + ($mineTime === null ? [] : ['time' => $mineTime]);
+        $block[] = ['do' => 'w-single', 'pick' => 0.0, 'how' => $how, 'fields' => $mine, 'tags' => $how === 'edit' && $r->chance(0.3), 'shown' => $shown]
+            + ($mineTime === null ? [] : ['time' => $mineTime]) + ($outdated === null ? [] : ['outdated' => $outdated]);
         $block[] = ['do' => 'w-single', 'pick' => 0.0, 'how' => 'overwrite'];
         $steps = $case['steps'];
         $keep = max(1, count($steps) - count($block));
         $steps = array_slice($steps, 0, $keep);
         array_splice($steps, $r->int(1, count($steps)), 0, $block);
         $case['steps'] = $steps;
-        $case['single'] = (isset($created['allDay']) ? 'all-day ' : 'timed ') . $how . ($mineTime === null ? '' : " (time: {$mineTime['form']})")
-            . ($remote === [] ? ', nothing at Google' : ' over ' . implode('+', $remote) . ($remoteTime === null ? '' : " (time: {$remoteTime['how']})"))
+        $case['single'] = (isset($created['allDay']) ? 'all-day ' : "timed {$created['clock']} {$created['zone']} ") . $how
+            . ($mineTime === null ? '' : " (time: {$mineTime['form']}" . (in_array($mineTime['form'], ['toggle', 'zone'], true) ? " {$mineTime['zone']}" : '') . ')')
+            . ($outdated === null ? '' : ", outdated ($outdated)")
+            . ($remote === [] ? ', nothing at Google' : ' over ' . implode('+', $remote) . ($remoteTime === null ? '' : " (time: {$remoteTime['how']}" . (in_array($remoteTime['how'], ['kind', 'zone'], true) ? " {$remoteTime['zone']}" : '') . ')'))
             . ($poll ? ', polled between, ' . ($shown === 'now' ? 'shown after the poll' : 'shown before the poll (stale)') : '');
         return $case;
     }
@@ -593,81 +604,146 @@ final class Interleave
         return match ($field) {
             'title' => self::titleOf(is_string($v) ? $v : null),
             'status' => $v === 'tentative',
-            'time' => is_array($v) ? [self::instantOf((string) ($v['start'] ?? '')), self::instantOf((string) ($v['end'] ?? '')), (bool) ($v['allDay'] ?? false)] : null,
+            'time' => is_array($v) ? self::timeOf($v) : null,
             default => trim(is_string($v) ? $v : ''),
         };
     }
 
+    // ---- a time as one value (the rule of 2026-11-14, T1 to T5) ----------------------------------------------------
+    // T1: a time is one value, start, end, all-day and zone together; on the wire, the four keys `start`, `end`, `allDay`
+    // and `tzid`, in a request body and in `over` alike. The clock-time flag (`floating`) is a field of its own, not part
+    // of that value: the four keys are the whole time, and the harness makes no floating event in the single block.
+
+    /** The four keys of a whole time (T1). */
+    private const TIME_KEYS = ['start', 'end', 'allDay', 'tzid'];
+
+    /** The zones the single block draws: UTC, two several hours west of it, two east, one of those half an hour off the hour. */
+    private const SINGLE_ZONES = ['UTC', 'America/New_York', 'America/Los_Angeles', 'Asia/Tokyo', 'Asia/Kolkata'];
+
+    /** Whether a time sent (a request's keys or an `over`'s) is whole: all four keys, none null (T2). */
+    private static function isWhole(array $t): bool
+    {
+        foreach (self::TIME_KEYS as $k) {
+            if (!isset($t[$k])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /**
-     * A change of the time of an event in no series as a client sends it, from the record the person was shown: the
-     * request's time keys only (`over` is the caller's). The app's drag sends start and end and no allDay
-     * (web/src/app/actions.js, moveEvent), its resize the start back as shown and a new end (resizeEvent, monthmath.js
-     * resizedDates), the editor the time row whole with allDay (EditorDrawer.js, changedFields); an API caller may send
-     * an end alone or a start alone. An all-day event's ends are sent as dates, as the app's bars send them
-     * (api-contract.md, Time Zones and All-Day Events: "send "YYYY-MM-DD", end exclusive"). `$t`: form (drag, resize,
-     * end, start, toggle), days and secs (a drag's move; a timed resize or end or start moves by secs, or half an hour).
-     * A start alone moves earlier, so the start stays before the end whichever reading of the end applies.
+     * A time's comparable value [start, end, all-day] (google-conflict-choice.md, the field table (a): "all three equal;
+     * the zone is not compared", and the comparison table: "the same start and end instants and the same all-day
+     * setting"). An all-day time is its dates, each read as the date it names whatever offset or zone comes with it
+     * (api-contract.md, Time Zones and All-Day Events: all-day events "are dates, stored as UTC midnights with `tzid`
+     * `UTC` whatever a write sends"); a timed one its instants. So a zone changed alone, the instants kept, is no change
+     * of the time.
+     *
+     * @return array{0:int,1:int,2:bool}
+     */
+    private static function timeOf(array $t): array
+    {
+        $allDay = (bool) ($t['allDay'] ?? false);
+        $read = static fn(string $v): int => $allDay ? self::instantOf(substr($v, 0, 10)) : self::instantOf($v);
+        return [$read((string) ($t['start'] ?? '')), $read((string) ($t['end'] ?? '')), $allDay];
+    }
+
+    /** An instant written in a zone's own offset, as the API and Google serve a timed value. */
+    private static function inZone(int $at, string $zone): string
+    {
+        return (new \DateTimeImmutable('@' . $at))->setTimezone(new \DateTimeZone($zone))->format('Y-m-d\TH:i:sP');
+    }
+
+    /** The instant of a wall clock (`HH:MM`) on a date in a zone. */
+    private static function wall(string $date, string $clock, string $zone): int
+    {
+        return (new \DateTimeImmutable("$date $clock", new \DateTimeZone($zone)))->getTimestamp();
+    }
+
+    /** The date an instant falls on in a zone. */
+    private static function localDate(int $at, string $zone): string
+    {
+        return (new \DateTimeImmutable('@' . $at))->setTimezone(new \DateTimeZone($zone))->format('Y-m-d');
+    }
+
+    /**
+     * A change of the time of an event in no series as a client that carries `over` sends it (T2: "if the request changes
+     * the time, it sends the time whole"): the four keys, from the record the person was shown. `$t`: form, days and secs
+     * (a drag's move; a timed resize or start moves by secs, or half an hour), zone (another zone the form names) and tz
+     * (the zone sent with an event made all-day: UTC, or the shown one, which the server ignores for an all-day time,
+     * api-contract.md: "with `tzid` `UTC` whatever a write sends"). Forms: a drag (both ends moved, the shown kind and
+     * zone), a resize (the end moved), a start moved (the shown end kept: the editor's start field), the editor's all-day
+     * switch (a timed event made all-day over the dates it shows in its zone; an all-day one made timed at 15:00 to 16:00
+     * on its first date in `zone`), and the editor's zone picker (the same wall clocks in `zone`, so the instants move;
+     * an all-day event has none and is dragged instead). A timed value is written in its zone's offset, as served.
      */
     private static function timeRequest(array $shown, array $t): array
     {
         $form = (string) ($t['form'] ?? 'drag');
         $days = (int) ($t['days'] ?? 0);
         $secs = (int) ($t['secs'] ?? 3600);
-        $iso = static fn(int $at): string => gmdate('Y-m-d\TH:i:s', $at) . '+00:00';
+        $tz = (string) ($shown['tzid'] ?? 'UTC');
+        $zone = (string) ($t['zone'] ?? 'UTC');
         $date = static fn(int $at): string => gmdate('Y-m-d', $at);
         if (!empty($shown['allDay'])) {
-            $s = self::instantOf(substr((string) $shown['start'], 0, 10));
-            $e = self::instantOf(substr((string) $shown['end'], 0, 10));
+            [$s, $e] = self::timeOf($shown);
             $k = $days !== 0 ? $days : 1;
-            return match ($form) {
-                'resize' => ['start' => $shown['start'], 'end' => $date($e + 86400)],
-                'end' => ['end' => $date($e + 86400)],
-                'start' => ['start' => $date($s - 86400)],
-                'toggle' => ['start' => $iso($s + 15 * 3600), 'end' => $iso($s + 16 * 3600), 'allDay' => false, 'tzid' => 'UTC'],
-                default => ['start' => $date($s + $k * 86400), 'end' => $date($e + $k * 86400)],
+            if ($form === 'toggle') {
+                $d = $date($s);
+                return ['start' => self::inZone(self::wall($d, '15:00', $zone), $zone), 'end' => self::inZone(self::wall($d, '16:00', $zone), $zone), 'allDay' => false, 'tzid' => $zone];
+            }
+            [$s, $e] = match ($form) {
+                'resize' => [$s, $e + 86400],
+                'start' => [$s - 86400, $e],
+                default => [$s + $k * 86400, $e + $k * 86400],
             };
+            return ['start' => $date($s), 'end' => $date($e), 'allDay' => true, 'tzid' => $tz];
         }
-        $s = self::instantOf((string) $shown['start']);
-        $e = self::instantOf((string) $shown['end']);
+        [$s, $e] = self::timeOf($shown);
         $by = $days * 86400 + $secs;
         $by = $by !== 0 ? $by : 3600;
         $edge = $secs !== 0 ? $secs : 1800;
-        return match ($form) {
-            'resize' => ['start' => $shown['start'], 'end' => $iso($e + $edge)],
-            'end' => ['end' => $iso($e + $edge)],
-            'start' => ['start' => $iso($s - $edge)],
-            'toggle' => ['start' => $date($s), 'end' => $date($e - 1 + 86400), 'allDay' => true],
-            default => ['start' => $iso($s + $by), 'end' => $iso($e + $by)],
+        if ($form === 'toggle') {
+            $first = self::localDate($s, $tz);
+            $last = self::localDate($e - 1, $tz);
+            return ['start' => $first, 'end' => Days::date(Days::ofDate($last) + 1), 'allDay' => true, 'tzid' => ($t['tz'] ?? 'utc') === 'shown' ? $tz : 'UTC'];
+        }
+        if ($form === 'zone') {
+            // Never the shown zone itself: a zone sent with the same instants is not drawn (none of the zones share an offset).
+            $to = $zone !== $tz ? $zone : self::SINGLE_ZONES[(array_search($tz, self::SINGLE_ZONES, true) + 1) % count(self::SINGLE_ZONES)];
+            $clock = static fn(int $at): string => (new \DateTimeImmutable('@' . $at))->setTimezone(new \DateTimeZone($tz))->format('H:i');
+            $ns = self::wall(self::localDate($s, $tz), $clock($s), $to);
+            $ne = self::wall(self::localDate($e, $tz), $clock($e), $to);
+            return ['start' => self::inZone($ns, $to), 'end' => self::inZone($ne, $to), 'allDay' => false, 'tzid' => $to];
+        }
+        [$s, $e] = match ($form) {
+            'resize' => [$s, $e + $edge],
+            'start' => [$s - $edge, $e],
+            default => [$s + $by, $e + $by],
         };
+        return ['start' => self::inZone($s, $tz), 'end' => self::inZone($e, $tz), 'allDay' => false, 'tzid' => $tz];
     }
 
     /**
-     * The time a request sets, read against what the person was shown, B = [start, end, allDay]
-     * (google-conflict-choice.md, (b): the base is what was shown, and (c): "a request that set only part of the time (a
-     * drag sends `start` and `end`) was read against what the person was shown when it was first sent"). The kind is the
-     * request's allDay where it sends one, else the shown kind; each end sent is read in that kind (an all-day end as its
-     * date, api-contract.md: "only its date is read"); each end not sent is the shown one. A start sent alone has two
-     * readings of what was shown, the shown end or the shown length from the new start, and the contract states neither
-     * (api-contract.md, PATCH /events/:id, names no rule for a start without an end): both are returned, and x-choice
-     * accepts either, never one read from the row. A change of kind with an end left out has no stated reading: [].
-     *
-     * @return list<array{0:int,1:int,2:bool}>
+     * A request the rule refuses (T2, T4), made from the whole one the app would send: the time left partial in the body
+     * (`pair`: start and end, the 1.5.7 client's drag; `start` or `end` alone; `noTz`: three keys of four), or in `over`
+     * (`overNoTz`: start, end and allDay, the 1.5.7 client's `over`; `overPair`: start and end), or `over` whole but no
+     * real state (`overInvalid`: its end at its start). `over` names the time from `$shown` where the request did not.
      */
-    private static function wantedTime(array $body, array $B): array
+    private static function outdated(array $body, string $how, array $shown): array
     {
-        $allDay = array_key_exists('allDay', $body) ? (bool) $body['allDay'] : $B[2];
-        $read = static fn(string $v): int => $allDay ? self::instantOf(substr($v, 0, 10)) : self::instantOf($v);
-        $hasStart = isset($body['start']);
-        $hasEnd = isset($body['end']);
-        if ($allDay !== $B[2] && !($hasStart && $hasEnd)) {
-            return [];
+        $only = static fn(array $a, array $keys): array => array_diff_key($a, array_flip(array_diff(self::TIME_KEYS, $keys)));
+        if (str_starts_with($how, 'over')) {
+            $body['over'] += array_intersect_key($shown, array_flip(self::TIME_KEYS));
+            $body['over'] = match ($how) {
+                'overNoTz' => $only($body['over'], ['start', 'end', 'allDay']),
+                'overPair' => $only($body['over'], ['start', 'end']),
+                default => ['end' => $body['over']['start']] + $body['over'],
+            };
+            return $body;
         }
-        $s = $hasStart ? $read((string) $body['start']) : $B[0];
-        $e = $hasEnd ? $read((string) $body['end']) : $B[1];
-        if ($hasStart && !$hasEnd && $s !== $B[0]) {
-            return [[$s, $B[1], $allDay], [$s, $s + ($B[1] - $B[0]), $allDay]];
-        }
-        return [[$s, $e, $allDay]];
+        $keep = match ($how) { 'pair' => ['start', 'end'], 'start' => ['start'], 'end' => ['end'], default => ['start', 'end', 'allDay'] };
+        return $only($body, $keep);
     }
 
     /**
@@ -868,6 +944,7 @@ final class Interleave
             $out['message'] = mb_substr($e->getMessage(), 0, 300);
             $out['extra'] = $e instanceof HttpError ? $e->extra : [];
             $out['thrown'] = !($e instanceof HttpError);
+            $out['status'] = $e instanceof HttpError ? $e->status : null;
             $out['asked'] ??= $this->lastAsked;
         }
         $this->lastAsked = null;
@@ -1051,11 +1128,14 @@ final class Interleave
         if ($do === 'w-create') {
             $day = Days::date(Days::ofDate('2027-02-01') + (int) floor($step['pick'] * 200));
             $this->lastAsked = ['kind' => 'create', 'gid' => null, 'fields' => [], 'days' => [$day]];
-            // Timed at 15:00 to 16:00 UTC, or all-day over `allDay` days (the single shape's all-day share).
+            // Timed for an hour from `clock` (15:00 by default) in `zone` (UTC by default), or all-day over `allDay` days
+            // with the zone sent too (the single shape's all-day share).
             $days = (int) ($step['allDay'] ?? 0);
-            $when = $days > 0 ? ['start' => $day, 'end' => Days::date(Days::ofDate($day) + $days), 'allDay' => true] : ['start' => $day . 'T15:00:00+00:00', 'end' => $day . 'T16:00:00+00:00', 'allDay' => false];
+            $zone = (string) ($step['zone'] ?? 'UTC');
+            $at = self::wall($day, (string) ($step['clock'] ?? '15:00'), $zone);
+            $when = $days > 0 ? ['start' => $day, 'end' => Days::date(Days::ofDate($day) + $days), 'allDay' => true] : ['start' => self::inZone($at, $zone), 'end' => self::inZone($at + 3600, $zone), 'allDay' => false];
             $id = (int) $this->events->create($this->userId, ['calendarId' => $this->stand->calendarId, 'title' => "Sample event {$this->step}"] + $when + [
-                'tzid' => 'UTC', 'tagNames' => ['single'], 'location' => 'Sample single hall', 'description' => 'Sample single event notes', 'url' => 'https://example.test/single-event'])['eventId'];
+                'tzid' => $zone, 'tagNames' => ['single'], 'location' => 'Sample single hall', 'description' => 'Sample single event notes', 'url' => 'https://example.test/single-event'])['eventId'];
             $this->events->throwDeferred();
             // The event in no series is the case's from here on: what each side holds of it is recorded (gstate, ldigest),
             // and the record the API serves for it now is what the person was shown (withSingle's change sends it as `over`).
@@ -1214,10 +1294,11 @@ final class Interleave
     /**
      * A change here to the case's event in no series, sent as the app sends it (google-conflict-choice.md, (b) and (c)):
      * `over` holds the fields the change sets as the person was shown them (the record served when the event was made,
-     * or, with `shown: now`, the one served now), untouched; an edit sets one or two fields (the time as a drag of what
-     * was shown, an hour later), in some requests with tags; a delete sends every field in `over`; Planned or Maybe the
-     * other of the two from what was shown. `overwrite` is the last request again, as the 409 says: each asked field's
-     * `over` set to its `now` and its value to its `yours` (only after a google_changed; skipped otherwise).
+     * or, with `shown: now`, the one served now), untouched, the time whole (T2); an edit sets one or two fields (the time
+     * whole, timeRequest), in some requests with tags; a delete sends every field in `over`; Planned or Maybe the other
+     * of the two from what was shown. `outdated` makes it a request the rule refuses (outdated()). `overwrite` is the last
+     * request again, as the 409 says: each asked field's `over` set to its `now` and its value to its `yours` (only after
+     * a google_changed; skipped otherwise).
      */
     private function writeSingle(array $step, array $s0): array
     {
@@ -1238,20 +1319,35 @@ final class Interleave
             }
             $body = $last['body'];
             foreach ((array) ($last['extra']['fields'] ?? []) as $f) {
-                $keys = ($f['field'] ?? '') === 'time' ? ['start', 'end', 'allDay'] : [(string) ($f['field'] ?? '')];
-                foreach ($keys as $k) {
-                    $body['over'][$k] = ($f['field'] ?? '') === 'time' ? ($f['now'][$k] ?? null) : ($f['now'] ?? null);
-                    if (($f['yours'] ?? null) !== null) {
-                        $body[$k] = ($f['field'] ?? '') === 'time' ? ($f['yours'][$k] ?? null) : $f['yours'];
+                // The time as one value (T1): `over`'s four keys from `now` and the body's from `yours`. A key the 409 leaves
+                // out (a time not served whole, which x-choice fails on its own) keeps what the request had, so Overwrite
+                // is not refused for the 409's fault.
+                if (($f['field'] ?? '') === 'time') {
+                    foreach (self::TIME_KEYS as $k) {
+                        if (is_array($f['now'] ?? null) && array_key_exists($k, $f['now'])) {
+                            $body['over'][$k] = $f['now'][$k];
+                        }
+                        if (is_array($f['yours'] ?? null) && array_key_exists($k, $f['yours'])) {
+                            $body[$k] = $f['yours'][$k];
+                        }
                     }
+                    continue;
+                }
+                $k = (string) ($f['field'] ?? '');
+                $body['over'][$k] = $f['now'] ?? null;
+                if (($f['yours'] ?? null) !== null) {
+                    $body[$k] = $f['yours'];
                 }
             }
             return $this->sendSingle($last['action'], $body, $id, $gid, $s0, $last);
         }
         $shown = ($step['shown'] ?? 'earlier') === 'now' || !isset($this->served[$gid]) ? $this->serve($id) : $this->served[$gid];
-        $all = ['title', 'description', 'location', 'url', 'status', 'start', 'end', 'allDay'];
+        // A delete names every field as shown, the time whole (T2: "if `over` names the time, it names it whole").
+        $all = ['title', 'description', 'location', 'url', 'status', ...self::TIME_KEYS];
+        $outdated = isset($step['outdated']) ? (string) $step['outdated'] : null;
         if ($how === 'delete') {
-            return $this->sendSingle('delete', ['over' => array_intersect_key($shown, array_flip($all))], $id, $gid, $s0, null);
+            $body = ['over' => array_intersect_key($shown, array_flip($all))];
+            return $this->sendSingle('delete', $outdated === null ? $body : self::outdated($body, $outdated, $shown), $id, $gid, $s0, null);
         }
         $other = (string) ($shown['status'] ?? '') === 'tentative' ? 'confirmed' : 'tentative';
         if ($how === 'maybe') {
@@ -1261,7 +1357,7 @@ final class Interleave
         foreach ((array) ($step['fields'] ?? []) as $f) {
             if ($f === 'time') {
                 $body = self::timeRequest($shown, (array) ($step['time'] ?? [])) + $body;
-                $body['over'] += ['start' => $shown['start'], 'end' => $shown['end'], 'allDay' => $shown['allDay']];
+                $body['over'] += array_intersect_key($shown, array_flip(self::TIME_KEYS));
             } elseif ($f === 'status') {
                 $body['status'] = $other;
                 $body['over']['status'] = $shown['status'] ?? null;
@@ -1273,7 +1369,7 @@ final class Interleave
         if (!empty($step['tags'])) {
             $body['tagNames'] = ['single', "single-own-{$this->step}"];
         }
-        return $this->sendSingle('patch', $body, $id, $gid, $s0, null);
+        return $this->sendSingle('patch', $outdated === null ? $body : self::outdated($body, $outdated, $shown), $id, $gid, $s0, null);
     }
 
     /** Sends one w-single request; the harness's record of it is made before the product is called. */
@@ -1285,7 +1381,7 @@ final class Interleave
                 $fields[$f] = true;
             }
         }
-        if (array_intersect(['start', 'end', 'allDay'], array_keys($body)) !== []) {
+        if (array_intersect(self::TIME_KEYS, array_keys($body)) !== []) {
             $fields['time'] = true;
         }
         if ($action === 'relationship') {
@@ -1719,8 +1815,8 @@ final class Interleave
 
     /**
      * A change at Google by another client to the case's event in no series (withSingle): each field named set to a
-     * value of Google's own, or, for a field in `same`, to the value the change here will set (the time an hour later
-     * where the change here moves it an hour, Google's own two). Status has two values, so Google's change of it is
+     * value of Google's own, or, for a field in `same`, to the value the change here will set (the time the whole time
+     * the change here sends, remoteTime). Status has two values, so Google's change of it is
      * always to tentative.
      */
     private function remoteSingle(array $step): array
@@ -1777,12 +1873,14 @@ final class Interleave
     }
 
     /**
-     * Google's change of the event's time (remoteSingle): with `same`, to what the change here will set (the request the
-     * w-single step builds from the record shown when the event was made, read against it; none where that has two
-     * readings); else by the step's `time.how`: shifted whole (two hours, or a day for an all-day event), its start
-     * earlier (an hour, a day), its end later, or its kind changed (a timed event made all-day from its start's date over
-     * `time.days` days, an all-day event made timed at 18:00 to 19:00 UTC on its first day), set whole as another client
-     * changes the form at Google (FakeGoogle::asSet).
+     * Google's change of the event's time (remoteSingle): with `same`, to the whole time the change here will set (the
+     * request the w-single step builds from the record shown when the event was made), in its zone; else by the step's
+     * `time.how`: shifted whole (two hours, or a day for an all-day event), its start earlier (an hour, a day), its end
+     * later, its kind changed (a timed event made all-day from the date its start shows in its zone over `time.days`
+     * days; an all-day event made timed at 18:00 to 19:00 in `time.zone` on its first date), or its zone alone (the
+     * instants kept, written in `time.zone`, or the next zone where that is the event's own; an all-day event has no zone
+     * and has its kind changed instead). A timed value is written in its zone's offset with that `timeZone`, as Google
+     * holds one another client set; a change of kind is set whole (FakeGoogle::asSet).
      */
     private function remoteTime(array $g, array $step, bool $mine): array
     {
@@ -1790,17 +1888,22 @@ final class Interleave
         $at = static fn(array $w): int => self::instantOf((string) ($w['date'] ?? $w['dateTime'] ?? '1970-01-01'));
         $s = $at((array) $g['start']);
         $e = $at((array) $g['end']);
+        $zone = (string) ($g['start']['timeZone'] ?? 'UTC');
         $toAllDay = $allDay;
         if ($mine) {
             $shown = $this->served[(string) $this->single] ?? null;
-            $want = $shown === null ? [] : self::wantedTime(self::timeRequest($shown, (array) ($step['mineTime'] ?? [])), self::servedValue('time', $shown));
-            if (count($want) !== 1) {
+            if ($shown === null) {
                 return [];
             }
-            [$s, $e, $toAllDay] = $want[0];
+            $want = self::timeRequest($shown, (array) ($step['mineTime'] ?? []));
+            [$s, $e, $toAllDay] = self::timeOf($want);
+            $zone = (string) $want['tzid'];
         } else {
             $time = (array) ($step['time'] ?? []);
-            switch ((string) ($time['how'] ?? 'shift')) {
+            $other = (string) ($time['zone'] ?? 'UTC');
+            $how = (string) ($time['how'] ?? 'shift');
+            $how = $how === 'zone' && $allDay ? 'kind' : $how;
+            switch ($how) {
                 case 'start':
                     $s -= $allDay ? 86400 : 3600;
                     break;
@@ -1808,16 +1911,24 @@ final class Interleave
                     $e += $allDay ? 86400 : 3600;
                     break;
                 case 'kind':
-                    $day = intdiv($s, 86400) * 86400;
                     $toAllDay = !$allDay;
-                    [$s, $e] = $toAllDay ? [$day, $day + 86400 * max(1, (int) ($time['days'] ?? 1))] : [$day + 18 * 3600, $day + 19 * 3600];
+                    if ($toAllDay) {
+                        $day = self::instantOf(self::localDate($s, $zone));
+                        [$s, $e] = [$day, $day + 86400 * max(1, (int) ($time['days'] ?? 1))];
+                    } else {
+                        $date = gmdate('Y-m-d', $s);
+                        [$s, $e, $zone] = [self::wall($date, '18:00', $other), self::wall($date, '19:00', $other), $other];
+                    }
+                    break;
+                case 'zone':
+                    $zone = $other !== $zone ? $other : self::SINGLE_ZONES[((int) array_search($zone, self::SINGLE_ZONES, true) + 1) % count(self::SINGLE_ZONES)];
                     break;
                 default:
                     $s += $allDay ? 86400 : 7200;
                     $e += $allDay ? 86400 : 7200;
             }
         }
-        $when = static fn(int $t): array => $toAllDay ? ['date' => gmdate('Y-m-d', $t)] : ['dateTime' => gmdate('Y-m-d\TH:i:s', $t) . '+00:00', 'timeZone' => 'UTC'];
+        $when = static fn(int $t): array => $toAllDay ? ['date' => gmdate('Y-m-d', $t)] : ['dateTime' => self::inZone($t, $zone), 'timeZone' => $zone];
         $body = ['start' => $when($s), 'end' => $when($e)];
         return $toAllDay !== $allDay ? \BetterCal\GoogleProbe\FakeGoogle::asSet($body) : $body;
     }
@@ -2500,73 +2611,102 @@ final class Interleave
         }
         $G = array_diff_key($g0, ['single' => 1]);
         $R = self::rowSix($s0['rows'][$id]);
-        // What the person was shown: `over` where the request sends it, else the row as stored ((b)).
         $over = (array) ($body['over'] ?? []);
+        $error = $out['ok'] ? null : (string) $out['error'];
+
+        // The request budget (case 1: "one read, one conditional write"; case 3: "nothing is sent").
+        $app = array_values(array_filter(array_slice($this->stand->fake->requests, $s0['req'], $s1['req'] - $s0['req']), static fn(array $q): bool => !in_array('X-Harness: remote', $q['headers'], true)));
+        $reads = count(array_filter($app, static fn(array $q): bool => $q['method'] === 'GET'));
+        $writes = count($app) - $reads;
+
+        // A time not whole where the rule asks for one (T2: on a request carrying `over`, a time the request changes is
+        // sent whole, and `over` names the time whole or not at all), or `over`'s whole time no real state (T4: an end not
+        // after its start), is refused before anything else: 400 client_outdated, nothing read from Google, nothing
+        // written here or there.
+        $bodyTime = $action === 'delete' ? [] : array_intersect_key($body, array_flip(self::TIME_KEYS));
+        $overTime = array_intersect_key($over, array_flip(self::TIME_KEYS));
+        $why = [];
+        if (array_key_exists('over', $body) && $bodyTime !== [] && !self::isWhole($bodyTime)) {
+            $why[] = 'the time sent is not whole: ' . implode(', ', array_keys($bodyTime));
+        }
+        if ($overTime !== [] && !self::isWhole($overTime)) {
+            $why[] = "over's time is not whole: " . implode(', ', array_keys($overTime));
+        } elseif ($overTime !== [] && (static fn(array $t): bool => $t[1] <= $t[0])(self::timeOf($overTime))) {
+            $why[] = "over's time ends at or before its start";
+        }
+        if ($why !== []) {
+            $context += ['action' => $action, 'refused' => $why, 'reads' => $reads, 'writes' => $writes];
+            $this->ran('x-choice', 'refused: time not whole (T2, T4)');
+            $this->expect('x-choice', $error === 'client_outdated' && ($out['status'] ?? null) === 400,
+                "step {$this->step} ($do): a request carrying over whose time is not whole is refused, 400 client_outdated (T2)", $context + ['error' => $error, 'status' => $out['status'] ?? null]);
+            $this->expect('x-choice', $reads === 0 && $writes === 0, "step {$this->step} ($do): the refusal reads nothing from Google and writes nothing there (T2)", $context);
+            $this->expect('x-choice', $s0['rows'] == $s1['rows'] && $s0['g'] == $s1['g'],
+                "step {$this->step} ($do): the refusal changes nothing here or at Google (T2)", $context + ['here' => self::diff($s0['l'], $s1['l'])]);
+            return;
+        }
+
+        // What the person was shown: `over` where the request sends it, else the row as stored ((b)). The time is `over`'s
+        // whole time, one value (T4: "the base ... for the time is `over`'s whole time").
         $B = $R;
         foreach (['title', 'description', 'location', 'url', 'status'] as $f) {
             if (array_key_exists($f, $over)) {
                 $B[$f] = self::servedValue($f, $over[$f]);
             }
         }
-        if (array_intersect(['start', 'end', 'allDay'], array_keys($over)) !== []) {
-            $B['time'] = [isset($over['start']) ? self::instantOf((string) $over['start']) : $R['time'][0], isset($over['end']) ? self::instantOf((string) $over['end']) : $R['time'][1],
-                array_key_exists('allDay', $over) ? (bool) $over['allDay'] : $R['time'][2]];
+        if ($overTime !== []) {
+            $B['time'] = self::timeOf($overTime);
         }
-        // What the change sets, only where it differs from what was shown ((a): "a field sent at its base value is not wanted"),
-        // each field as the list of its readings: one, but for a start sent alone, whose end the contract leaves to the shown
-        // end or the shown length (wantedTime). A time is read against what was shown, never against the row ((c)).
+        // What the change sets, only where it differs from what was shown ((a): "a field sent at its base value is not
+        // wanted"). The time is the body's whole time as one value, nothing of it taken from the base or the row (T1, T4:
+        // "The server never completes one part of a time from the base and another from the row"); compared by instants
+        // and kind, the zone not compared (the page's field table), so a zone changed alone is no change of the time.
         $W = [];
         if ($action !== 'delete') {
             foreach (['title', 'description', 'location', 'url', 'status'] as $f) {
                 if (array_key_exists($f, $body)) {
-                    $W[$f] = [self::servedValue($f, $body[$f])];
+                    $W[$f] = self::servedValue($f, $body[$f]);
                 }
             }
             if ($action === 'relationship') {
-                $W['status'] = [($body['relationship'] ?? '') === 'maybe'];
+                $W['status'] = ($body['relationship'] ?? '') === 'maybe';
             }
-            if (array_intersect(['start', 'end', 'allDay'], array_keys($body)) !== []) {
-                $W['time'] = self::wantedTime($body, $B['time']);
-                if ($W['time'] === []) {
-                    $this->ran('x-choice', 'a change of kind with an end left out: no reading stated (contract undefined)');
+            if ($bodyTime !== []) {
+                if (!self::isWhole($bodyTime)) {
+                    // A time in part with no `over`: an API caller's, read as 1.5.6 reads it against the row (T3), which the
+                    // harness does not state and does not draw (the database suite covers that path).
+                    $this->ran('x-choice', 'a time in part with no over (T3, not drawn)');
                     return;
                 }
+                $W['time'] = self::timeOf($bodyTime);
             }
-            $W = array_filter($W, static fn(array $vs, string $f): bool => array_filter($vs, static fn($v): bool => $v !== $B[$f]) !== [], ARRAY_FILTER_USE_BOTH);
+            $W = array_filter($W, static fn($v, string $f): bool => $v !== $B[$f], ARRAY_FILTER_USE_BOTH);
         }
-        $isW = static fn(string $f, mixed $v): bool => in_array($v, $W[$f] ?? [], true);
         $outcome = [];
         foreach (self::CHOICE_FIELDS as $f) {
             $wanted = $action === 'delete' || array_key_exists($f, $W);
             $outcome[$f] = !$wanted ? ($G[$f] === $B[$f] ? 'same' : 'kept')
-                : ($G[$f] === $B[$f] || ($action !== 'delete' && $isW($f, $G[$f])) ? 'send' : 'ask');
-        }
-        // Google holding one reading of a start sent alone and not what was shown: the other reading would ask, and the
-        // contract does not say which applies, so nothing is asserted (never drawn: r-single's `same` leaves it out).
-        if (count($W['time'] ?? []) > 1 && $G['time'] !== $B['time'] && $isW('time', $G['time'])) {
-            $this->ran('x-choice', 'Google holds one reading of a start sent alone (contract undefined)');
-            return;
+                : ($G[$f] === $B[$f] || ($action !== 'delete' && $G[$f] === $W[$f]) ? 'send' : 'ask');
         }
         $asks = array_keys(array_filter($outcome, static fn(string $o): bool => $o === 'ask'));
         $kept = array_keys(array_filter($outcome, static fn(string $o): bool => $o === 'kept'));
         sort($asks);
         sort($kept);
-        $toSend = $action === 'delete' || array_filter($W, static fn(array $vs, string $f): bool => !in_array($G[$f], $vs, true), ARRAY_FILTER_USE_BOTH) !== [];
-        $error = $out['ok'] ? null : (string) $out['error'];
-        $context += ['action' => $action, 'outcomes' => $outcome, 'shown' => $B['time'], 'google' => $G['time'], 'row' => $R['time']] + (isset($W['time']) ? ['wantedTime' => $W['time']] : []);
+        $toSend = $action === 'delete' || array_filter($W, static fn($v, string $f): bool => $G[$f] !== $v, ARRAY_FILTER_USE_BOTH) !== [];
+        $context += ['action' => $action, 'outcomes' => $outcome, 'shown' => $B['time'], 'google' => $G['time'], 'row' => $R['time']] + (isset($W['time']) ? ['wanted' => $W['time']] : []);
         $this->ran('x-choice', $action . ($sent['overwriting'] !== null ? ' (overwrite)' : '') . ': ' . ($asks !== [] ? 'asks' : ($kept !== [] ? 'keeps' : ($G === $B ? 'nothing changed at Google since shown' : 'sends'))));
-
-        // The request budget (case 1: "one read, one conditional write"; case 3: "nothing is sent").
-        $app = array_values(array_filter(array_slice($this->stand->fake->requests, $s0['req'], $s1['req'] - $s0['req']), static fn(array $q): bool => !in_array('X-Harness: remote', $q['headers'], true)));
-        $reads = count(array_filter($app, static fn(array $q): bool => $q['method'] === 'GET'));
-        $writes = count($app) - $reads;
         $budget = $context + ['reads' => $reads, 'writes' => $writes, 'requests' => array_map(static fn(array $q): string => $q['method'] . ' ' . rawurldecode(basename((string) $q['path'])), $app)];
+        // The zone a timed time sent lands in, here and at Google (T1: the zone is part of the one value the change sets).
+        $sentZone = $bodyTime !== [] && !$bodyTime['allDay'] ? (string) $bodyTime['tzid'] : null;
+        $googleZone = function (): ?string {
+            $m = $this->stand->fake->events[(string) $this->single] ?? null;
+            return $m === null ? null : ($m['start']['timeZone'] ?? null);
+        };
         // The step runs "only when the request sends Google something (a non-empty `patchBody`, a delete, an answer)" (the
         // page, (e)), and a request that changes nothing sends nothing and asks Google nothing (decisions.md, "A request that
         // changes nothing sends nothing and is no conflict"). A change whose every field the row here already holds (a poll
         // stored Google's Maybe and the person, still shown Planned, clicks Maybe: seed 94756 case 266) is such a request:
         // it goes through with no read and no write, and the three-way comparison is not asked.
-        if ($action !== 'delete' && array_filter($W, static fn(array $vs, string $f): bool => !in_array($R[$f], $vs, true), ARRAY_FILTER_USE_BOTH) === []) {
+        if ($action !== 'delete' && array_filter($W, static fn($v, string $f): bool => $R[$f] !== $v, ARRAY_FILTER_USE_BOTH) === []) {
             $this->ran('x-choice', 'sends Google nothing');
             $this->expect('x-choice', $out['ok'] && $reads === 0 && $writes === 0 && $s1['g'] == $s0['g'], "step {$this->step} ($do): a change the row here already holds goes through asking Google nothing", $budget);
             return;
@@ -2607,9 +2747,23 @@ final class Interleave
                 foreach (array_intersect_key($byField, array_flip($asks)) as $f => $item) {
                     $this->expect('x-choice', self::servedValue($f, $item['was'] ?? null) === $B[$f] && self::servedValue($f, $item['now'] ?? null) === $G[$f],
                         "step {$this->step} ($do): the question gives each field as shown (was) and at Google now (now)", $context + ['field' => $f, 'told' => $item]);
-                    // yours: the request read against what was shown, a time's parts not sent taken from the shown time ((c)).
-                    $this->expect('x-choice', $action === 'delete' ? ($item['yours'] ?? null) === null : $isW($f, self::servedValue($f, $item['yours'] ?? null)),
-                        "step {$this->step} ($do): the question gives each field as the change sets it, read against what was shown (yours, null for a delete)", $context + ['field' => $f, 'told' => $item]);
+                    // yours: what the change sets, the body's whole time for the time (T4), never completed from anything.
+                    $this->expect('x-choice', $action === 'delete' ? ($item['yours'] ?? null) === null : self::servedValue($f, $item['yours'] ?? null) === $W[$f],
+                        "step {$this->step} ($do): the question gives each field as the change sets it (yours, null for a delete)", $context + ['field' => $f, 'told' => $item]);
+                    if ($f === 'time') {
+                        // A time is one value (T1): was, now and yours each whole, the four keys, so Overwrite can send them
+                        // back as `over` and body whole (T2). A timed one names its zone: was `over`'s, now Google's, yours
+                        // the body's. An all-day one's zone is not asserted (the server stores UTC whatever is sent).
+                        $whole = is_array($item['was'] ?? null) && self::isWhole($item['was']) && is_array($item['now'] ?? null) && self::isWhole($item['now'])
+                            && ($action === 'delete' || (is_array($item['yours'] ?? null) && self::isWhole($item['yours'])));
+                        $this->expect('x-choice', $whole, "step {$this->step} ($do): the question gives the time whole, start, end, allDay and tzid, in was, now and yours (T1)", $context + ['told' => $item]);
+                        // (A zone left out is the statement above's failure, not counted again here.)
+                        $zoneOf = static fn(mixed $t): ?string => is_array($t) && empty($t['allDay']) && isset($t['tzid']) ? (string) $t['tzid'] : null;
+                        $zones = ['was' => [$zoneOf($item['was'] ?? null), $zoneOf($overTime)], 'now' => [$zoneOf($item['now'] ?? null), $G['time'][2] ? null : $googleZone()]]
+                            + ($action === 'delete' ? [] : ['yours' => [$zoneOf($item['yours'] ?? null), $sentZone]]);
+                        $zones = array_filter($zones, static fn(array $p): bool => $p[0] !== null && $p[1] !== null && $p[0] !== $p[1]);
+                        $this->expect('x-choice', $zones === [], "step {$this->step} ($do): a timed was, now and yours each name their zone: over's, Google's, the change's (T1)", $context + ['told' => $item, 'zones' => $zones]);
+                    }
                 }
                 $keptRight((array) ($out['extra']['kept'] ?? []), 'the question');
             }
@@ -2621,21 +2775,17 @@ final class Interleave
             if ($out['ok'] && $action === 'delete') {
                 $this->expect('x-choice', $now === null && $g1 === null, "step {$this->step} ($do): the delete removes the event here and at Google", $context + ['here' => $now !== null, 'google' => $g1 !== null]);
             } elseif ($out['ok']) {
-                // Each field's expected values: a sent one any reading of the request (one, but for a start sent alone).
                 $E = [];
                 foreach (self::CHOICE_FIELDS as $f) {
-                    $E[$f] = match ($outcome[$f]) { 'send' => $W[$f], 'kept' => [$G[$f]], default => [$B[$f]] };
+                    $E[$f] = match ($outcome[$f]) { 'send' => $W[$f], 'kept' => $G[$f], default => $B[$f] };
                 }
-                $holds = static function (?array $six) use ($E): bool {
-                    foreach ($E as $f => $vs) {
-                        if ($six === null || !in_array($six[$f], $vs, true)) {
-                            return false;
-                        }
-                    }
-                    return true;
-                };
-                $this->expect('x-choice', $now !== null && $holds(self::rowSix($now)), "step {$this->step} ($do): here, each field sent holds the change's value and each kept one Google's", $context + ['here' => $now === null ? null : self::rowSix($now), 'expected' => $E]);
-                $this->expect('x-choice', $g1 !== null && $holds(array_diff_key($g1, ['single' => 1])), "step {$this->step} ($do): at Google, each field sent holds the change's value and each kept one Google's", $context + ['google' => $g1, 'expected' => $E]);
+                $this->expect('x-choice', $now !== null && self::rowSix($now) === $E, "step {$this->step} ($do): here, each field sent holds the change's value and each kept one Google's", $context + ['here' => $now === null ? null : self::rowSix($now), 'expected' => $E]);
+                $this->expect('x-choice', $g1 !== null && array_diff_key($g1, ['single' => 1]) === $E, "step {$this->step} ($do): at Google, each field sent holds the change's value and each kept one Google's", $context + ['google' => $g1, 'expected' => $E]);
+                if (isset($W['time']) && $sentZone !== null) {
+                    // A timed time sent lands whole, its zone with it (T1), here and at Google.
+                    $this->expect('x-choice', $now !== null && (string) $now['tzid'] === $sentZone && $googleZone() === $sentZone,
+                        "step {$this->step} ($do): the zone the change sets lands with its time, here and at Google (T1)", $context + ['zone' => $sentZone, 'here' => $now['tzid'] ?? null, 'google' => $googleZone()]);
+                }
                 if (isset($body['tagNames'])) {
                     $want = (array) $body['tagNames'];
                     sort($want);
@@ -2662,6 +2812,11 @@ final class Interleave
                     $this->ran('x-choice', 'overwrite lands yours');
                     $this->expect('x-choice', $now !== null && self::rowSix($now)[$f] === $yours && $g1 !== null && $g1[$f] === $yours,
                         "step {$this->step} ($do): Overwrite lands exactly what the question showed as yours, here and at Google", $context + ['field' => $f, 'yours' => $yours, 'here' => $now === null ? null : self::rowSix($now)[$f], 'google' => $g1[$f] ?? null]);
+                    if ($f === 'time' && empty($item['yours']['allDay']) && isset($item['yours']['tzid'])) {
+                        // ... a timed yours in its zone (T1).
+                        $this->expect('x-choice', $now !== null && (string) $now['tzid'] === (string) $item['yours']['tzid'] && $googleZone() === (string) $item['yours']['tzid'],
+                            "step {$this->step} ($do): Overwrite lands the zone of the yours the question showed, here and at Google (T1)", $context + ['yours' => $item['yours'], 'here' => $now['tzid'] ?? null, 'google' => $googleZone()]);
+                    }
                 }
             }
         }

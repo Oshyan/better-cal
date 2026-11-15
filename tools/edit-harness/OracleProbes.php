@@ -435,20 +435,84 @@ final class OracleProbes
                     }
                     return [$out, $s0, $s1];
                 }],
-            ['check' => 'x-choice', 'what' => "a start sent alone is asked about with an end that is neither the shown end nor the shown length from the new start", 'case' => 'an-event-in-no-series-whose-start-moved-at-google-polled-then-its-start-alone-moved-here-asks', 'step' => 4,
-                'fn' => function (string $do, array $out, array $s0, array $s1): array {
-                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
-                        if (($f['field'] ?? '') === 'time' && is_array($f['yours'] ?? null)) {
-                            $end = (new \DateTimeImmutable((string) $f['yours']['end']))->modify('+1 hour');
-                            $out['extra']['fields'][$i]['yours']['end'] = $end->format('Y-m-d\TH:i:sP');
-                        }
-                    }
-                    return [$out, $s0, $s1];
-                }],
             ['check' => 'x-choice', 'what' => 'Overwrite lands a time other than the yours the question showed (the event left timed here)', 'case' => 'an-all-day-event-in-no-series-made-timed-at-google-polled-then-dragged-as-shown-asks-then-overwrite-lands', 'step' => 5,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     $s1['rows'][$this->singles[(string) $this->single]]['all_day'] = 0;
                     return [$out, $s0, $this->reshape($s1)];
+                }],
+            // x-choice under the rule of 2026-11-14 (a time is one value, T1 to T5; the second outside read, R1 and R2).
+            // R2: what the change sets is the body's whole time, nothing of it taken from what was shown (T4), so a yours
+            // whose end keeps the shown length from the new start, instead of the end the request sent, is caught.
+            ['check' => 'x-choice', 'what' => 'a start moved here, sent whole with the shown end, is asked about with an end that keeps the shown length instead of the end sent (R2)', 'case' => 'an-event-in-no-series-whose-start-moved-at-google-polled-then-its-start-moved-here-whole-asks', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $shown = (array) ($this->lastSingle['body']['over'] ?? []);
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        if (($f['field'] ?? '') === 'time' && is_array($f['yours'] ?? null)) {
+                            $length = (new \DateTimeImmutable((string) $shown['end']))->getTimestamp() - (new \DateTimeImmutable((string) $shown['start']))->getTimestamp();
+                            $out['extra']['fields'][$i]['yours']['end'] = (new \DateTimeImmutable((string) $f['yours']['start']))->modify("+$length seconds")->format('Y-m-d\TH:i:sP');
+                        }
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            // R1: an all-day value is its dates, never read through a zone; a yours whose start moved a day earlier, as an
+            // all-day base read through a zone west of UTC moves it, is caught.
+            ['check' => 'x-choice', 'what' => 'an all-day event made timed in New York at Google and polled, its end moved here whole: the yours start a day earlier, read through the zone west of UTC (R1)', 'case' => 'an-all-day-event-in-no-series-made-timed-in-new-york-at-google-polled-then-its-end-moved-here-whole-asks-then-overwrite-lands', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        if (($f['field'] ?? '') === 'time' && is_array($f['yours'] ?? null)) {
+                            $out['extra']['fields'][$i]['yours']['start'] = (new \DateTimeImmutable(substr((string) $f['yours']['start'], 0, 10)))->modify('-1 day')->format('Y-m-d');
+                        }
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            // T1: the 409 gives a time whole, and a timed one in its zone.
+            ['check' => 'x-choice', 'what' => "the question's yours leaves out the time's zone (tzid)", 'case' => 'an-event-in-no-series-whose-start-moved-at-google-polled-then-its-start-moved-here-whole-asks', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        if (($f['field'] ?? '') === 'time' && is_array($f['yours'] ?? null)) {
+                            unset($out['extra']['fields'][$i]['yours']['tzid']);
+                        }
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "the question's timed yours names another zone than the one the change sent, at the same instants", 'case' => 'an-event-in-no-series-whose-start-moved-at-google-polled-then-its-start-moved-here-whole-asks', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        if (($f['field'] ?? '') === 'time' && is_array($f['yours'] ?? null)) {
+                            $out['extra']['fields'][$i]['yours']['tzid'] = 'Pacific/Honolulu';
+                        }
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'Overwrite lands the yours instants in another zone here', 'case' => 'an-event-in-no-series-whose-start-moved-at-google-polled-then-its-start-moved-here-whole-asks', 'step' => 5,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $s1['rows'][$this->singles[(string) $this->single]]['tzid'] = 'Pacific/Honolulu';
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-choice', 'what' => 'a timed event moved to another zone in the editor goes through with the old zone kept here', 'case' => 'an-event-in-no-series-in-tokyo-moved-to-new-york-clocks-here-lands-its-zone', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $s1['rows'][$this->singles[(string) $this->single]]['tzid'] = 'Asia/Tokyo';
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            // T2: a request carrying `over` whose time is not whole is refused, 400 client_outdated, nothing read and nothing
+            // written. Each damage starts from the right refusal (the snapshots before the step, nothing taken) and breaks one
+            // part of it, so the probe shows the check whatever the product answered.
+            ['check' => 'x-choice', 'what' => 'a drag sent by a client from before the rule (start and end, over whole) is refused with another code', 'case' => 'an-event-in-no-series-dragged-here-by-a-client-from-before-the-rule-is-refused', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'invalid_request', 'status' => 400, 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s0];
+                }],
+            ['check' => 'x-choice', 'what' => 'the refusal of a time not whole reads the event from Google first', 'case' => 'an-event-in-no-series-dragged-here-by-a-client-from-before-the-rule-is-refused', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    array_splice($this->stand->fake->requests, $s0['req'], 0, [['method' => 'GET', 'path' => '/calendars/x/events/probe', 'query' => [], 'headers' => [], 'body' => null]]);
+                    $s1 = $s0;
+                    $s1['req'] = $s0['req'] + 1;
+                    return [['ok' => false, 'error' => 'client_outdated', 'status' => 400, 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "the refusal of a time not whole writes the request's time here", 'case' => 'an-event-in-no-series-dragged-here-by-a-client-from-before-the-rule-is-refused', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $s1 = $s0;
+                    $s1['rows'][$this->singles[(string) $this->single]]['start_utc'] = '2027-01-01 00:00:00';
+                    return [['ok' => false, 'error' => 'client_outdated', 'status' => 400, 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $this->reshape($s1)];
                 }],
         ];
     }

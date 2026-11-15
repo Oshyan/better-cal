@@ -199,6 +199,180 @@ const reads24h = () => /13/.test(fmtTime(new Date(2000, 0, 1, 13, 0)));
 // (tentative), which other calendar apps and Google see too.
 const isMineCal = (cal) => !cal || (cal.role || 'mine') === 'mine';
 
+// All-day occurrences carry literal dates at +00:00; parsing them as
+// instants would land a day early west of UTC (saving then actually moved
+// the event back a day). Anchor them to local midnight instead.
+const anchor = (iso, allDay) => (allDay ? dateOfDayKey(iso.slice(0, 10)) : parseISO(iso));
+
+/**
+ * The form an event opens as, or a new event's from its draft: the one
+ * reading of an event as form fields. The editor seeds its form with it
+ * once per opening, and reads the base of a save with it (baseOf), so the
+ * form and the base it is compared with are the same kind of thing.
+ */
+function seedForm(occ, draft = {}, seriesRule = '') {
+  // A blank new event starts at the next quarter hour, not at 5:39.
+  const start = occ ? anchor(occ.start, occ.allDay) : (draft.start ? anchor(draft.start, !!draft.allDay) : new Date(Math.ceil(Date.now() / 900000) * 900000));
+  const end = occ ? anchor(occ.end, occ.allDay) : (draft.end ? anchor(draft.end, !!draft.allDay) : new Date(start.getTime() + 3600000));
+  // A draft that names its own zone (a Google Calendar link's ctz) opens
+  // in that zone, so saving keeps it: a repeating 9:00 London meeting
+  // stays 9:00 in London (audit, 0.9.14).
+  const draftZone = !occ && draft.tzid && draft.tzid !== 'UTC' && !draft.allDay && !sameClock(draft.tzid, localTz()) ? draft.tzid : null;
+  return {
+    title: occ ? occ.title : (draft.title || ''),
+    // New events land on the draft's calendar, else the user's default
+    // calendar (settings), else the first local calendar.
+    calendarId: occ ? occ.calendarId : (draft.calendarId || defaultTargetCalendarId()),
+    start: draftZone ? wallTimeInZone(start, draftZone) : toInputValue(start),
+    end: draftZone ? wallTimeInZone(end, draftZone) : toInputValue(end),
+    allDay: occ ? !!occ.allDay : !!draft.allDay,
+    // The zone Start and End are read in. It opens as this device's zone,
+    // which is how the fields above are filled, so nothing changes unless
+    // the owner picks another; only then (tzTouched) is it also saved as the
+    // event's zone. An untouched edit never rewrites a stored zone.
+    tz: draftZone || localTz(),
+    tzTouched: !!draftZone,
+    // Floating (#167): the same clock time in any zone. A new event starts
+    // from quick add's words, else its calendar's setting, until the toggle
+    // is used (floatTouched).
+    floating: occ ? !!occ.floating : !!(draft.floating || (!draft.allDay && calFloats(draft.calendarId || defaultTargetCalendarId()))),
+    floatTouched: false,
+    isContainer: occ ? !!occ.isContainer : !!draft.isContainer,
+    // Planned or Maybe, on my own calendars (status confirmed / tentative).
+    rel: (occ ? occ.relationship : draft.relationship) === 'maybe' ? 'maybe' : 'planned',
+    location: occ ? (occ.location || '') : (draft.location || ''),
+    locationLat: occ ? (occ.locationLat != null ? occ.locationLat : null)
+      : (draft.locationLat != null ? draft.locationLat : null),
+    locationLng: occ ? (occ.locationLng != null ? occ.locationLng : null)
+      : (draft.locationLng != null ? draft.locationLng : null),
+    // Only a place picked in this session (or carried from quick add) sends
+    // its provider; an existing event's coordinates go back unchanged.
+    locationProvider: occ ? null : (draft.locationProvider || null),
+    url: occ ? (occ.url || '') : '',
+    description: occ ? (occ.description || '') : (draft.description || ''),
+    tags: occ ? (occ.tags ? occ.tags.join(', ') : '') : (Array.isArray(draft.tags) ? draft.tags.join(', ') : ''),
+    people: toPeopleChips(occ ? (occ.people || []) : (draft.personNames || [])),
+    rrule: parseRrule(occ
+      ? (occ.recurring ? (occ.rrule || seriesRule || '') : '')
+      : (draft.rrule || ''), untilZone(occ), start),
+    // null = inherit calendar/global defaults; a list = explicit override
+    // (minutes before start; [] = no reminders). A new event brought from
+    // quick add may carry an alert from its text.
+    reminders: occ && occ.reminderSource === 'event'
+      ? (occ.reminders || []).map((r) => Number(r.minutes) || 0)
+      : (!occ && Array.isArray(draft.reminders) && draft.reminders.length ? draft.reminders.map((m) => Number(m) || 0) : null),
+  };
+}
+
+/**
+ * A form as the request fields a save can send, every one: the time with the
+ * clocks typed, the place, the reminders as a list or null (inherit), the
+ * trip and floating flags, and Planned or Maybe as the status where it is
+ * one (`mine`: the form's calendar is one of mine). `occ`: the event the
+ * editor is open on, for the zone a repeat's end is read in.
+ */
+function formFields(fm, occ, mine) {
+  const [fs, fe] = formInstants(fm);
+  const out = {
+    title: fm.title,
+    calendarId: Number(fm.calendarId),
+    start: toISOWithOffset(fs),
+    end: toISOWithOffset(fe),
+    // The clocks typed, in the zone they were typed in (api-contract.md,
+    // `typed`): 02:30 typed on a spring change day is a clock its
+    // instant can't hold, and a typed time is a value, not a delta.
+    ...(fm.allDay ? {} : { typed: { start: fm.start, end: fm.end, tz: fm.tzTouched && fm.tz ? fm.tz : localTz() } }),
+    allDay: fm.allDay,
+    location: fm.location || null,
+    // Picked coordinates persist directly; free-typed text sends null so
+    // stale coordinates clear and the lazy geocode re-resolves later.
+    locationLat: fm.location ? fm.locationLat : null,
+    locationLng: fm.location ? fm.locationLng : null,
+    // Which geocoder found a picked place; the server records provenance
+    // only when the coordinates changed.
+    ...(fm.locationProvider ? { locationProvider: fm.locationProvider } : {}),
+    url: fm.url || null,
+    description: isEmptyHtml(fm.description) ? null : fm.description,
+    tagNames: fm.tags.split(',').map((t) => t.trim()).filter(Boolean),
+    // Ids, never names: a name-keyed save can't tell a new person from a
+    // stale copy of a renamed one, and resolves that ambiguity by creating a
+    // duplicate. Proposed chips (id null) are blocked before a save, so
+    // every chip here is a directory person the user confirmed.
+    personIds: fm.people.map((c) => c.id),
+    rrule: buildRrule(fm.rrule, fm.allDay, fm.tzTouched ? fm.tz : untilZone(occ), fromInputValue(fm.start)),
+    // null inherits the calendar's or the person's defaults; a list is the
+    // event's own.
+    reminders: fm.reminders === null ? null : normalizeMinutesList(fm.reminders),
+    // A trip clearing on a trip that still has attached events gets the
+    // server's trip_has_members refusal, which updateEvent words.
+    isContainer: !!fm.isContainer,
+    // Floating (#167): never on an all-day event.
+    floating: !!fm.floating && !fm.allDay,
+    // Planned or Maybe is the event's status on my own calendars.
+    ...(mine ? { status: fm.rel === 'maybe' ? 'tentative' : 'confirmed' } : {}),
+  };
+  // A zone the owner picked becomes the event's own zone: it is what a
+  // repeating event keeps its clock time in across DST changes. All-day
+  // events are dates and have no use for one.
+  if (fm.tzTouched && !fm.allDay && !fm.floating) out.tzid = fm.tz;
+  return out;
+}
+
+// A new event's base for the fields that have a default: one left at its
+// default is not sent, and the server applies the same default.
+const NEW_EVENT_BASE = { reminders: null, isContainer: false, floating: false, status: 'confirmed' };
+const sameValue = (a, b) => JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
+
+/**
+ * The one base of an opening of the editor: for each field, what the person
+ * has most recently been shown. `opened` is the form as this opening seeded
+ * it (with the rich-text box's own tidying of the notes); after a question
+ * (googlechange.js editorShown), each field the question showed is Google's
+ * value as it showed it, read through seedForm from the event as shown
+ * (editorBase), and every other field keeps its value from `opened`.
+ * Computed from the data: a form field is the question's when reading the
+ * shown event gives it another value than reading the event as opened.
+ * Returns { occ, form }: the event as shown, whose values sendEventChange
+ * sends as `over`, and the base as a form.
+ */
+function baseOf(editor, opened) {
+  const shown = editorBase(editor);
+  if (!opened || !editor || !editor.occ || shown === editor.occ) return { occ: shown, form: opened };
+  const was = seedForm(editor.occ, {}, editor.rrule);
+  const now = seedForm(shown, {}, editor.rrule);
+  const form = { ...opened };
+  for (const k of Object.keys(now)) if (!sameValue(now[k], was[k])) form[k] = now[k];
+  return { occ: shown, form };
+}
+
+/**
+ * What a Save sends, from the one base (baseOf): the request fields of the
+ * form that differ from the base's (changedFields; the repeat rule only
+ * when the repeat controls differ from the base's), and `occ`, the event as
+ * shown, whose values for exactly those fields go out as `over`
+ * (googlechange.js overOf). A new event sends every field but the ones left
+ * at their default. `base` is the base as a form, for the toast's words and
+ * the series dialog's lines.
+ */
+function saveOf(editor, opened, form) {
+  const mine = isMineCal(state.calendars.find((c) => c.id === Number(form.calendarId)));
+  const fields = formFields(form, editor.occ, mine);
+  if (!editor.occ) {
+    for (const [k, v] of Object.entries(NEW_EVENT_BASE)) if (sameValue(fields[k], v)) delete fields[k];
+    return { occ: null, fields, base: null, was: {} };
+  }
+  const base = baseOf(editor, opened);
+  // No base to compare with: everything goes.
+  if (!base.form) return { occ: base.occ, fields, base: null, was: {} };
+  const was = formFields(base.form, editor.occ, mine);
+  return {
+    occ: base.occ,
+    fields: changedFields(fields, was, { rruleTouched: JSON.stringify(form.rrule) !== JSON.stringify(base.form.rrule) }),
+    base: base.form,
+    was,
+  };
+}
+
 export function EditorDrawer() {
   const editor = useStore((s) => s.editor);
   // The opening this editor is: the state it was opened as, kept while the
@@ -228,8 +402,12 @@ export function EditorDrawer() {
   // Custom reminder entry (number + unit) revealed by the Custom option.
   const [remCustom, setRemCustom] = useState(null); // {n, unit} | null
 
-  // Dirty tracking baseline (JSON of the initial form; NL text counts too).
+  // The form as this opening seeded it, as JSON: what the base of a save
+  // and the dirty mark start from (baseOf; NL text counts too).
   const initialSnapRef = useRef(null);
+  const openedForm = () => {
+    try { return initialSnapRef.current == null ? null : JSON.parse(initialSnapRef.current); } catch { return null; }
+  };
 
   // NL assist (create mode): debounce-parse, race-guard, flash filled fields.
   const [nlText, setNlText] = useState('');
@@ -396,14 +574,19 @@ export function EditorDrawer() {
   // to sessionStorage as it changes, cleared when it is not dirty, saved, or
   // deliberately dropped. That is what lets closing be undoable and a
   // version reload be safe (drafts.js).
+  // Dirty means the form differs from the same base a Save compares with
+  // (baseOf), so after a question a form holding only what Google holds now
+  // is not dirty, and one holding anything else is, until it is saved.
+  const shownNow = editor ? editor.shown : null;
   useEffect(() => {
-    if (!form || initialSnapRef.current == null) return;
-    const dirty = JSON.stringify(form) !== initialSnapRef.current
+    const opened = openedForm();
+    if (!form || !opened) return;
+    const dirty = JSON.stringify(form) !== JSON.stringify(baseOf(state.editor, opened).form)
       || (nlText || '').trim() !== ((editor && editor.nlText) || '').trim();
     if (dirty !== state.editorDirty) set({ editorDirty: dirty });
-    if (dirty) saveEditorDraft({ editor, form, nlText, initialSnap: initialSnapRef.current });
+    if (dirty) saveEditorDraft({ editor: state.editor, form, nlText, initialSnap: initialSnapRef.current });
     else clearEditorDraft();
-  }, [form, nlText]); // eslint-disable-line
+  }, [form, nlText, shownNow]); // eslint-disable-line
 
   // Scheduling assist (docs/api-contract.md, People and Availability): when the event's
   // people are away/busy during its time, warn inline under the People
@@ -451,65 +634,7 @@ export function EditorDrawer() {
       });
       return () => { alive = false; };
     }
-    const draft = editor.draft || {};
-    // All-day occurrences carry literal dates at +00:00; parsing them as
-    // instants would land a day early west of UTC (saving then actually
-    // moved the event back a day). Anchor them to local midnight instead.
-    const anchor = (iso, allDay) => (allDay ? dateOfDayKey(iso.slice(0, 10)) : parseISO(iso));
-    // A blank new event starts at the next quarter hour, not at 5:39.
-    const start = occ ? anchor(occ.start, occ.allDay) : (draft.start ? anchor(draft.start, !!draft.allDay) : new Date(Math.ceil(Date.now() / 900000) * 900000));
-    const end = occ ? anchor(occ.end, occ.allDay) : (draft.end ? anchor(draft.end, !!draft.allDay) : new Date(start.getTime() + 3600000));
-    // A draft that names its own zone (a Google Calendar link's ctz) opens
-    // in that zone, so saving keeps it: a repeating 9:00 London meeting
-    // stays 9:00 in London (audit, 0.9.14).
-    const draftZone = !occ && draft.tzid && draft.tzid !== 'UTC' && !draft.allDay && !sameClock(draft.tzid, localTz()) ? draft.tzid : null;
-    const initial = {
-      title: occ ? occ.title : (draft.title || ''),
-      // New events land on the draft's calendar, else the user's default
-      // calendar (settings), else the first local calendar.
-      calendarId: occ ? occ.calendarId : (draft.calendarId || defaultTargetCalendarId()),
-      start: draftZone ? wallTimeInZone(start, draftZone) : toInputValue(start),
-      end: draftZone ? wallTimeInZone(end, draftZone) : toInputValue(end),
-      allDay: occ ? !!occ.allDay : !!draft.allDay,
-      // The zone Start and End are read in. It opens as this device's zone,
-      // which is how the fields above are filled, so nothing changes unless
-      // the owner picks another; only then (tzTouched) is it also saved as the
-      // event's zone. An untouched edit never rewrites a stored zone.
-      tz: draftZone || localTz(),
-      tzTouched: !!draftZone,
-      // Floating (#167): the same clock time in any zone. A new event starts
-      // from quick add's words, else its calendar's setting, until the toggle
-      // is used (floatTouched).
-      floating: occ ? !!occ.floating : !!(draft.floating || (!draft.allDay && calFloats(draft.calendarId || defaultTargetCalendarId()))),
-      floatTouched: false,
-      isContainer: occ ? !!occ.isContainer : !!draft.isContainer,
-      // Planned or Maybe, on my own calendars (status confirmed / tentative).
-      rel: (occ ? occ.relationship : draft.relationship) === 'maybe' ? 'maybe' : 'planned',
-      location: occ ? (occ.location || '') : (draft.location || ''),
-      locationLat: occ ? (occ.locationLat != null ? occ.locationLat : null)
-        : (draft.locationLat != null ? draft.locationLat : null),
-      locationLng: occ ? (occ.locationLng != null ? occ.locationLng : null)
-        : (draft.locationLng != null ? draft.locationLng : null),
-      // Only a place picked in this session (or carried from quick add) sends
-      // its provider; an existing event's coordinates go back unchanged.
-      locationProvider: occ ? null : (draft.locationProvider || null),
-      url: occ ? (occ.url || '') : '',
-      description: occ ? (occ.description || '') : (draft.description || ''),
-      tags: occ ? (occ.tags ? occ.tags.join(', ') : '') : (Array.isArray(draft.tags) ? draft.tags.join(', ') : ''),
-      people: toPeopleChips(occ ? (occ.people || []) : (draft.personNames || [])),
-      rrule: parseRrule(occ
-        ? (occ.recurring ? (occ.rrule || editor.rrule || '') : '')
-        : (draft.rrule || ''), untilZone(occ), start),
-      // null = inherit calendar/global defaults; a list = explicit override
-      // (minutes before start; [] = no reminders). remInitial detects changes.
-      // A new event brought from quick add may carry an alert from its text.
-      reminders: occ && occ.reminderSource === 'event'
-        ? (occ.reminders || []).map((r) => Number(r.minutes) || 0)
-        : (!occ && Array.isArray(draft.reminders) && draft.reminders.length ? draft.reminders.map((m) => Number(m) || 0) : null),
-      remInitial: occ && occ.reminderSource === 'event'
-        ? (occ.reminders || []).map((r) => Number(r.minutes) || 0).join(',')
-        : null,
-    };
+    const initial = seedForm(occ, editor.draft || {}, editor.rrule);
     setForm(initial);
     nlBase.current = initial;
     // A new event that arrives with a title (quick add's More options, a
@@ -609,9 +734,8 @@ export function EditorDrawer() {
   const repeatReq = useRef(0);
   let repeatAsk = '';
   if (editor && form && seriesPlans() && (form.rrule.custom || form.rrule.freq !== 'none')) {
-    let opened = null;
-    try { opened = JSON.parse(initialSnapRef.current); } catch { /* none yet */ }
-    const touched = !opened || JSON.stringify(form.rrule) !== JSON.stringify(opened.rrule);
+    const base = baseOf(editor, openedForm()).form;
+    const touched = !base || JSON.stringify(form.rrule) !== JSON.stringify(base.rrule);
     const [fs, fe] = formInstants(form);
     if (!isNaN(fs) && !isNaN(fe) && fe > fs) {
       repeatAsk = editor.occ && editor.occ.recurring && !touched
@@ -781,76 +905,13 @@ export function EditorDrawer() {
       flashTimer.current = setTimeout(() => setNlFlash(null), 1400);
       return;
     }
-    // The form as fields; for an edit, the same from the form as it opened.
-    const formFields = (fm) => {
-      const [fs, fe] = formInstants(fm);
-      const out = {
-        title: fm.title,
-        calendarId: Number(fm.calendarId),
-        start: toISOWithOffset(fs),
-        end: toISOWithOffset(fe),
-        // The clocks typed, in the zone they were typed in (api-contract.md,
-        // `typed`): 02:30 typed on a spring change day is a clock its
-        // instant can't hold, and a typed time is a value, not a delta.
-        ...(fm.allDay ? {} : { typed: { start: fm.start, end: fm.end, tz: fm.tzTouched && fm.tz ? fm.tz : localTz() } }),
-        allDay: fm.allDay,
-        location: fm.location || null,
-        // Picked coordinates persist directly; free-typed text sends null so
-        // stale coordinates clear and the lazy geocode re-resolves later.
-        locationLat: fm.location ? fm.locationLat : null,
-        locationLng: fm.location ? fm.locationLng : null,
-        // Which geocoder found a picked place; the server records provenance
-        // only when the coordinates changed.
-        ...(fm.locationProvider ? { locationProvider: fm.locationProvider } : {}),
-        url: fm.url || null,
-        description: isEmptyHtml(fm.description) ? null : fm.description,
-        tagNames: fm.tags.split(',').map((t) => t.trim()).filter(Boolean),
-        // Ids, never names: a name-keyed save can't tell a new person from a
-        // stale copy of a renamed one, and resolves that ambiguity by creating a
-        // duplicate. Proposed chips (id null) are blocked above, so every chip
-        // here is a directory person the user confirmed.
-        personIds: fm.people.map((c) => c.id),
-        rrule: buildRrule(fm.rrule, fm.allDay, fm.tzTouched ? fm.tz : untilZone(occ), fromInputValue(fm.start)),
-      };
-      // A zone the owner picked becomes the event's own zone: it is what a
-      // repeating event keeps its clock time in across DST changes. All-day
-      // events are dates and have no use for one.
-      if (fm.tzTouched && !fm.allDay && !fm.floating) out.tzid = fm.tz;
-      return out;
-    };
-    let fields = formFields(form);
-    // Only send reminders when the override actually changed, so unrelated
-    // edits never clobber an inherited default with a snapshot of it.
-    const remNow = form.reminders === null ? null : [...form.reminders].sort((a, b) => a - b).join(',');
-    if (remNow !== form.remInitial) {
-      fields.reminders = form.reminders === null ? null : normalizeMinutesList(form.reminders);
-    }
-    // An edit sends only what the person changed (#199): the rule only when
-    // the repeat controls were touched, so a rename isn't a new rule.
-    let opened = null;
-    if (occ) {
-      try { opened = JSON.parse(initialSnapRef.current); } catch { /* no baseline: everything goes */ }
-      if (opened) {
-        const was = formFields(opened);
-        if ('reminders' in fields) was.reminders = opened.reminders;
-        fields = changedFields(fields, was, { rruleTouched: JSON.stringify(form.rrule) !== JSON.stringify(opened.rrule) });
-      }
-    }
-    // Trip flag: sent only when it changes (clearing it on a trip that still
-    // has attached events gets the server's trip_has_members refusal, which
-    // updateEvent turns into a helpful toast).
-    if (occ ? !!occ.isContainer !== form.isContainer : form.isContainer) {
-      fields.isContainer = form.isContainer;
-    }
-    // Floating (#167): sent only when it changes, and never on an all-day event.
-    const floats = !!form.floating && !form.allDay;
-    if (occ ? !!occ.floating !== floats : floats) fields.floating = floats;
-    // Planned or Maybe is the event's status on my own calendars; sent on a
-    // new Maybe, or when an edit changes it.
-    if (isMineCal(state.calendars.find((c) => c.id === Number(form.calendarId)))) {
-      const was = occ ? (occ.relationship === 'maybe' ? 'maybe' : 'planned') : 'planned';
-      if (form.rel !== was) fields.status = form.rel === 'maybe' ? 'tentative' : 'confirmed';
-    }
+    // What the Save sends and what it is compared with, from the one base
+    // (saveOf): for an edit, the fields that differ from what the person has
+    // most recently been shown (#199; the rule only when the repeat
+    // controls differ from the base's, so a rename isn't a new rule), and
+    // the event as shown, whose values go out as `over` for those fields.
+    const save = saveOf(state.editor, openedForm(), form);
+    const { fields } = save;
     let ok;
     const finish = () => {
       // New people linked via this save should appear in the sidebar folder
@@ -863,16 +924,14 @@ export function EditorDrawer() {
       // Nothing changed: nothing to send.
       if (Object.keys(fields).length === 0) { finish(); return; }
       // What the edit changed, for the toast ("Changed the title and time").
-      let words = null;
-      try { words = editedWords(opened || JSON.parse(initialSnapRef.current), form); } catch { /* no baseline: the toast says "Updated" */ }
+      const words = save.base ? editedWords(save.base, form) : null;
       // All events, or this and following, in a series: the plan first, in
       // the dialog over the footer (SeriesDialog.js), unless it says the
       // change is direct (a split never is: it ends the series before it).
       if (occ.recurring && (scope === 'all' || scope === 'following') && seriesPlans()) {
-        const was = opened ? { ...formFields(opened), reminders: opened.reminders, floating: !!occ.floating } : {};
         openSeriesChange({
           kind: 'editor', occ, body: fields, quiet: true, scope,
-          fields: fieldLines(fields, was, {
+          fields: fieldLines(fields, save.was, {
             calendarName: (id) => (state.calendars.find((c) => c.id === Number(id)) || {}).name || '',
             personName: (id) => (state.people.find((p) => p.id === id) || {}).name || '',
             timeWords: (a, b) => timeChange({ start: a.start, end: a.end, allDay: a.allDay }, { start: b.start, end: b.end, allDay: b.allDay }),
@@ -886,9 +945,8 @@ export function EditorDrawer() {
       }
       // Compared at the server with what the person has been shown: the
       // event as this editor opened it, then what a question showed
-      // (editorBase). The fields sent are still what the person changed
-      // from the form as it opened.
-      ok = await updateEvent(editorBase(state.editor) || occ, fields, scope, words);
+      // (baseOf), the same base the fields above differ from.
+      ok = await updateEvent(save.occ || occ, fields, scope, words);
     } else {
       const created = await createEvent(fields);
       ok = !!created;

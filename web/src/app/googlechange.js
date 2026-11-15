@@ -18,6 +18,10 @@
 //   open on the event keeps the person's fields, and its base becomes what
 //   the question showed (shownAfter), so its next Save goes through unless
 //   Google changed again;
+// - questions are asked one at a time, in the order they came
+//   (ConfirmDialog.js confirmTurn): one that came while another was open
+//   sends its request again when its turn comes, and asks from that answer,
+//   so it never shows words that went stale while it waited;
 // - a 200 that carries the event as saved (an event in no series) puts it in
 //   place of every copy held before the caller goes on, so what shows after
 //   an answer is the answer, not what a later refetch of the window brings;
@@ -28,7 +32,7 @@
 
 import { adoptEvent, state, set } from './store.js';
 import { api, ApiError, refreshWindow } from './api.js';
-import { askConfirm } from './ConfirmDialog.js';
+import { confirmTurn } from './ConfirmDialog.js';
 import { googleChangedAsk } from '../lib/planwords.js';
 
 /** What sendEventChange resolves to when the person chose Cancel at the question: nothing was sent. */
@@ -96,7 +100,12 @@ function nowOf(fields) {
  * it. Overwrite's `over` is the same values (overwriteOf).
  */
 export function shownAfter(occ, fields) {
-  return { ...occ, ...nowOf(fields) };
+  const after = { ...occ, ...nowOf(fields) };
+  // Planned or Maybe is shown as the event's relationship, which on one of
+  // my calendars is its status (Events::relationship): the editor reads it
+  // from there, so the status the question showed is shown there too.
+  if (after.status !== occ.status) after.relationship = after.status === 'tentative' ? 'maybe' : 'planned';
+  return after;
 }
 
 /**
@@ -147,30 +156,53 @@ export async function sendEventChange(occ, path, method, body = {}, { remove = f
   const over = overOf(occ, body, { remove });
   let send = Object.keys(over).length ? { ...body, over } : body;
   let shown = false;
-  for (;;) {
-    let answer;
-    try {
-      answer = await api(path, { method, body: send });
-    } catch (e) {
-      const fields = askedFields(e);
-      if (!fields) throw e;
-      await showStored(occ, shown ? null : revert);
-      shown = true;
-      editorShown(occ, fields);
-      const ask = googleChangedAsk({ name: occ.title, fields, remove, back });
-      if (!(await askConfirm(ask))) return CANCELLED;
-      send = overwriteOf(send, fields);
-      continue;
+  // The dialog's turn (ConfirmDialog.js confirmTurn): its place in line
+  // taken when the server asks, held until the question is asked, and given
+  // back on every way out.
+  let turn = null;
+  let inLine = null;
+  try {
+    for (;;) {
+      let answer;
+      try {
+        answer = await api(path, { method, body: send });
+      } catch (e) {
+        const fields = askedFields(e);
+        if (!fields) throw e;
+        if (!turn) inLine = confirmTurn();
+        await showStored(occ, shown ? null : revert);
+        shown = true;
+        editorShown(occ, fields);
+        if (inLine) {
+          turn = await inLine;
+          inLine = null;
+          // Another question was open or waiting when the server asked: by
+          // now Google may hold something else, or the event may be gone.
+          // The same request goes again with the dialog held, and its answer
+          // decides: the question from what the server says now, the change
+          // itself if Google holds again what was shown, or the failure.
+          if (turn.waited) continue;
+        }
+        const ask = googleChangedAsk({ name: occ.title, fields, remove, back });
+        const yes = await turn.ask(ask);
+        turn = null; // the answer gave it back
+        if (!yes) return CANCELLED;
+        send = overwriteOf(send, fields);
+        continue;
+      }
+      // The event as saved, when the answer carries it (PATCH of an event in
+      // no series): in place of every copy held, as a change that landed, so
+      // the caller's toast, a closing editor and the grid show the same thing
+      // at once, and a refetch asked before it can't put the old copy back.
+      // A change of the caller's still on its way (a drag's own copy) stands:
+      // adoptEvent leaves the event to the refetch then.
+      const saved = answer && answer.occurrence;
+      if (saved && !saved.recurring) adoptEvent(saved, { saved: true });
+      return answer;
     }
-    // The event as saved, when the answer carries it (PATCH of an event in
-    // no series): in place of every copy held, as a change that landed, so
-    // the caller's toast, a closing editor and the grid show the same thing
-    // at once, and a refetch asked before it can't put the old copy back.
-    // A change of the caller's still on its way (a drag's own copy) stands:
-    // adoptEvent leaves the event to the refetch then.
-    const saved = answer && answer.occurrence;
-    if (saved && !saved.recurring) adoptEvent(saved, { saved: true });
-    return answer;
+  } finally {
+    if (turn) turn.release();
+    if (inLine) inLine.then((t) => t.release());
   }
 }
 

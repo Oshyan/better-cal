@@ -29,6 +29,7 @@ if (getenv('BC_TEST_PRELOAD') !== false) {
     require (string) getenv('BC_TEST_PRELOAD');
 }
 require __DIR__ . '/lib.php';
+require_once __DIR__ . '/scratch.php';
 
 // The app as installed: repeating events need Composer's libraries.
 if (!class_exists(\Sabre\VObject\Reader::class)) {
@@ -65,44 +66,42 @@ $runHere = static function (array $tests): array {
     $name = 'bc_test_' . bin2hex(random_bytes(4));
     $server = new PDO("mysql:host=$host;port=$port;charset=utf8mb4", $user, $password, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
     $server->exec("CREATE DATABASE `$name` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+    // Dropped after the report is written, at the end of this script (ScratchDatabase).
+    ScratchDatabase::made($server, $name);
     // For the second connection (child.php).
     putenv('BC_TEST_DSN=' . "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4");
     putenv("BC_TEST_DB_USER=$user");
     putenv("BC_TEST_DB_PASS=$password");
     $files = [];
-    try {
-        $db = new Db(['dsn' => "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4", 'user' => $user, 'pass' => $password]);
-        $migrator = new Migrator($db, dirname(__DIR__, 2) . '/migrations');
-        $migrator->run(static function (string $line): void {
-        });
-        checkEq(SCHEMA_CHECK, [], $migrator->pending());
-        // The rules over all data (lib.php, dataRulesCheck: links and provider identity) read this database after every block and after every file.
-        $GLOBALS['__rulesDb'] = $db;
-        $GLOBALS['__rulesSeen'] = [];
-        foreach ($tests as $file) {
-            $files[basename($file)] = false;
-            // Each file starts with new accounts as shipped; one that tests undo of a change to all events on Google says so itself.
-            seriesUndoDefault(false);
-            try {
-                (require $file)($db);
-                $files[basename($file)] = true;
-            } catch (\Throwable $e) {
-                // One failure for the throw; the rest of that file is skipped
-                // (a block wrapped in scenario() keeps a throw to itself), and
-                // the other files still run.
-                check(basename($file) . ' ran to the end', false, get_class($e) . ': ' . $e->getMessage() . ' at ' . basename($e->getFile()) . ':' . $e->getLine(), true);
-            }
-            // The backstop: a violation made outside any block of the file, named by the file.
-            dataRulesCheck('made outside any block of ' . basename($file), null, null);
+    $db = new Db(['dsn' => "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4", 'user' => $user, 'pass' => $password]);
+    $migrator = new Migrator($db, dirname(__DIR__, 2) . '/migrations');
+    $migrator->run(static function (string $line): void {
+    });
+    checkEq(SCHEMA_CHECK, [], $migrator->pending());
+    // The rules over all data (lib.php, dataRulesCheck: links and provider identity) read this database after every block and after every file.
+    $GLOBALS['__rulesDb'] = $db;
+    $GLOBALS['__rulesSeen'] = [];
+    foreach ($tests as $file) {
+        $files[basename($file)] = false;
+        // Each file starts with new accounts as shipped; one that tests undo of a change to all events on Google says so itself.
+        seriesUndoDefault(false);
+        try {
+            (require $file)($db);
+            $files[basename($file)] = true;
+        } catch (\Throwable $e) {
+            // One failure for the throw; the rest of that file is skipped
+            // (a block wrapped in scenario() keeps a throw to itself), and
+            // the other files still run.
+            check(basename($file) . ' ran to the end', false, get_class($e) . ': ' . $e->getMessage() . ' at ' . basename($e->getFile()) . ':' . $e->getLine(), true);
         }
-        $GLOBALS['__rulesDb'] = null;
-        foreach ($GLOBALS['__rulesOptedOut'] ?? [] as $block => $o) {
-            echo "rules over all data not counted for the block '$block' ({$o['count']} violation(s)): {$o['why']}\n";
-        }
-        check(JOURNAL_CHECK, BetterCal\Domain\Undo::misuses() === [], implode("\n  ", BetterCal\Domain\Undo::misuses()));
-    } finally {
-        $server->exec("DROP DATABASE IF EXISTS `$name`");
+        // The backstop: a violation made outside any block of the file, named by the file.
+        dataRulesCheck('made outside any block of ' . basename($file), null, null);
     }
+    $GLOBALS['__rulesDb'] = null;
+    foreach ($GLOBALS['__rulesOptedOut'] ?? [] as $block => $o) {
+        echo "rules over all data not counted for the block '$block' ({$o['count']} violation(s)): {$o['why']}\n";
+    }
+    check(JOURNAL_CHECK, BetterCal\Domain\Undo::misuses() === [], implode("\n  ", BetterCal\Domain\Undo::misuses()));
     return ['files' => $files, 'checks' => $GLOBALS['__checks']];
 };
 
@@ -128,7 +127,7 @@ $runApart = static function (array $tests, int $jobs): array {
         $stem = basename($queue[$i], '.test.php');
         $report = "$tmp/$stem.json";
         $proc = proc_open([PHP_BINARY, __FILE__], [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]], $pipes, null,
-            ['BC_TEST_ONLY' => $stem, 'BC_TEST_REPORT' => $report] + $env + getenv());
+            ['BC_TEST_ONLY' => $stem, 'BC_TEST_REPORT' => $report, 'BC_TEST_CHILD' => '1'] + $env + getenv());
         $started = is_resource($proc);
         if ($started) {
             stream_set_blocking($pipes[1], false);
@@ -141,6 +140,8 @@ $runApart = static function (array $tests, int $jobs): array {
         unset($running[$i]);
         $file = basename($queue[$i]);
         $code = $r['proc'] === null ? -1 : proc_close($r['proc']);
+        // A child drops its database after writing its report; a drop it could not make is counted here.
+        ScratchDatabase::countIn($r['out']);
         $report = is_file($r['report']) ? json_decode((string) file_get_contents($r['report']), true) : null;
         // The child's own totals line; the parent prints the file's instead.
         $out = (string) preg_replace('/\n\d+ passed, \d+ failed\n$/', '', $r['out']);
@@ -220,11 +221,18 @@ $merge = static function (array $reports): array {
 
 // One file named by BC_TEST_ONLY, or BC_TEST_JOBS=1, runs here in this process.
 $jobs = getenv('BC_TEST_ONLY') !== false ? 1 : min(count($tests), getenv('BC_TEST_JOBS') !== false ? max(1, (int) getenv('BC_TEST_JOBS')) : $cpus());
-$result = $merge($jobs > 1 ? $runApart($tests, $jobs) : [$runHere($tests)]);
-
-// The checks by label, for the mutation runner: which files ran (and to the end), every check, pass or fail.
-if (getenv('BC_TEST_REPORT') !== false) {
-    file_put_contents((string) getenv('BC_TEST_REPORT'), json_encode($result));
+try {
+    $result = $merge($jobs > 1 ? $runApart($tests, $jobs) : [$runHere($tests)]);
+    // The checks by label, for the mutation runner: which files ran (and to the end), every check, pass or fail.
+    if (getenv('BC_TEST_REPORT') !== false) {
+        file_put_contents((string) getenv('BC_TEST_REPORT'), json_encode($result));
+    }
+} finally {
+    // The result is written; the cleanup after it changes nothing of it (ScratchDatabase).
+    ScratchDatabase::dropMade();
+}
+if (getenv('BC_TEST_CHILD') === false) {
+    echo "\n" . ScratchDatabase::summary();
 }
 echo "\n{$result['passed']} passed, {$result['failed']} failed\n";
 exit($result['failed'] === 0 ? 0 : 1);

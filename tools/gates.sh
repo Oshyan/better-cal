@@ -16,6 +16,7 @@
 # BC_TEST_DB (host:port, default 127.0.0.1:3306), BC_TEST_DB_USER and BC_TEST_DB_PASS as
 # the suites read them. GATES_LOG is where each gate's output goes (default: a new temp
 # folder, printed first). GATES_SEED fixes the fresh seed (default: drawn, and printed).
+# GATES_MUTATION_JOBS is how many mutation runs go at once (default 8).
 # Exit status 0 only when every gate passed; a gate that did not finish has not passed.
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -28,6 +29,9 @@ export BC_TEST_DB="${BC_TEST_DB:-127.0.0.1:3306}"
 LOG="${GATES_LOG:-$(mktemp -d "${TMPDIR:-/tmp}/bc-gates.XXXXXX")}"
 mkdir -p "$LOG"
 RECORDED=7
+# The mutation runs at once: as many as the test database server has CPUs to take them (the server is where they wait),
+# beside the seeds the full level starts with them. GATES_MUTATION_JOBS overrides it.
+MUTATION_JOBS="${GATES_MUTATION_JOBS:-8}"
 FRESH="${GATES_SEED:-$(( (RANDOM * 32768 + RANDOM) % 90000 + 10000 ))}"
 FAILED=0
 PIDS=()
@@ -117,7 +121,7 @@ case "$LEVEL" in
     settle
     if [ -n "$SINCE" ]; then
       IDS="$(mutations_since "$SINCE")"
-      [ -n "$IDS" ] && start mutations php tools/edit-harness/mutations/run.php --only "$IDS"
+      [ -n "$IDS" ] && start mutations php tools/edit-harness/mutations/run.php --only "$IDS" --jobs "$MUTATION_JOBS"
       engine_changed "$SINCE" && seeds "$RECORDED"
       settle
     fi
@@ -126,7 +130,7 @@ case "$LEVEL" in
     suites_all
     settle
     start oracle-probes ./tools/edit-harness/run.sh --interleave --oracle-probes
-    start mutations php tools/edit-harness/mutations/run.php
+    start mutations php tools/edit-harness/mutations/run.php --jobs "$MUTATION_JOBS"
     seeds "$RECORDED"
     settle
     echo "fresh seed: $FRESH"

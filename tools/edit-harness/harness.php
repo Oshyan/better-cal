@@ -96,6 +96,7 @@ if (isset($opts['model'])) {
     require (string) $opts['model'];
 }
 require $harnessRoot . '/server/tests/db/lib.php';
+require_once $harnessRoot . '/server/tests/db/scratch.php';
 require __DIR__ . '/lib.php';
 BetterCal\EditHarness\Product::use($root);
 // --series-undo on|off: the account's google_series_undo setting (Product::$seriesUndo, README: Google); off by default, as shipped.
@@ -149,74 +150,72 @@ $runHere = static function (int $shard, int $of) use ($root, $cases, $seed, $onl
     $name = 'bc_edits_' . bin2hex(random_bytes(4));
     $server = new PDO("mysql:host=$host;port=$port;charset=utf8mb4", $user, $password, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
     $server->exec("CREATE DATABASE `$name` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+    // Dropped after this process's findings (or a shard's partial ones) are written (ScratchDatabase).
+    ScratchDatabase::made($server, $name);
     $started = microtime(true);
-    try {
-        $db = new Db(['dsn' => "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4", 'user' => $user, 'pass' => $password]);
-        (new Migrator($db, $root . '/server/migrations'))->run(static function (string $line): void {
-        });
-        $runner = new Runner($db, domains($db), $seed, $googleMode);
-        $runner->run($cases, $onlyFamily, $onlyCase, 150, static function (int $i, array $result) use ($quiet, $cases, $saveSpec, $find): void {
-            if ($find !== null) {
-                // --find 'check|role': the cases that ran a category, to pick one as a fixed case.
-                [$fc, $fr] = explode('|', $find, 2) + [1 => ''];
-                if (($result['runs'][$fc][$fr] ?? 0) > 0) {
-                    echo "case $i ran $find\n";
-                }
-            }
-            if ($saveSpec !== null && isset($result['spec']['vector'])) {
-                // The complete spec, as a fixed case is written (what the run recorded of the request is left out).
-                $spec = array_diff_key($result['spec'], ['request' => 1, 'create' => 1, 'path' => 1]);
-                file_put_contents($saveSpec . '/seed' . $result['spec']['seed'] . '-case' . $i . '.json', json_encode($spec, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
-            }
-            // HARNESS_SLOW=seconds names each case that took longer.
-            static $last = null;
-            $now = microtime(true);
-            if (getenv('HARNESS_SLOW') !== false && $last !== null && $now - $last > (float) getenv('HARNESS_SLOW')) {
-                fwrite(STDERR, sprintf("case %d took %.1fs: %s %s %s\n", $i, $now - $last, $result['spec']['series']['family'], $result['spec']['series']['rrule'], $result['path']));
-            }
-            $last = $now;
-            if (!$quiet && $result['records'] !== []) {
-                foreach ($result['records'] as $rec) {
-                    $known = Known::cause($rec + ['path' => $result['path'], 'spec' => $result['spec']]) !== null ? ' (known cause)' : '';
-                    echo "case $i: {$rec['invariant']} {$result['spec']['series']['family']} {$result['path']}$known: {$rec['what']}\n";
-                }
-            }
-            if (!$quiet && $i % 500 === 0) {
-                fwrite(STDERR, "$i of $cases\n");
-            }
-        }, $of, $shard);
-        // The fixed cases run once in all, on the first shard.
-        if ($shard === 0 && $fixed !== null) {
-            $runner->runFixed($fixed);
-        } elseif ($shard === 0 && $full) {
-            // A full run takes the fixed cases too: some required categories (a rule the expander can't read) are never drawn.
-            $runner->runFixed();
-        }
-        $casesSeconds = round(microtime(true) - $started, 1);
-        $misuses = method_exists(BetterCal\Domain\Undo::class, 'misuses') ? BetterCal\Domain\Undo::misuses() : [];
-
-        // One shrunk reproduction per failure signature outside the known paths.
-        $minimal = [];
-        if ($shrink) {
-            $bySignature = [];
-            foreach ($runner->failures as $f) {
-                $bySignature[Runner::signature($f)][] = $f;
-            }
-            ksort($bySignature);
-            foreach ($bySignature as $sig => $list) {
-                if (Known::cause($list[0]) === null) {
-                    $minimal[$sig] = $runner->shrink($list[0]);
-                }
+    $db = new Db(['dsn' => "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4", 'user' => $user, 'pass' => $password]);
+    (new Migrator($db, $root . '/server/migrations'))->run(static function (string $line): void {
+    });
+    $runner = new Runner($db, domains($db), $seed, $googleMode);
+    $runner->run($cases, $onlyFamily, $onlyCase, 150, static function (int $i, array $result) use ($quiet, $cases, $saveSpec, $find): void {
+        if ($find !== null) {
+            // --find 'check|role': the cases that ran a category, to pick one as a fixed case.
+            [$fc, $fr] = explode('|', $find, 2) + [1 => ''];
+            if (($result['runs'][$fc][$fr] ?? 0) > 0) {
+                echo "case $i ran $find\n";
             }
         }
-        return [
-            // The mode it ran in, so the parent can tell a child that lost --google (it once did, silently) from one that ran it.
-            'partial' => true, 'shard' => $shard, 'google' => $googleMode, 'counts' => $runner->counts, 'firstSeen' => $runner->firstSeen, 'failures' => $runner->failures, 'minimal' => $minimal,
-            'misuses' => $misuses, 'prof' => Prof::$t, 'casesSeconds' => $casesSeconds, 'seconds' => round(microtime(true) - $started, 1),
-        ];
-    } finally {
-        $server->exec("DROP DATABASE IF EXISTS `$name`");
+        if ($saveSpec !== null && isset($result['spec']['vector'])) {
+            // The complete spec, as a fixed case is written (what the run recorded of the request is left out).
+            $spec = array_diff_key($result['spec'], ['request' => 1, 'create' => 1, 'path' => 1]);
+            file_put_contents($saveSpec . '/seed' . $result['spec']['seed'] . '-case' . $i . '.json', json_encode($spec, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+        }
+        // HARNESS_SLOW=seconds names each case that took longer.
+        static $last = null;
+        $now = microtime(true);
+        if (getenv('HARNESS_SLOW') !== false && $last !== null && $now - $last > (float) getenv('HARNESS_SLOW')) {
+            fwrite(STDERR, sprintf("case %d took %.1fs: %s %s %s\n", $i, $now - $last, $result['spec']['series']['family'], $result['spec']['series']['rrule'], $result['path']));
+        }
+        $last = $now;
+        if (!$quiet && $result['records'] !== []) {
+            foreach ($result['records'] as $rec) {
+                $known = Known::cause($rec + ['path' => $result['path'], 'spec' => $result['spec']]) !== null ? ' (known cause)' : '';
+                echo "case $i: {$rec['invariant']} {$result['spec']['series']['family']} {$result['path']}$known: {$rec['what']}\n";
+            }
+        }
+        if (!$quiet && $i % 500 === 0) {
+            fwrite(STDERR, "$i of $cases\n");
+        }
+    }, $of, $shard);
+    // The fixed cases run once in all, on the first shard.
+    if ($shard === 0 && $fixed !== null) {
+        $runner->runFixed($fixed);
+    } elseif ($shard === 0 && $full) {
+        // A full run takes the fixed cases too: some required categories (a rule the expander can't read) are never drawn.
+        $runner->runFixed();
     }
+    $casesSeconds = round(microtime(true) - $started, 1);
+    $misuses = method_exists(BetterCal\Domain\Undo::class, 'misuses') ? BetterCal\Domain\Undo::misuses() : [];
+
+    // One shrunk reproduction per failure signature outside the known paths.
+    $minimal = [];
+    if ($shrink) {
+        $bySignature = [];
+        foreach ($runner->failures as $f) {
+            $bySignature[Runner::signature($f)][] = $f;
+        }
+        ksort($bySignature);
+        foreach ($bySignature as $sig => $list) {
+            if (Known::cause($list[0]) === null) {
+                $minimal[$sig] = $runner->shrink($list[0]);
+            }
+        }
+    }
+    return [
+        // The mode it ran in, so the parent can tell a child that lost --google (it once did, silently) from one that ran it.
+        'partial' => true, 'shard' => $shard, 'google' => $googleMode, 'counts' => $runner->counts, 'firstSeen' => $runner->firstSeen, 'failures' => $runner->failures, 'minimal' => $minimal,
+        'misuses' => $misuses, 'prof' => Prof::$t, 'casesSeconds' => $casesSeconds, 'seconds' => round(microtime(true) - $started, 1),
+    ];
 };
 
 /**
@@ -358,18 +357,31 @@ $report = static function (array $p, float $casesSeconds, float $elapsed) use ($
 };
 
 if ($child) {
-    // A shard writes its share for the parent and prints nothing; the verdict is the parent's.
-    $p = $runHere($shard, $ofShards);
-    $json = json_encode($p, JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_PARTIAL_OUTPUT_ON_ERROR);
-    if ($partialFile === null || $json === false || file_put_contents($partialFile, $json) !== strlen($json)) {
-        fwrite(STDERR, "shard $shard/$ofShards could not write its partial findings.\n");
-        exit(2);
+    // A shard writes its share for the parent and prints nothing; the verdict is the parent's. Its database is dropped
+    // after (ScratchDatabase), and a drop it could not make is a line in its output, which the parent counts.
+    try {
+        $p = $runHere($shard, $ofShards);
+        $json = json_encode($p, JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        $code = 0;
+        if ($partialFile === null || $json === false || file_put_contents($partialFile, $json) !== strlen($json)) {
+            fwrite(STDERR, "shard $shard/$ofShards could not write its partial findings.\n");
+            $code = 2;
+        }
+    } finally {
+        ScratchDatabase::dropMade();
     }
-    exit(0);
+    exit($code);
 }
 if ($shards === 1) {
-    $p = $runHere(0, 1);
-    exit($report($merge([$p]), $p['casesSeconds'], $p['seconds']));
+    try {
+        $p = $runHere(0, 1);
+        $code = $report($merge([$p]), $p['casesSeconds'], $p['seconds']);
+    } finally {
+        // The findings are written and the verdict is in $code; the cleanup after them changes neither.
+        ScratchDatabase::dropMade();
+    }
+    echo ScratchDatabase::summary() . "\n";
+    exit($code);
 }
 
 // N children at once, each a harness on its share of the cases, its output kept in a file and shown if it fails.
@@ -431,6 +443,7 @@ try {
     $broken = [];
     foreach ($procs as $k => $proc) {
         $exit = proc_close($proc);
+        ScratchDatabase::countIn((string) @file_get_contents("$tmp/shard-$k.out"), true);
         $file = "$tmp/shard-$k.json";
         $part = is_file($file) ? json_decode((string) file_get_contents($file), true) : null;
         if ($exit !== 0 || !is_array($part) || ($part['partial'] ?? null) !== true || ($part['shard'] ?? null) !== $k || ($part['google'] ?? null) !== $googleMode) {
@@ -466,4 +479,5 @@ try {
     }
     rmdir($tmp);
 }
+echo ScratchDatabase::summary() . "\n";
 exit($code);

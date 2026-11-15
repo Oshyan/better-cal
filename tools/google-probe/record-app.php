@@ -24,6 +24,7 @@ putenv('BETTERCAL_STRICT_JOURNAL=1');
 $root = dirname(__DIR__, 2);
 require $root . '/server/src/bootstrap.php';
 require $root . '/server/tests/db/lib.php';
+require_once $root . '/server/tests/db/scratch.php';
 require $root . '/tools/edit-harness/lib.php';
 BetterCal\EditHarness\Product::use($root);
 
@@ -49,6 +50,7 @@ $password = getenv('BC_TEST_DB_PASS') ?: '';
 $name = 'bc_trace_' . bin2hex(random_bytes(4));
 $server = new PDO("mysql:host=$host;port=$port;charset=utf8mb4", $user, $password, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 $server->exec("CREATE DATABASE `$name` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+ScratchDatabase::made($server, $name);
 $code = 0;
 try {
     $db = new Db(['dsn' => "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4", 'user' => $user, 'pass' => $password]);
@@ -112,6 +114,8 @@ try {
     fwrite(STDERR, "$scenario stopped: " . get_class($e) . ': ' . $e->getMessage() . "\n");
     $code = 1;
 } finally {
-    $server->exec("DROP DATABASE `$name`");
+    // The trace is written as the scenario runs; the cleanup after it never changes the exit status (ScratchDatabase).
+    ScratchDatabase::dropMade();
 }
+echo ScratchDatabase::summary() . "\n";
 exit($code);

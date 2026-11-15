@@ -69,7 +69,14 @@ try {
         }
         $results[] = $row;
     }
+    // The report is written before the cleanup, which never changes it.
+    file_put_contents($reportFile, json_encode(['label' => $label, 'version' => $version, 'results' => $results], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 } finally {
-    $server->exec("DROP DATABASE IF EXISTS `$name`");
+    // A drop that fails is reported, never thrown (server/tests/db/scratch.php's rule, in its own lines here: this tool
+    // loads another checkout's code, not this tree's tests).
+    try {
+        $server->exec("DROP DATABASE IF EXISTS `$name`");
+    } catch (PDOException $e) {
+        fwrite(STDERR, "scratch database not dropped: $name: " . $e->getMessage() . "\n");
+    }
 }
-file_put_contents($reportFile, json_encode(['label' => $label, 'version' => $version ?? '', 'results' => $results], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));

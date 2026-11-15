@@ -21,6 +21,43 @@ const OVERWRITE_BACK = 'Overwrite saves your change. Cancel saves nothing and ta
 const OVERWRITE_STAY = 'Overwrite saves your change. Cancel saves nothing, and the event shows as it is in Google Calendar now.';
 const DELETE_FOOT = 'Delete deletes it here and in Google Calendar. Cancel keeps it, as it is in Google Calendar now.';
 
+// ---- the server's table ----------------------------------------------------------
+//
+// The same fields give the same sentences on both sides: the server's 409
+// message says what this dialog says (server/tests/fixtures/google-changed-words.json,
+// read by server/tests/google-conflict-words.php too). A timed value is said on
+// the clock it is served on there and on this device's here, so a row with one
+// is checked only where the two give the same offset; the CI's Los Angeles and
+// UTC runs check every row.
+{
+  const { readFileSync } = await import('node:fs');
+  const table = JSON.parse(readFileSync(new URL('../../server/tests/fixtures/google-changed-words.json', import.meta.url), 'utf8'));
+  const [y, m, d] = table.now.split('-').map(Number);
+  const onThisClock = (iso) => {
+    const off = /([+-])(\d\d):(\d\d)$/.exec(iso);
+    return !!off && -new Date(iso).getTimezoneOffset() === (off[1] === '-' ? -1 : 1) * (Number(off[2]) * 60 + Number(off[3]));
+  };
+  const timed = (f) => f.field === 'time' ? [f.was, f.now, f.yours].filter((t) => t && !t.allDay).flatMap((t) => [t.start, t.end]) : [];
+  for (const row of table.rows) {
+    if (!row.fields.flatMap(timed).every(onThisClock)) continue;
+    const a = googleChangedAsk({ name: row.name, fields: row.fields, remove: row.remove, now: new Date(y, m - 1, d) });
+    assert.deepEqual({ body: a.body, lines: a.lines }, { body: row.body, lines: row.lines }, 'the server\'s table: ' + row.case);
+  }
+}
+
+// Planned or Maybe is never called a status, in the sentences about a change
+// to a repeating event too: with no value to say it by, it is named by both.
+{
+  const { changesWords, choiceWords, togetherLine } = await import('../src/lib/planwords.js');
+  assert.equal(changesWords({ takes: ['title', 'status'] }), 'takes the new title and Planned or Maybe');
+  assert.deepEqual(choiceWords({ id: 'ownStatus', field: 'status', count: 2, options: [{ id: 'keep' }, { id: 'give' }] }), {
+    lead: '2 days that were changed earlier have their own Planned or Maybe.',
+    reason: 'Keep their Planned or Maybe, or give them the new one too?',
+    options: [{ id: 'keep', label: 'Keep their own Planned or Maybe' }, { id: 'give', label: 'Give them the new Planned or Maybe' }],
+  });
+  assert.equal(togetherLine([{ id: 'ownStatus', field: 'status' }], 2), '2 days have their own Planned or Maybe.');
+}
+
 // ---- the question, a field at a time ----------------------------------------
 
 assert.deepEqual(ask({ back: true, fields: [{ field: 'title', was: 'Team sync', now: 'Standup', yours: 'Weekly sync' }] }), {
@@ -254,11 +291,12 @@ assert.equal(asked[0].foot, OVERWRITE_BACK);
 set({ editor: null });
 
 // A google_changed with no fields to ask about: thrown, its message whole.
-answers = [json(409, { error: { code: 'google_changed', message: "'Team sync' wasn't changed: since it was last shown, its title was changed in Google Calendar to 'Standup'. Open the event to see it and make the change again." } })];
+const whole = "Since 'Team sync' was last shown to you, its title was changed in Google Calendar. It is now 'Standup' there; your change makes it 'Weekly sync'. It wasn't changed; open the event to see it and make the change again.";
+answers = [json(409, { error: { code: 'google_changed', message: whole } })];
 let thrown = null;
 try { await sendEventChange(shown, '/events/7', 'PATCH', { title: 'Weekly sync' }); } catch (e) { thrown = e; }
 assert.ok(thrown instanceof ApiError);
-assert.equal(failWords('Update failed: ', thrown), "'Team sync' wasn't changed: since it was last shown, its title was changed in Google Calendar to 'Standup'. Open the event to see it and make the change again.");
+assert.equal(failWords('Update failed: ', thrown), whole);
 assert.equal(failWords('Update failed: ', new ApiError('error', 'Server error', 500)), 'Update failed: Server error', 'any other failure as before');
 
 // The setting off: a plain 200, one request, no question, nothing kept.

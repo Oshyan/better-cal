@@ -170,7 +170,8 @@ return static function (Db $db): void {
         $e = $json['error'] ?? [];
         checkEq('409 google_changed, the title with was, now and yours, nothing kept', [409, 'google_changed', [['field' => 'title', 'was' => 'Team sync', 'now' => 'Standup', 'yours' => 'Weekly sync']], []],
             [$status, $e['code'] ?? null, $e['fields'] ?? null, $e['kept'] ?? null]);
-        checkEq('the message is whole on its own', "'Team sync' wasn't changed: since it was last shown, its title was changed in Google Calendar to 'Standup'. Open the event to see it and make the change again.", $e['message'] ?? null);
+        // The dialog's sentences, then what was not done.
+        checkEq('the message is whole on its own', "Since 'Team sync' was last shown to you, its title was changed in Google Calendar. It is now 'Standup' there; your change makes it 'Weekly sync'. It wasn't changed; open the event to see it and make the change again.", $e['message'] ?? null);
         checkEq('one read and nothing written to Google; Google still holds its title', [['GET'], 'Standup'], [$methods($sent($t, $m)), $atG($t)['summary'] ?? null]);
         checkEq('the row holds Google\'s title, nothing else changed, the tags not written', ['title' => 'Standup'] + $before, $row($t));
         checkEq('the read was stored as a poll stores it: one journal entry, from Google', [$n + 1, 'google'], [$entries($t), $lastSource($t)]);
@@ -244,7 +245,7 @@ return static function (Db $db): void {
         $e = $json['error'] ?? [];
         checkEq('409 google_changed, the place alone, yours null', [409, 'google_changed', [['field' => 'location', 'was' => 'Room 2', 'now' => 'Sample Hall', 'yours' => null]]],
             [$status, $e['code'] ?? null, $e['fields'] ?? null]);
-        checkEq('the message is whole on its own', "'Team sync' wasn't deleted: since it was last shown, its location was changed in Google Calendar. Open the event to see it, and delete it again if you still mean to.", $e['message'] ?? null);
+        checkEq('the message is whole on its own', "Since 'Team sync' was last shown to you, its location was changed in Google Calendar. It was 'Room 2'; it is now 'Sample Hall'. It wasn't deleted; open the event to see it, and delete it again if you still mean to.", $e['message'] ?? null);
         $sorted = static function (array $r): array {
             ksort($r);
             return $r;

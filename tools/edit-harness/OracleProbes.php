@@ -343,6 +343,85 @@ final class OracleProbes
                     \seriesUndo($this->db, $this->userId, false);
                     return [$out, $s0, $s1];
                 }],
+            // x-choice (the conflict choice on, Product::$conflictChoice): one probe per statement, each on the case that
+            // shows it. A field Google changed that the change did not set is kept at Google, here and named in `kept`; a
+            // field the change set is sent; one read; a question when both changed one field, the read stored, nothing of
+            // the request written, the question naming the field with what Google holds; a delete over a change asks;
+            // Overwrite lands the person's value.
+            ['check' => 'x-choice', 'what' => 'a title Google changed, which the change did not set, is put back at Google', 'case' => 'an-event-in-no-series-renamed-at-google-then-its-place-changed-here-keeps-the-title', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $gid = (string) $this->single;
+                    $s1['g']['digest'][$gid]['title'] = trim((string) $s0['rows'][$this->singles[$gid]]['title']);
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "the answer's kept leaves out the title Google changed", 'case' => 'an-event-in-no-series-renamed-at-google-then-its-place-changed-here-keeps-the-title', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $out['answer']['kept'] = [];
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'the place the change set is not written here', 'case' => 'an-event-in-no-series-renamed-at-google-then-its-place-changed-here-keeps-the-title', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $id = $this->singles[(string) $this->single];
+                    $s1['rows'][$id]['location'] = $s0['rows'][$id]['location'];
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-choice', 'what' => 'the change reads the event from Google twice', 'case' => 'an-event-in-no-series-renamed-at-google-then-its-place-changed-here-keeps-the-title', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $this->stand->fake->requests[] = ['method' => 'GET', 'path' => '/calendars/x/events/probe', 'query' => [], 'headers' => [], 'body' => null];
+                    $s1['req'] = count($this->stand->fake->requests);
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'a title changed at Google and here to different values goes through without a question', 'case' => 'an-event-in-no-series-renamed-at-google-and-here-asks-then-overwrite-lands', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => true, 'error' => null, 'answer' => ['kept' => []]] + $out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'after the question the event here keeps the title it had, not what was read from Google', 'case' => 'an-event-in-no-series-renamed-at-google-and-here-asks-then-overwrite-lands', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $id = $this->singles[(string) $this->single];
+                    $s1['rows'][$id]['title'] = $s0['rows'][$id]['title'];
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-choice', 'what' => 'the tags in the request that asked are written here', 'case' => 'an-event-in-no-series-renamed-at-google-and-here-asks-then-overwrite-lands', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $id = $this->singles[(string) $this->single];
+                    $s1['rows'][$id]['tags'] = ['single', 'single-own-3'];
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-choice', 'what' => "the question gives another title as Google's now", 'case' => 'an-event-in-no-series-renamed-at-google-and-here-asks-then-overwrite-lands', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        $out['extra']['fields'][$i]['now'] = 'Sample probe title';
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "Overwrite leaves Google's title here instead of the person's", 'case' => 'an-event-in-no-series-renamed-at-google-and-here-asks-then-overwrite-lands', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $id = $this->singles[(string) $this->single];
+                    $s1['rows'][$id]['title'] = 'Sample remote single title 2';
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-choice', 'what' => 'Overwrite asks again though Google did not change since the question', 'case' => 'an-event-in-no-series-renamed-at-google-and-here-asks-then-overwrite-lands', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'google_changed', 'message' => 'Sample probe question', 'extra' => []] + $out, $s0, $s0];
+                }],
+            // x-undo-fields after the conflict choice: the change's own entry starts from the read stored, so its undo leaves a
+            // field Google changed (to the value the change also set) as Google has it.
+            ['check' => 'x-undo-fields', 'what' => 'the undo of a change made over a stored read puts back the link from before Google changed it', 'case' => 'an-event-in-no-series-given-its-new-link-at-google-and-here-then-undone-keeps-googles-link', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $s1['rows'][$this->singles[(string) $this->single]]['url'] = 'https://example.test/single-event';
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            // x-agree over the case's events in no series: the event here and at Google hold the same six fields.
+            ['check' => 'x-agree', 'what' => "an event in no series here holds another title than Google's after a change that went through", 'case' => 'an-event-in-no-series-renamed-at-google-then-its-place-changed-here-keeps-the-title', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $s1['rows'][$this->singles[(string) $this->single]]['title'] = 'Sample probe title';
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-choice', 'what' => 'the question about a delete leaves out the place Google changed', 'case' => 'an-event-in-no-series-whose-place-changed-at-google-deleted-here-asks-then-delete-deletes', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $out['extra']['fields'] = [];
+                    return [$out, $s0, $s1];
+                }],
         ];
     }
 

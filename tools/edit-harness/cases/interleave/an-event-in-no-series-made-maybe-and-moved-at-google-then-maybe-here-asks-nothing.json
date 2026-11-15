@@ -1,0 +1,40 @@
+{
+    "about": "An event in no series made Maybe and moved an hour at Google, then made Maybe here: Planned or Maybe never asks about itself, Google already holds it, the time is kept and named in kept, and at most one write goes (x-choice, the page's case 7).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-create",
+            "pick": 0.2,
+            "single": true
+        },
+        {
+            "do": "r-single",
+            "pick": 0.0,
+            "fields": [
+                "status",
+                "time"
+            ],
+            "same": []
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "maybe",
+            "fields": [
+                "status"
+            ],
+            "shown": "earlier"
+        }
+    ]
+}

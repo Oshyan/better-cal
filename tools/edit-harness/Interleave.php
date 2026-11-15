@@ -38,7 +38,11 @@ final class Interleave
     public const SETUP = ['w-this-g', 'w-this-l', 'w-this-l', 'w-this-m', 'w-del1'];
     /** Fields only Google holds (beyond the digest; the A2 scope): the app never sends them, so its writes never change them. */
     /** Every check the oracle makes (docs/design/interleaving-invariants.md), for the oracle probes' account of which are validated. */
-    public const CHECKS = ['x-day', 'x-alone', 'x-dropped', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-conditional', 'x-agree', 'x-follow', 'x-structure', 'x-identity', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-empty', 'x-overlap', 'x-budget', 'x-readback'];
+    public const CHECKS = ['x-day', 'x-alone', 'x-dropped', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-conditional', 'x-agree', 'x-follow', 'x-structure', 'x-identity', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-empty', 'x-overlap', 'x-budget', 'x-readback', 'x-choice'];
+    /** The six fields the conflict choice compares (google-conflict-choice.md, the one page, (a)), by the names its answers use. */
+    public const CHOICE_FIELDS = ['title', 'description', 'location', 'url', 'status', 'time'];
+    /** What a change here sets each field of an event in no series to (withSingle), so a change at Google can set the same value. */
+    private const SINGLE_VALUES = ['title' => 'Sample single title', 'description' => 'Sample single notes', 'location' => 'Sample single room', 'url' => 'https://example.test/single-mine'];
     public const GOOGLE_ONLY = ['colorId', 'attendees', 'transparency', 'visibility', 'reminders', 'guestsCanModify', 'guestsCanInviteOthers', 'extendedProperties'];
     /**
      * The keys a request body may carry: the fields Google holds of an edited day (OwnFields' list less HELD_HERE: date,
@@ -97,6 +101,16 @@ final class Interleave
     private ?array $budgetMid = null;
     /** @var array<string,array{date:string,fields:array,kind:string}> what a step marked acted on (day shapes), by its mark */
     private array $marks = [];
+    /** @var array<string,int> the case's events in no series (w-create), Google id => row id */
+    private array $singles = [];
+    /** The Google id of the event in no series a single shape acts on (the w-create step it marked), or null. */
+    private ?string $single = null;
+    /** @var array<string,array> the record the API last served for each event in no series (what the person was shown), by Google id */
+    private array $served = [];
+    /** The last w-single request and how it was answered (an Overwrite is the same request again), or null. */
+    private ?array $lastSingle = null;
+    /** The w-single request of the step being checked, for x-choice, or null. */
+    private ?array $singleSent = null;
 
     public function __construct(
         private readonly Db $db,
@@ -147,7 +161,65 @@ final class Interleave
             // redone across a change of the series' form or zone, the staleness of one, or a flip stopped before its
             // master write lands with a change at Google in between (README, Interleaving: Day shapes).
             $case = self::withDayShape($case, new Rng(crc32("dayshape-draw:$seed:$n") % 1_000_003));
+        } elseif (self::$singleShapes > 0 && crc32("single:$seed:$n") % 10000 < (int) round(self::$singleShapes * 10000)) {
+            // Another share, from the cases the two above left, by seed and case number alone: an event in no series
+            // changed at Google and then here before a poll (README, Interleaving: The Conflict Choice).
+            $case = self::withSingle($case, new Rng(crc32("single-draw:$seed:$n") % 1_000_003));
         }
+        return $case;
+    }
+
+    /** The share of drawn cases given an event in no series changed at Google and here (withSingle); interleave-cli's --singles sets it, 0 turns it off. */
+    public static float $singleShapes = 0.25;
+
+    /**
+     * A drawn case given an event in no series (google-conflict-choice.md, slice 1: "a change or delete of an event in no
+     * series on a Google calendar"), changed at Google by another client and then here before a poll, in place of as many
+     * of its own drawn steps (the last ones), so a case runs as many steps as before. The block, put among the case's
+     * steps after its setup: the event made (w-create), most often a change at Google of one or two of the six compared
+     * fields (r-single), in some cases with the change of the field this request sets to the very value it sets, sometimes
+     * a delta poll between (the person still sending what they were shown before it, the page's case 5, or the record
+     * served after it), then the change here (w-single: an edit of one or two fields, some with tags in the same request;
+     * a delete; Planned or Maybe), then Overwrite (the same request again, as the 409 says to send it), which runs only
+     * after a google_changed. Which fields overlap is drawn, never listed: x-choice works out each field's outcome from
+     * the three states.
+     */
+    private static function withSingle(array $case, Rng $r): array
+    {
+        $some = static function (array $from, int $n) use ($r): array {
+            $out = [];
+            while (count($out) < $n) {
+                $f = $r->pick($from);
+                if (!in_array($f, $out, true)) {
+                    $out[] = $f;
+                }
+            }
+            return $out;
+        };
+        $how = $r->weighted(['edit' => 6, 'delete' => 2, 'maybe' => 2]);
+        $remote = $r->chance(0.85) ? $some(self::CHOICE_FIELDS, $r->int(1, 2)) : [];
+        $mine = $how === 'edit' ? $some(self::CHOICE_FIELDS, $r->int(1, 2)) : ($how === 'maybe' ? ['status'] : []);
+        if ($how === 'edit' && $remote !== [] && array_intersect($mine, $remote) === [] && $r->chance(0.5)) {
+            $mine[0] = $remote[0]; // the same field changed on both sides, half the time it would not be by chance
+            $mine = array_values(array_unique($mine));
+        }
+        $same = array_values(array_filter(array_intersect($remote, $mine), static fn(string $f): bool => $r->chance(0.35)));
+        $poll = $remote !== [] && $r->chance(0.3);
+        $block = [['do' => 'w-create', 'pick' => $r->int(0, 999) / 1000, 'single' => true]];
+        if ($remote !== []) {
+            $block[] = ['do' => 'r-single', 'pick' => 0.0, 'fields' => $remote, 'same' => $same];
+        }
+        if ($poll) {
+            $block[] = ['do' => 'p-delta', 'pick' => 0.0];
+        }
+        $block[] = ['do' => 'w-single', 'pick' => 0.0, 'how' => $how, 'fields' => $mine, 'tags' => $how === 'edit' && $r->chance(0.3), 'shown' => $poll && $r->chance(0.3) ? 'now' : 'earlier'];
+        $block[] = ['do' => 'w-single', 'pick' => 0.0, 'how' => 'overwrite'];
+        $steps = $case['steps'];
+        $keep = max(1, count($steps) - count($block));
+        $steps = array_slice($steps, 0, $keep);
+        array_splice($steps, $r->int(1, count($steps)), 0, $block);
+        $case['steps'] = $steps;
+        $case['single'] = $how . ($remote === [] ? ', nothing at Google' : ' over ' . implode('+', $remote)) . ($poll ? ', polled between' : '');
         return $case;
     }
 
@@ -303,6 +375,8 @@ final class Interleave
         $this->pendings = [];
         $this->entryStates = [];
         $this->etagOnly = [];
+        $this->singles = $this->served = [];
+        $this->single = $this->lastSingle = $this->singleSent = null;
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
         $this->step = 0;
         if ($this->createSeries($spec['series']) === null) {
@@ -410,7 +484,8 @@ final class Interleave
                 }
                 $digest[$gid] = $h;
             } else {
-                $digest[$gid] = ['single' => true, 'title' => (string) ($m['summary'] ?? ''), 'description' => (string) ($m['description'] ?? ''), 'location' => (string) ($m['location'] ?? ''), 'url' => (string) ($m['source']['url'] ?? '')];
+                // An event in no series: the six fields the conflict choice compares, by the harness's own equalities.
+                $digest[$gid] = ['single' => true] + self::googleSix($m);
             }
         }
         ksort($digest);
@@ -447,7 +522,55 @@ final class Interleave
             $out[(string) $r['google_event_id']] = GoogleStand::stored($r, $children) + ['zone' => (int) $r['all_day'] === 1 ? null : $r['tzid'], 'description' => (string) $r['description'],
                 'location' => (string) $r['location'], 'url' => (string) $r['url'], 'status' => (string) $r['status']];
         }
+        // The case's events in no series, in gstate's shape for them.
+        foreach ($rows as $r) {
+            if ($r['rrule'] === null && $r['recurrence_parent_id'] === null && isset($this->singles[(string) $r['google_event_id']])) {
+                $out[(string) $r['google_event_id']] = ['single' => true] + self::rowSix($r);
+            }
+        }
         return $out;
+    }
+
+    // ---- the six fields of an event in no series, by the harness's own equalities ----------------------------------
+    // google-conflict-choice.md, the one page, (a): title trimmed, "(No title)" equal to empty; notes, null equal to
+    // empty (the harness's notes are plain text, which the sanitizer leaves alone); place trimmed; link, null equal to
+    // empty (the harness's links are plain https addresses); status, tentative or not; time, start, end and all-day
+    // together, the zone not compared. Each read three ways: a row here, a resource at the stand-in, a record as served.
+
+    private static function titleOf(?string $t): string
+    {
+        $t = trim((string) $t);
+        return $t === '(No title)' ? '' : $t;
+    }
+
+    private static function instantOf(string $v): int
+    {
+        return (new \DateTimeImmutable($v, new \DateTimeZone('UTC')))->getTimestamp();
+    }
+
+    /** @return array{title:string,description:string,location:string,url:string,status:bool,time:array} */
+    private static function rowSix(array $r): array
+    {
+        return ['title' => self::titleOf($r['title']), 'description' => trim((string) $r['description']), 'location' => trim((string) $r['location']), 'url' => trim((string) $r['url']),
+            'status' => (string) $r['status'] === 'tentative', 'time' => [self::instantOf((string) $r['start_utc']), self::instantOf((string) $r['end_utc']), (int) $r['all_day'] === 1]];
+    }
+
+    private static function googleSix(array $m): array
+    {
+        $at = static fn(array $w): int => self::instantOf((string) ($w['date'] ?? $w['dateTime'] ?? '1970-01-01'));
+        return ['title' => self::titleOf($m['summary'] ?? ''), 'description' => trim((string) ($m['description'] ?? '')), 'location' => trim((string) ($m['location'] ?? '')),
+            'url' => trim((string) ($m['source']['url'] ?? '')), 'status' => ($m['status'] ?? '') === 'tentative', 'time' => [$at((array) ($m['start'] ?? [])), $at((array) ($m['end'] ?? [])), isset($m['start']['date'])]];
+    }
+
+    /** One field's value in the form the API serves it (a served record's, an over's, a 409's was, now or yours), compared as rowSix compares. */
+    private static function servedValue(string $field, mixed $v): mixed
+    {
+        return match ($field) {
+            'title' => self::titleOf(is_string($v) ? $v : null),
+            'status' => $v === 'tentative',
+            'time' => is_array($v) ? [self::instantOf((string) ($v['start'] ?? '')), self::instantOf((string) ($v['end'] ?? '')), (bool) ($v['allDay'] ?? false)] : null,
+            default => trim(is_string($v) ? $v : ''),
+        };
     }
 
     /**
@@ -832,9 +955,23 @@ final class Interleave
             $day = Days::date(Days::ofDate('2027-02-01') + (int) floor($step['pick'] * 200));
             $this->lastAsked = ['kind' => 'create', 'gid' => null, 'fields' => [], 'days' => [$day]];
             $id = (int) $this->events->create($this->userId, ['calendarId' => $this->stand->calendarId, 'title' => "Sample event {$this->step}", 'start' => $day . 'T15:00:00+00:00', 'end' => $day . 'T16:00:00+00:00',
-                'allDay' => false, 'tzid' => 'UTC', 'tagNames' => ['single']])['eventId'];
+                'allDay' => false, 'tzid' => 'UTC', 'tagNames' => ['single'], 'location' => 'Sample single hall', 'description' => 'Sample single event notes', 'url' => 'https://example.test/single-event'])['eventId'];
             $this->events->throwDeferred();
+            // The event in no series is the case's from here on: what each side holds of it is recorded (gstate, ldigest),
+            // and the record the API serves for it now is what the person was shown (withSingle's change sends it as `over`).
+            $gid = (string) $this->db->scalar('SELECT google_event_id FROM events WHERE id = ?', [$id]);
+            if ($gid !== '') {
+                $this->gids[$gid] = true;
+                $this->singles[$gid] = $id;
+                $this->served[$gid] = $this->serve($id);
+                if (!empty($step['single'])) {
+                    $this->single = $gid;
+                }
+            }
             return ['asked' => $this->lastAsked];
+        }
+        if ($do === 'w-single') {
+            return $this->writeSingle($step, $s0);
         }
         $master = $this->seriesOf($rows, $step['pick']);
         if ($master === null) {
@@ -966,6 +1103,119 @@ final class Interleave
         $this->events->patch($this->userId, $mid, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => self::selected($plan)]]);
         $this->events->throwDeferred();
         return ['asked' => $this->lastAsked];
+    }
+
+    /** The record the API serves for an event (GET /events/:id/occurrence), as the app shows it. */
+    private function serve(int $id): array
+    {
+        return $this->events->serializeSingle($this->events->get($this->userId, $id));
+    }
+
+    /**
+     * A change here to the case's event in no series, sent as the app sends it (google-conflict-choice.md, (b) and (c)):
+     * `over` holds the fields the change sets as the person was shown them (the record served when the event was made,
+     * or, with `shown: now`, the one served now), untouched; an edit sets one or two fields (the time as a drag of what
+     * was shown, an hour later), in some requests with tags; a delete sends every field in `over`; Planned or Maybe the
+     * other of the two from what was shown. `overwrite` is the last request again, as the 409 says: each asked field's
+     * `over` set to its `now` and its value to its `yours` (only after a google_changed; skipped otherwise).
+     */
+    private function writeSingle(array $step, array $s0): array
+    {
+        $gid = $this->single;
+        $id = $gid === null ? null : ($this->singles[$gid] ?? null);
+        $how = (string) ($step['how'] ?? 'edit');
+        if ($id === null || !isset($s0['rows'][$id])) {
+            if ($how === 'overwrite') {
+                $this->lastSingle = null;
+            }
+            return ['skip' => true];
+        }
+        if ($how === 'overwrite') {
+            $last = $this->lastSingle;
+            $this->lastSingle = null;
+            if ($last === null || ($last['error'] ?? null) !== 'google_changed') {
+                return ['skip' => true];
+            }
+            $body = $last['body'];
+            foreach ((array) ($last['extra']['fields'] ?? []) as $f) {
+                $keys = ($f['field'] ?? '') === 'time' ? ['start', 'end', 'allDay'] : [(string) ($f['field'] ?? '')];
+                foreach ($keys as $k) {
+                    $body['over'][$k] = ($f['field'] ?? '') === 'time' ? ($f['now'][$k] ?? null) : ($f['now'] ?? null);
+                    if (($f['yours'] ?? null) !== null) {
+                        $body[$k] = ($f['field'] ?? '') === 'time' ? ($f['yours'][$k] ?? null) : $f['yours'];
+                    }
+                }
+            }
+            return $this->sendSingle($last['action'], $body, $id, $gid, $s0, $last);
+        }
+        $shown = ($step['shown'] ?? 'earlier') === 'now' || !isset($this->served[$gid]) ? $this->serve($id) : $this->served[$gid];
+        $all = ['title', 'description', 'location', 'url', 'status', 'start', 'end', 'allDay'];
+        if ($how === 'delete') {
+            return $this->sendSingle('delete', ['over' => array_intersect_key($shown, array_flip($all))], $id, $gid, $s0, null);
+        }
+        $other = (string) ($shown['status'] ?? '') === 'tentative' ? 'confirmed' : 'tentative';
+        if ($how === 'maybe') {
+            return $this->sendSingle('relationship', ['relationship' => $other === 'tentative' ? 'maybe' : 'planned', 'over' => ['status' => $shown['status'] ?? null]], $id, $gid, $s0, null);
+        }
+        $body = ['over' => []];
+        foreach ((array) ($step['fields'] ?? []) as $f) {
+            if ($f === 'time') {
+                $body['start'] = Clock::iso(Clock::plus(Clock::parse((string) $shown['start']), 3600));
+                $body['end'] = Clock::iso(Clock::plus(Clock::parse((string) $shown['end']), 3600));
+                $body['over'] += ['start' => $shown['start'], 'end' => $shown['end'], 'allDay' => $shown['allDay']];
+            } elseif ($f === 'status') {
+                $body['status'] = $other;
+                $body['over']['status'] = $shown['status'] ?? null;
+            } else {
+                $body[$f] = self::SINGLE_VALUES[$f];
+                $body['over'][$f] = $shown[$f] ?? null;
+            }
+        }
+        if (!empty($step['tags'])) {
+            $body['tagNames'] = ['single', "single-own-{$this->step}"];
+        }
+        return $this->sendSingle('patch', $body, $id, $gid, $s0, null);
+    }
+
+    /** Sends one w-single request; the harness's record of it is made before the product is called. */
+    private function sendSingle(string $action, array $body, int $id, string $gid, array $s0, ?array $overwriting): array
+    {
+        $fields = [];
+        foreach (['title', 'description', 'location', 'url', 'status'] as $f) {
+            if (array_key_exists($f, $body)) {
+                $fields[$f] = true;
+            }
+        }
+        if (array_intersect(['start', 'end', 'allDay'], array_keys($body)) !== []) {
+            $fields['time'] = true;
+        }
+        if ($action === 'relationship') {
+            $fields['status'] = true;
+        }
+        if (isset($body['tagNames'])) {
+            $fields['tags'] = $body['tagNames'];
+        }
+        $this->lastAsked = ['kind' => $action === 'delete' ? 'single-del' : 'single', 'gid' => $gid, 'fields' => $action === 'delete' ? [] : $fields,
+            'days' => [self::dayOf($s0['rows'][$id], null)], 'local' => false];
+        $this->singleSent = ['action' => $action, 'body' => $body, 'id' => $id, 'gid' => $gid, 'overwriting' => $overwriting];
+        $this->lastSingle = ['action' => $action, 'body' => $body, 'error' => null, 'extra' => []];
+        try {
+            match ($action) {
+                'patch' => $this->events->patch($this->userId, $id, $body),
+                'delete' => $this->events->deleteEvent($this->userId, $id, null, null, null, null, $body['over']),
+                'relationship' => $this->events->setRelationship($this->userId, $id, (string) $body['relationship'], null, null, null, null, $body['over']),
+            };
+            $this->events->throwDeferred();
+        } catch (HttpError $e) {
+            $this->lastSingle['error'] = $e->errorCode;
+            $this->lastSingle['extra'] = $e->extra;
+            throw $e;
+        }
+        $answer = $action === 'delete' ? [] : $this->events->keptAnswer($this->userId);
+        if ($action !== 'delete' && $this->db->scalar('SELECT id FROM events WHERE id = ? AND deleted_at IS NULL', [$id]) !== null) {
+            $this->served[$gid] = $this->serve($id);
+        }
+        return ['asked' => $this->lastAsked, 'answer' => $answer];
     }
 
     private static function selected(array $plan): array
@@ -1173,6 +1423,9 @@ final class Interleave
     /** A change made at Google by someone else, through the stand-in's own API (no If-Match), marked as the remote client's. */
     private function remote(string $do, array $step, array $s0): array
     {
+        if ($do === 'r-single') {
+            return $this->remoteSingle($step);
+        }
         $master = $this->seriesOf($s0['rows'], $step['pick']);
         if ($master === null) {
             return ['skip' => true];
@@ -1361,6 +1614,65 @@ final class Interleave
         }
         foreach ($this->pendings as $id => $p) {
             $this->pendings[$id]['since'][$gid] = true;
+        }
+        return ['asked' => ['kind' => 'remote', 'gid' => $gid, 'fields' => [], 'days' => []]];
+    }
+
+    /**
+     * A change at Google by another client to the case's event in no series (withSingle): each field named set to a
+     * value of Google's own, or, for a field in `same`, to the value the change here will set (the time an hour later
+     * where the change here moves it an hour, Google's own two). Status has two values, so Google's change of it is
+     * always to tentative.
+     */
+    private function remoteSingle(array $step): array
+    {
+        $gid = $this->single;
+        $g = $gid === null ? null : ($this->stand->fake->events[$gid] ?? null);
+        if ($g === null || ($g['status'] ?? '') === 'cancelled') {
+            return ['skip' => true];
+        }
+        $n = $this->step;
+        $same = (array) ($step['same'] ?? []);
+        $body = [];
+        $touched = [];
+        foreach ((array) ($step['fields'] ?? []) as $f) {
+            $mine = in_array($f, $same, true);
+            switch ($f) {
+                case 'title':
+                    $body['summary'] = $mine ? self::SINGLE_VALUES['title'] : "Sample remote single title $n";
+                    break;
+                case 'description':
+                case 'location':
+                    $body[$f] = $mine ? self::SINGLE_VALUES[$f] : "Sample remote single $f $n";
+                    break;
+                case 'url':
+                    $body['source'] = ['url' => $mine ? self::SINGLE_VALUES['url'] : "https://example.test/single-remote-$n", 'title' => 'Sample link'];
+                    break;
+                case 'status':
+                    $body['status'] = 'tentative';
+                    break;
+                case 'time':
+                    $secs = $mine ? 3600 : 7200;
+                    foreach (['start', 'end'] as $k) {
+                        $t = (new \DateTimeImmutable((string) $g[$k]['dateTime']))->setTimezone(new \DateTimeZone('UTC'))->modify("+$secs seconds");
+                        $body[$k] = ['dateTime' => $t->format('Y-m-d\TH:i:sP'), 'timeZone' => 'UTC'];
+                    }
+                    break;
+            }
+            $touched[] = $f;
+        }
+        if ($body === []) {
+            return ['skip' => true];
+        }
+        $answer = ($this->stand->fake->transport())('PATCH', 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode(GoogleStand::CALENDAR) . '/events/' . rawurlencode($gid),
+            ['Authorization: Bearer sample-access', 'X-Harness: remote'], $body);
+        if ($answer['status'] >= 300) {
+            $this->na["r-single refused by the stand-in: HTTP {$answer['status']}"] = 1;
+            return ['skip' => true];
+        }
+        $this->dirty[$gid] = true;
+        foreach ($touched as $f) {
+            $this->touches[] = ['step' => $this->step, 'gid' => $gid, 'remote' => true, 'polled' => false, 'field' => $f, 'key' => null];
         }
         return ['asked' => ['kind' => 'remote', 'gid' => $gid, 'fields' => [], 'days' => []]];
     }
@@ -1843,7 +2155,10 @@ final class Interleave
         if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && $changedNothing && $failure === null) {
             $this->ran('x-conflict', 'nothing to change');
         }
-        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !$changedNothing && !($removal && ($s0['g']['digest'][$gid] ?? null) === null) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
+        // With the conflict choice on, a change or delete of an event in no series is x-choice's to judge (below); with it
+        // off, it is refused here as any other write (google-conflict-choice.md, (e): "Off: ... every path is the 1.5.6 code").
+        $choice = Product::$conflictChoice && in_array($asked['kind'], ['single', 'single-del'], true);
+        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !$changedNothing && !($removal && ($s0['g']['digest'][$gid] ?? null) === null) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !$choice && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
             $this->ran('x-conflict', $do);
             // What protects the change made at Google is the refusal, whatever its reason: google_conflict, google_deleted for
             // a series deleted there (rule 8), or one decided here before Google is asked (stale_undo, invalid_recurrence_instance).
@@ -1863,6 +2178,12 @@ final class Interleave
             $this->expect('x-conflict', $error !== 'google_conflict', "step {$this->step} ($do): a change to a series whose shown fields at Google are as here (its etag or a Google-only field moved) is no conflict", $context);
         }
 
+        // x-choice: a change or delete of an event in no series, the conflict choice on.
+        if ($choice && $this->singleSent !== null) {
+            $this->checkChoice($do, $out, $s0, $s1, $context);
+        }
+        $this->singleSent = null;
+
         // x-pending: what a failure leaves.
         if ($failure !== null) {
             $this->checkFailure($failure, $out, $s0, $s1, $asked, $context);
@@ -1879,7 +2200,9 @@ final class Interleave
         }
 
         // x-honest: a refusal with no pending change leaves both sides as they were; a write that changed something leaves an entry.
-        if ($isWrite && !$out['ok'] && $failure === null && !isset($out['extra']['pending']) && !in_array($do, ['finish', 'putback'], true)) {
+        // The conflict choice's question stores what it read from Google (google-conflict-choice.md, case 3: "the read is
+        // stored"): x-choice judges what it leaves.
+        if ($isWrite && !$out['ok'] && $failure === null && !isset($out['extra']['pending']) && !in_array($do, ['finish', 'putback'], true) && !($choice && $error === 'google_changed')) {
             $this->ran('x-honest', 'refusal');
             $this->expect('x-honest', self::sameHere($s0, $s1) && $s0['g']['digest'] == $s1['g']['digest'], "step {$this->step} ($do): a refusal ($error) changes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
         }
@@ -1905,6 +2228,9 @@ final class Interleave
         // does: for its series the harness's "changed at Google since the last poll" is reset the way a poll resets it
         // (series-model.md, Google as a Contract: "the rows stored are what Google holds after the last read-back").
         $readBack = $out['ok'] && $taken !== [] && ($do === 'finish' || in_array($asked['kind'] ?? '', ['all', 'following', 'delfollow', 'answer'], true));
+        // The conflict choice reads the event first and stores what it read, as a poll does, whether the change then goes
+        // through or asks (google-conflict-choice.md, (e), the step): the event here is Google's again.
+        $readBack = $readBack || ($choice && ($out['ok'] || $error === 'google_changed'));
         if ($readBack) {
             $series = $do === 'finish' ? array_keys($this->recovered['gids'] ?? []) : [$gid];
             foreach (array_filter($series, static fn($g): bool => $g !== null) as $g) {
@@ -1925,8 +2251,21 @@ final class Interleave
             $before = $this->byIdentity($s0['rows']);
             $after = $this->byIdentity($s1['rows']);
             $exclude = $do === 'w-race' && $this->racedIdent !== null ? [$this->racedIdent] : [];
+            // The conflict choice first stores what it read "as a poll does, with its own Activity entry" (api-contract.md,
+            // Google Calendar), so the change's own entry starts from the rows with that read stored: a field Google changed
+            // is the change's only where the change set it to something else. The store's entry (a source of Google's) is
+            // never undone by a step here.
+            $read = $choice && $gid !== null ? $this->withReadStored($s0, (string) $gid) : null;
+            $sources = [];
+            if ($read !== null) {
+                [$in, $params] = Db::in($entries);
+                foreach ($this->db->all("SELECT id, source FROM mutations WHERE id IN $in", $params) as $m) {
+                    $sources[(int) $m['id']] = (string) $m['source'];
+                }
+            }
             foreach ($entries as $e) {
-                $this->entryStates[$e] = ['before' => $before, 'after' => $after, 'step' => $this->step, 'exclude' => $exclude];
+                $from = $read !== null && !in_array($sources[$e] ?? '', ['google', 'feed', 'system'], true) ? $read : $before;
+                $this->entryStates[$e] = ['before' => $from, 'after' => $after, 'step' => $this->step, 'exclude' => $exclude];
             }
         }
         $this->racedIdent = null;
@@ -1969,6 +2308,175 @@ final class Interleave
                 $this->fail('x-write-asked', "step {$this->step}: a \"this event\" edit changed another day's record at Google", $context + ['before' => $others($a['records']), 'after' => $others($b['records'])]);
             }
         }
+    }
+
+    /**
+     * x-choice (interleaving-invariants.md, x-choice): a change or delete of an event in no series, the conflict choice
+     * on, judged by the comparison of three states the harness records, never by kind of change
+     * (google-conflict-choice.md, the one page, (a) to (d)): what the person was shown (the request's `over`, else the
+     * row here before the step), what Google holds (the stand-in before the step) and what the change sets (the request).
+     * Each field's outcome: not set and Google's as shown, the same; not set and Google's changed, kept; set and Google's
+     * as shown or already as set, sent; set and Google's changed to something else, asked. A delete sets every field to
+     * a value nothing holds. Then: asked anywhere, 409 google_changed naming exactly the asked fields (was, now, yours)
+     * and the kept ones, the event here holding what Google holds and nothing of the request, nothing sent; else the
+     * change goes through, each sent field holding the change's value here and at Google, each kept one Google's at both
+     * and named in `kept`, a delete gone at both. One read, at most one write, none after a question. An Overwrite, sent
+     * right after the question with nothing changed at Google since, goes through.
+     */
+    /**
+     * The case's rows by identity as the conflict choice's read leaves them before the change is applied: the event in no
+     * series holding the six fields the stand-in held when the step began (the read stored, as a poll stores it), every
+     * other row as it was. Null when Google held no such event.
+     */
+    private function withReadStored(array $s0, string $gid): ?array
+    {
+        $g = $s0['g']['digest'][$gid] ?? null;
+        $id = $this->singles[$gid] ?? null;
+        if ($g === null || $id === null || !isset($s0['rows'][$id])) {
+            return null;
+        }
+        $rows = $s0['rows'];
+        $rows[$id] = ['title' => $g['title'], 'description' => $g['description'], 'location' => $g['location'], 'url' => $g['url'], 'status' => $g['status'] ? 'tentative' : 'confirmed',
+            'start_utc' => gmdate('Y-m-d H:i:s', $g['time'][0]), 'end_utc' => gmdate('Y-m-d H:i:s', $g['time'][1]), 'all_day' => $g['time'][2] ? 1 : 0] + $rows[$id];
+        return $this->byIdentity($rows);
+    }
+
+    private function checkChoice(string $do, array $out, array $s0, array $s1, array $context): void
+    {
+        $sent = $this->singleSent;
+        $gid = (string) $sent['gid'];
+        $id = (int) $sent['id'];
+        $action = (string) $sent['action'];
+        $body = (array) $sent['body'];
+        $g0 = $s0['g']['digest'][$gid] ?? null;
+        if ($g0 === null || !isset($s0['rows'][$id])) {
+            $this->ran('x-choice', 'event gone at Google');
+            return;
+        }
+        $G = array_diff_key($g0, ['single' => 1]);
+        $R = self::rowSix($s0['rows'][$id]);
+        // What the person was shown: `over` where the request sends it, else the row as stored ((b)).
+        $over = (array) ($body['over'] ?? []);
+        $B = $R;
+        foreach (['title', 'description', 'location', 'url', 'status'] as $f) {
+            if (array_key_exists($f, $over)) {
+                $B[$f] = self::servedValue($f, $over[$f]);
+            }
+        }
+        if (array_intersect(['start', 'end', 'allDay'], array_keys($over)) !== []) {
+            $B['time'] = [isset($over['start']) ? self::instantOf((string) $over['start']) : $R['time'][0], isset($over['end']) ? self::instantOf((string) $over['end']) : $R['time'][1],
+                array_key_exists('allDay', $over) ? (bool) $over['allDay'] : $R['time'][2]];
+        }
+        // What the change sets, only where it differs from what was shown ((a): "a field sent at its base value is not wanted").
+        $W = [];
+        if ($action !== 'delete') {
+            foreach (['title', 'description', 'location', 'url', 'status'] as $f) {
+                if (array_key_exists($f, $body)) {
+                    $W[$f] = self::servedValue($f, $body[$f]);
+                }
+            }
+            if ($action === 'relationship') {
+                $W['status'] = ($body['relationship'] ?? '') === 'maybe';
+            }
+            if (array_intersect(['start', 'end', 'allDay'], array_keys($body)) !== []) {
+                $W['time'] = [isset($body['start']) ? self::instantOf((string) $body['start']) : $B['time'][0], isset($body['end']) ? self::instantOf((string) $body['end']) : $B['time'][1],
+                    array_key_exists('allDay', $body) ? (bool) $body['allDay'] : $B['time'][2]];
+            }
+            $W = array_filter($W, static fn($v, string $f): bool => $v !== $B[$f], ARRAY_FILTER_USE_BOTH);
+        }
+        $outcome = [];
+        foreach (self::CHOICE_FIELDS as $f) {
+            $wanted = $action === 'delete' || array_key_exists($f, $W);
+            $outcome[$f] = !$wanted ? ($G[$f] === $B[$f] ? 'same' : 'kept')
+                : ($G[$f] === $B[$f] || ($action !== 'delete' && $G[$f] === $W[$f]) ? 'send' : 'ask');
+        }
+        $asks = array_keys(array_filter($outcome, static fn(string $o): bool => $o === 'ask'));
+        $kept = array_keys(array_filter($outcome, static fn(string $o): bool => $o === 'kept'));
+        sort($asks);
+        sort($kept);
+        $toSend = $action === 'delete' || array_filter($W, static fn($v, string $f): bool => $G[$f] !== $v, ARRAY_FILTER_USE_BOTH) !== [];
+        $error = $out['ok'] ? null : (string) $out['error'];
+        $context += ['action' => $action, 'outcomes' => $outcome];
+        $this->ran('x-choice', $action . ($sent['overwriting'] !== null ? ' (overwrite)' : '') . ': ' . ($asks !== [] ? 'asks' : ($kept !== [] ? 'keeps' : ($G === $B ? 'nothing changed at Google since shown' : 'sends'))));
+
+        // The request budget (case 1: "one read, one conditional write"; case 3: "nothing is sent").
+        $app = array_values(array_filter(array_slice($this->stand->fake->requests, $s0['req'], $s1['req'] - $s0['req']), static fn(array $q): bool => !in_array('X-Harness: remote', $q['headers'], true)));
+        $reads = count(array_filter($app, static fn(array $q): bool => $q['method'] === 'GET'));
+        $writes = count($app) - $reads;
+        $budget = $context + ['reads' => $reads, 'writes' => $writes, 'requests' => array_map(static fn(array $q): string => $q['method'] . ' ' . rawurldecode(basename((string) $q['path'])), $app)];
+        $this->ran('x-choice', 'budget');
+        $this->expect('x-choice', $action === 'delete' || $W !== [] ? $reads === 1 : $reads <= 1, "step {$this->step} ($do): a change to one event reads it from Google once", $budget);
+        $this->expect('x-choice', $asks !== [] ? $writes === 0 : ($toSend ? $writes === 1 : $writes <= 1),
+            "step {$this->step} ($do): " . ($asks !== [] ? 'a change that asks sends Google nothing' : 'a change that goes through makes one conditional write' . ($toSend ? '' : ' at most (nothing left to send)')), $budget);
+
+        $now = null;
+        foreach ($s1['rows'] as $r) {
+            if ((string) $r['google_event_id'] === $gid && $r['rrule'] === null && $r['recurrence_parent_id'] === null) {
+                $now = $r;
+            }
+        }
+        $g1 = $s1['g']['digest'][$gid] ?? null;
+        $held = static fn(?array $r): ?array => $r === null ? null : ['tags' => $r['tags'], 'people' => $r['people'], 'reminders' => $r['reminders_json'] ?? null, 'icon' => $r['icon'] ?? null, 'attendance' => $r['attendance']];
+        $told = static function (array $list): array {
+            $out = [];
+            foreach ($list as $item) {
+                $out[(string) ($item['field'] ?? '')] = $item;
+            }
+            ksort($out);
+            return $out;
+        };
+        $keptRight = function (array $list, string $where) use ($kept, $G, $told, $context): void {
+            $byField = $told($list);
+            $this->expect('x-choice', array_keys($byField) == $kept, "step {$this->step}: $where names exactly the fields Google changed that the change did not set (kept)", $context + ['kept' => $list]);
+            foreach (array_intersect_key($byField, array_flip($kept)) as $f => $item) {
+                $this->expect('x-choice', self::servedValue($f, $item['now'] ?? null) === $G[$f], "step {$this->step}: $where gives a kept field's value as Google holds it", $context + ['field' => $f, 'now' => $item['now'] ?? null]);
+            }
+        };
+        if ($asks !== []) {
+            $this->expect('x-choice', $error === 'google_changed', "step {$this->step} ($do): a change of a field Google changed to something else since it was shown asks: 409 google_changed", $context + ['asks' => $asks]);
+            if ($error === 'google_changed') {
+                $byField = $told((array) ($out['extra']['fields'] ?? []));
+                $this->expect('x-choice', array_keys($byField) == $asks, "step {$this->step} ($do): the question names exactly the fields asked about", $context + ['fields' => $out['extra']['fields'] ?? null]);
+                foreach (array_intersect_key($byField, array_flip($asks)) as $f => $item) {
+                    $this->expect('x-choice', self::servedValue($f, $item['was'] ?? null) === $B[$f] && self::servedValue($f, $item['now'] ?? null) === $G[$f]
+                        && ($action === 'delete' ? ($item['yours'] ?? null) === null : self::servedValue($f, $item['yours'] ?? null) === $W[$f]),
+                        "step {$this->step} ($do): the question gives each field as shown (was), at Google now (now) and as the change sets it (yours, null for a delete)", $context + ['field' => $f, 'told' => $item]);
+                }
+                $keptRight((array) ($out['extra']['kept'] ?? []), 'the question');
+            }
+            $this->expect('x-choice', $now !== null && self::rowSix($now) === $G, "step {$this->step} ($do): after the question the event here holds what Google holds (the read is stored)", $context + ['here' => $now === null ? null : self::rowSix($now), 'google' => $G]);
+            $this->expect('x-choice', $now !== null && $held($now) == $held($s0['rows'][$id]), "step {$this->step} ($do): nothing of the request is written here, tags in the same request included", $context + ['before' => $held($s0['rows'][$id]), 'after' => $held($now)]);
+            $this->expect('x-choice', $this->takenBetween($s0, $s1) === [] && $s1['g'] == $s0['g'], "step {$this->step} ($do): after the question Google holds what it held", $context);
+        } else {
+            $this->expect('x-choice', $out['ok'], "step {$this->step} ($do): a change that asks about no field goes through", $context);
+            if ($out['ok'] && $action === 'delete') {
+                $this->expect('x-choice', $now === null && $g1 === null, "step {$this->step} ($do): the delete removes the event here and at Google", $context + ['here' => $now !== null, 'google' => $g1 !== null]);
+            } elseif ($out['ok']) {
+                $E = [];
+                foreach (self::CHOICE_FIELDS as $f) {
+                    $E[$f] = match ($outcome[$f]) { 'send' => $W[$f], 'kept' => $G[$f], default => $B[$f] };
+                }
+                $this->expect('x-choice', $now !== null && self::rowSix($now) === $E, "step {$this->step} ($do): here, each field sent holds the change's value and each kept one Google's", $context + ['here' => $now === null ? null : self::rowSix($now), 'expected' => $E]);
+                $this->expect('x-choice', $g1 !== null && array_diff_key($g1, ['single' => 1]) === $E, "step {$this->step} ($do): at Google, each field sent holds the change's value and each kept one Google's", $context + ['google' => $g1, 'expected' => $E]);
+                if (isset($body['tagNames'])) {
+                    $want = (array) $body['tagNames'];
+                    sort($want);
+                    $this->expect('x-choice', $now !== null && $now['tags'] == $want, "step {$this->step} ($do): the tags in the same request are written", $context + ['tags' => $now['tags'] ?? null]);
+                }
+                $answer = (array) ($out['answer'] ?? []);
+                $this->expect('x-choice', array_key_exists('kept', $answer), "step {$this->step} ($do): the answer carries kept", $context + ['answer' => $answer]);
+                $keptRight((array) ($answer['kept'] ?? []), 'the answer');
+            }
+        }
+        if ($sent['overwriting'] !== null) {
+            // Overwrite, sent as the question says right after it (nothing changed at Google since): it goes through.
+            $this->ran('x-choice', 'overwrite');
+            $this->expect('x-choice', $out['ok'], "step {$this->step} ($do): Overwrite, sent as the question says with nothing changed at Google since, goes through", $context);
+        }
+        // Nothing else of the case changes, here or at Google.
+        $others = static fn(array $l): array => array_diff_key($l, [$id => 1]);
+        $this->expect('x-choice', $others($s0['l']) == $others($s1['l']), "step {$this->step} ($do): a change to one event changes no other row here", $context + ['diff' => self::diff($others($s0['l']), $others($s1['l']))]);
+        $this->expect('x-choice', array_diff_key($s0['g']['digest'], [$gid => 1]) == array_diff_key($s1['g']['digest'], [$gid => 1]), "step {$this->step} ($do): a change to one event changes nothing else at Google", $context);
     }
 
     private function checkFailure(string $failure, array $out, array $s0, array $s1, array $asked, array $context): void
@@ -2786,7 +3294,7 @@ final class Interleave
             if (!($d === '*' || $d === $day || (str_starts_with($d, '>=') && ($day === '*' || $day >= substr($d, 2))))) {
                 continue;
             }
-            if (in_array($k, ['del1', 'delfollow', 'undo', 'redo', 'finish', 'putback', 'create'], true)) {
+            if (in_array($k, ['del1', 'delfollow', 'undo', 'redo', 'finish', 'putback', 'create', 'single-del'], true)) {
                 return true;
             }
             if ($field !== null && isset($asked['fields'][$field])) {
@@ -2915,12 +3423,12 @@ final class Interleave
         foreach ($here as $gid => $l) {
             $g = $s1['g']['digest'][$gid] ?? null;
             if ($g === null || $g != $l) {
-                $this->fail('x-agree', "step {$this->step} ($do): the rows here and Google disagree on a series", $context + ['gid' => $gid, 'google' => $g, 'here' => $l]);
+                $this->fail('x-agree', "step {$this->step} ($do): the rows here and Google disagree on " . (isset($l['single']) ? 'an event' : 'a series'), $context + ['gid' => $gid, 'google' => $g, 'here' => $l]);
             }
         }
         foreach ($s1['g']['digest'] as $gid => $g) {
-            if ($g !== null && !isset($g['single']) && !isset($here[$gid])) {
-                $this->fail('x-agree', "step {$this->step} ($do): Google holds a series of the case that has no row here", $context + ['gid' => $gid]);
+            if ($g !== null && !isset($here[$gid])) {
+                $this->fail('x-agree', "step {$this->step} ($do): Google holds " . (isset($g['single']) ? 'an event' : 'a series') . " of the case that has no row here", $context + ['gid' => $gid]);
             }
         }
         $before = $s1['l'];

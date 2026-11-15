@@ -30,9 +30,9 @@ if (in_array('--interleave', $argv, true)) {
     exit(0);
 }
 
-$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:', 'typed:', 'floating:', 'identity:', 'product:', 'google', 'series-undo:']);
+$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:', 'typed:', 'floating:', 'identity:', 'product:', 'google', 'series-undo:', 'conflict-choice:']);
 if (isset($opts['help'])) {
-    echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F] [--google] [--identity F] [--series-undo on|off]\n";
+    echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F] [--google] [--identity F] [--series-undo on|off] [--conflict-choice on|off]\n";
     exit(0);
 }
 $googleMode = isset($opts['google']);
@@ -101,6 +101,12 @@ BetterCal\EditHarness\Product::use($root);
 // --series-undo on|off: the account's google_series_undo setting (Product::$seriesUndo, README: Google); on by default.
 if (isset($opts['series-undo'])) {
     BetterCal\EditHarness\Product::$seriesUndo = (string) $opts['series-undo'] !== 'off';
+}
+// --conflict-choice on|off: the account's google_conflict_choice setting (Product::$conflictChoice, README: Interleaving,
+// The Conflict Choice); on by default. The series modes write no event in no series after making it, so it changes nothing
+// they check; it is here so every mode makes its accounts the same way.
+if (isset($opts['conflict-choice'])) {
+    BetterCal\EditHarness\Product::$conflictChoice = (string) $opts['conflict-choice'] !== 'off';
 }
 if ($everyOption !== null) {
     BetterCal\EditHarness\Driver::$everyOption = $everyOption;
@@ -405,6 +411,9 @@ try {
     }
     if (isset($opts['series-undo'])) {
         array_push($pass, '--series-undo', (string) $opts['series-undo']);
+    }
+    if (isset($opts['conflict-choice'])) {
+        array_push($pass, '--conflict-choice', (string) $opts['conflict-choice']);
     }
     if ($saveSpec !== null) {
         array_push($pass, '--save-spec', $saveSpec);

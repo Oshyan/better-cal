@@ -2724,33 +2724,37 @@ final class Interleave
         $reads = count(array_filter($app, static fn(array $q): bool => $q['method'] === 'GET'));
         $writes = count($app) - $reads;
 
-        // A time not whole where the rule asks for one (T2: on a request carrying `over`, a time the request changes is
-        // sent whole, and `over` names the time whole or not at all), or `over`'s whole time no real event state (T4 as the
-        // design page has it: an all-day time's boundaries dates with its end after its start, a timed time's end not
-        // after its start, so a moment is no state; the body's whole time read the same way), is refused before anything else: 400 client_outdated, nothing
-        // read from Google, nothing written here or there.
+        // Two refusals, by what is true of the request, both before anything else, nothing read from Google and nothing
+        // written here or there. A time in parts where the rule asks for one whole (T2: on a request carrying `over`, a time
+        // the request changes is sent whole, and `over` names the time whole or not at all) is an out-of-date client: 400
+        // client_outdated. A whole time whose resolved end is not after its start (T4, narrowed: the body's time after its
+        // typed clocks, and `over`'s) is an invalid time: 400 invalid_request. Parts are judged first.
         $bodyTime = $action === 'delete' ? [] : array_intersect_key($body, array_flip(self::TIME_KEYS));
         $overTime = array_intersect_key($over, array_flip(self::TIME_KEYS));
-        $why = [];
+        $parts = [];
+        $invalidWhy = [];
         if (array_key_exists('over', $body) && $bodyTime !== [] && !self::isWhole($bodyTime)) {
-            $why[] = 'the time sent is not whole: ' . implode(', ', array_keys($bodyTime));
+            $parts[] = 'the time sent is not whole: ' . implode(', ', array_keys($bodyTime));
         }
         if (array_key_exists('over', $body) && $bodyTime !== [] && self::isWhole($bodyTime) && ($invalid = self::invalidState(self::resolved($body))) !== null) {
-            $why[] = 'the time sent, resolved' . (isset($body['typed']) ? ' with its typed clocks' : '') . ", is no event state: $invalid";
+            $invalidWhy[] = 'the time sent, resolved' . (isset($body['typed']) ? ' with its typed clocks' : '') . ", is no event state: $invalid";
         }
         if ($overTime !== [] && !self::isWhole($overTime)) {
-            $why[] = "over's time is not whole: " . implode(', ', array_keys($overTime));
+            $parts[] = "over's time is not whole: " . implode(', ', array_keys($overTime));
         } elseif ($overTime !== [] && ($invalid = self::invalidState($overTime)) !== null) {
-            $why[] = "over's time is no event state: $invalid";
+            $invalidWhy[] = "over's time is no event state: $invalid";
         }
-        if ($why !== []) {
-            $context += ['action' => $action, 'refused' => $why, 'reads' => $reads, 'writes' => $writes];
-            $this->ran('x-choice', 'refused: time not whole (T2, T4)');
-            $this->expect('x-choice', $error === 'client_outdated' && ($out['status'] ?? null) === 400,
-                "step {$this->step} ($do): a request carrying over whose time is not whole, or whose resolved time does not end after its start, is refused, 400 client_outdated (T2, T4)", $context + ['error' => $error, 'status' => $out['status'] ?? null]);
-            $this->expect('x-choice', $reads === 0 && $writes === 0, "step {$this->step} ($do): the refusal reads nothing from Google and writes nothing there (T2)", $context);
+        if ($parts !== [] || $invalidWhy !== []) {
+            [$code, $rule] = $parts !== [] ? ['client_outdated', 'T2'] : ['invalid_request', 'T4'];
+            $context += ['action' => $action, 'refused' => [...$parts, ...$invalidWhy], 'reads' => $reads, 'writes' => $writes];
+            $this->ran('x-choice', $parts !== [] ? 'refused: time in parts (T2)' : 'refused: resolved end not after start (T4)');
+            $this->expect('x-choice', $error === $code && ($out['status'] ?? null) === 400,
+                $parts !== [] ? "step {$this->step} ($do): a request carrying over whose time is in parts is refused, 400 client_outdated (T2)"
+                    : "step {$this->step} ($do): a request carrying over whose whole time, resolved, does not end after its start is refused, 400 invalid_request (T4)",
+                $context + ['error' => $error, 'status' => $out['status'] ?? null, 'expected' => $code]);
+            $this->expect('x-choice', $reads === 0 && $writes === 0, "step {$this->step} ($do): the refusal reads nothing from Google and writes nothing there ($rule)", $context);
             $this->expect('x-choice', $s0['rows'] == $s1['rows'] && $s0['g'] == $s1['g'],
-                "step {$this->step} ($do): the refusal changes nothing here or at Google (T2)", $context + ['here' => self::diff($s0['l'], $s1['l'])]);
+                "step {$this->step} ($do): the refusal changes nothing here or at Google ($rule)", $context + ['here' => self::diff($s0['l'], $s1['l'])]);
             return;
         }
 

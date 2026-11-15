@@ -496,14 +496,20 @@ final class OracleProbes
             // T4: on a request carrying `over`, a timed time whose end is not after its start is no state, so a moment sent
             // whole is refused like any other.
             // T4, narrowed: an all-day boundary is read as its date whatever clock it carries, so such a time is valid.
-            ['check' => 'x-choice', 'what' => 'an all-day time sent whole with clocks on its boundaries, in the body and in over, is refused as client_outdated', 'case' => 'an-all-day-event-in-no-series-dragged-here-with-clocks-on-its-boundaries-goes-through', 'step' => 3,
+            ['check' => 'x-choice', 'what' => 'an all-day time sent whole with clocks on its boundaries, in the body and in over, is refused as an invalid time (invalid_request)', 'case' => 'an-all-day-event-in-no-series-dragged-here-with-clocks-on-its-boundaries-goes-through', 'step' => 3,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
-                    return [['ok' => false, 'error' => 'client_outdated', 'status' => 400, 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s0];
+                    return [['ok' => false, 'error' => 'invalid_request', 'status' => 400, 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s0];
                 }],
             // T4, narrowed: the one validity check is on the resolved time, typed clocks included.
             ['check' => 'x-choice', 'what' => 'a whole time whose typed start clock resolves it to a moment is accepted', 'case' => 'an-event-in-no-series-given-a-typed-start-at-its-end-is-refused', 'step' => 3,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => true, 'error' => null, 'status' => null, 'answer' => ['kept' => []]] + $out, $s0, $s1];
+                }],
+            // T4: a whole time whose end is not after its start is an invalid time, 400 invalid_request, not an out-of-date
+            // client.
+            ['check' => 'x-choice', 'what' => 'a timed moment sent whole with over is refused as an out-of-date client (client_outdated), not as an invalid time', 'case' => 'an-event-in-no-series-made-a-moment-here-is-refused', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'client_outdated', 'status' => 400, 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s0];
                 }],
             ['check' => 'x-choice', 'what' => 'a timed moment (its end at its start), sent whole with over, is accepted', 'case' => 'an-event-in-no-series-made-a-moment-here-is-refused', 'step' => 3,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
@@ -519,10 +525,10 @@ final class OracleProbes
                     $s1['rows'][$this->singles[(string) $this->single]]['tzid'] = 'Asia/Tokyo';
                     return [$out, $s0, $this->reshape($s1)];
                 }],
-            // T2: a request carrying `over` whose time is not whole is refused, 400 client_outdated, nothing read and nothing
+            // T2: a request carrying `over` whose time is in parts is refused, 400 client_outdated, nothing read and nothing
             // written. Each damage starts from the right refusal (the snapshots before the step, nothing taken) and breaks one
             // part of it, so the probe shows the check whatever the product answered.
-            ['check' => 'x-choice', 'what' => 'a drag sent by a client from before the rule (start and end, over whole) is refused with another code', 'case' => 'an-event-in-no-series-dragged-here-by-a-client-from-before-the-rule-is-refused', 'step' => 3,
+            ['check' => 'x-choice', 'what' => 'a drag sent by a client from before the rule (start and end, over whole) is refused as an invalid time (invalid_request), not as an out-of-date client', 'case' => 'an-event-in-no-series-dragged-here-by-a-client-from-before-the-rule-is-refused', 'step' => 3,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => false, 'error' => 'invalid_request', 'status' => 400, 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s0];
                 }],

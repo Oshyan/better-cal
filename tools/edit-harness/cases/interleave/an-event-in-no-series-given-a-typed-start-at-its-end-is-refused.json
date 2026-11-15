@@ -1,5 +1,5 @@
 {
-    "about": "The third outside read's typed case: an event in no series at 18:00 to 19:00 UTC, its notes changed at Google, then moved an hour here, the time sent whole (19:00 to 20:00) over the shown time whole, with typed naming only a start clock of 20:00: resolved, the start is 20:00 and the end the 20:00 sent, a moment, so the resolved time's end is not after its start and it is refused, 400 client_outdated, nothing read from Google and nothing written (T4, narrowed 2026-11-15; x-choice).",
+    "about": "The third outside read's typed case: an event in no series at 18:00 to 19:00 UTC, its notes changed at Google, then moved an hour here, the time sent whole (19:00 to 20:00) over the shown time whole, with typed naming only a start clock of 20:00: resolved, the start is 20:00 and the end the 20:00 sent, a moment, so the resolved time's end is not after its start: an invalid time, refused 400 invalid_request, nothing read from Google and nothing written (T4, narrowed 2026-11-15; x-choice).",
     "series": {
         "family": "weekly_bare",
         "rrule": "FREQ=WEEKLY",

@@ -545,7 +545,16 @@ final class Events
     private function googlePatchAll(int $userId, array $calendar, array $event, array $in, ?RequestAuthority $authority = null): void
     {
         $id = (int) $event['id'];
-        [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($event, $in));
+        // What the request means is read against what the person was shown
+        // (requestBase): a drag sends no all-day setting and a start alone
+        // no end, and each is completed from the base, never from a row a
+        // poll may have changed since. Each field it touches is then whole
+        // (the time is its three columns), so what is compared and sent is
+        // the field as the person wants it, whatever the row holds now.
+        $base = $this->requestBase($userId, $event, $this->requestOver);
+        $columns = $this->columnPatch($base, $in);
+        $whole = array_merge(...array_map(static fn(string $f): array => GoogleConflict::COLUMNS[$f], GoogleConflict::fieldsIn($columns)) ?: [[]]);
+        [$googleFields, $localFields] = self::splitGoogleFields($columns + array_intersect_key($base, array_flip($whole)));
         // Only what Google holds goes to Google; a change of nothing it
         // holds sends nothing and is written here as a local change.
         $body = $googleFields === [] ? [] : self::patchBody($event, $googleFields);
@@ -562,7 +571,7 @@ final class Events
             // The conflict choice: Google read and stored first, then the
             // fields to send, or a question and nothing of the request written.
             // Its read is the write's condition (patch, below): one read.
-            $step = $this->googleChoice($userId, $calendar, $event, $googleFields, $authority);
+            $step = $this->googleChoice($userId, $calendar, $event, $base, $googleFields, $authority);
             if ($step === null) {
                 return;
             }
@@ -832,7 +841,7 @@ final class Events
             // The conflict choice: a delete wants every field, so any change
             // at Google since the event was shown is asked about.
             try {
-                $step = $this->googleChoice($userId, $calendar, $event, null, $authority);
+                $step = $this->googleChoice($userId, $calendar, $event, $this->requestBase($userId, $event, $this->requestOver), null, $authority);
                 if ($step === null) {
                     return;
                 }
@@ -868,14 +877,14 @@ final class Events
      * request is written, or the row as stored, the read and its list for
      * the write's condition, and the columns to send: those of each field to
      * send, whole, and the request's columns that are no field (a zone, a
-     * rule). $columns: the Google columns the request sets; null for a
-     * delete, which wants every field. Sets `kept` (kept()).
+     * rule). $baseRow: the row the request was made against (requestBase).
+     * $columns: the Google columns the request sets, read against $baseRow;
+     * null for a delete, which wants every field. Sets `kept` (kept()).
      *
      * @return array{event:array, read:array, items:list<array>, columns:array<string,mixed>}|null null: asked
      */
-    private function googleChoice(int $userId, array $calendar, array $event, ?array $columns, ?RequestAuthority $authority): ?array
+    private function googleChoice(int $userId, array $calendar, array $event, array $baseRow, ?array $columns, ?RequestAuthority $authority): ?array
     {
-        $baseRow = array_merge($event, $this->overColumns($userId, $event, $this->requestOver));
         $wantedRow = array_merge($baseRow, $columns ?? []);
         $wanted = $columns === null
             ? array_fill_keys(GoogleConflict::FIELDS, GoogleConflict::DELETE)
@@ -905,6 +914,29 @@ final class Events
     }
 
     /**
+     * The row a request for one event was made against (the page "1.5.7,
+     * Slice 1", (b)): for a change that goes through the conflict choice (an
+     * event in no series on a Google calendar, the setting on), the row with
+     * the columns of the request's `over` (overColumns), what the person was
+     * shown; with no `over`, or on any other path, the row itself. Every
+     * reading of a partial request is made against it (columnPatch: a
+     * missing end or all-day setting, a date or a clock, the zone; fromViewer:
+     * whose clock a floating event's times are on), so a poll that stored
+     * Google's change after the person looked does not change what their
+     * request means.
+     *
+     * @param array<string,mixed> $over the request's `over`, by served key
+     */
+    public function requestBase(int $userId, array $row, array $over): array
+    {
+        if ($over === [] || !$this->choosesOverGoogle($userId, $row)) {
+            return $row;
+        }
+        $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $row['calendar_id']]);
+        return $calendar !== null && GoogleWriter::bound($calendar) ? array_merge($row, $this->overColumns($userId, $row, $over)) : $row;
+    }
+
+    /**
      * The columns the request's `over` names, parsed exactly as the same keys
      * in a request body are (fromViewer, columnPatch over the row): the base
      * of the conflict choice. Only the six fields' columns.
@@ -930,7 +962,9 @@ final class Events
      */
     public function servedFields(array $row): array
     {
-        $s = $this->serializeFields($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), [], true);
+        // A floating row's on the viewer's clock, as serializeSingle serves it.
+        [$start, $end] = Floating::span($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $this->viewerFor([$row], (int) $row['user_id']));
+        $s = $this->serializeFields($row, $start, $end, [], true);
         return ['title' => $s['title'], 'description' => $s['description'], 'location' => $s['location'], 'url' => $s['url'], 'status' => $s['status'],
             'time' => ['start' => $s['start'], 'end' => $s['end'], 'allDay' => $s['allDay']]];
     }
@@ -3123,7 +3157,10 @@ final class Events
             $tzid = 'UTC';
         }
 
-        if (isset($in['start']) || isset($in['end']) || $legacyDay) {
+        // A change of kind is a change of both boundaries, sent or not: an
+        // all-day setting sent alone makes the dates of the times it had.
+        $kindChanges = $allDay !== ((int) $current['all_day'] === 1);
+        if (isset($in['start']) || isset($in['end']) || $legacyDay || $kindChanges) {
             $curStart = Time::fromDb((string) $current['start_utc']);
             $curEnd = Time::fromDb((string) $current['end_utc']);
             if ($allDay) {

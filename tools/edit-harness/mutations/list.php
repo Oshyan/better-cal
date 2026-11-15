@@ -1058,7 +1058,7 @@ return [
     [
         'id' => 'choice-base-from-row', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-choice',
         'what' => 'the base is the row, not the request\'s `over`: a change a poll stored while the editor was open is overwritten without a question',
-        'patch' => [["\$baseRow = array_merge(\$event, \$this->overColumns(\$userId, \$event, \$this->requestOver));", "\$baseRow = \$event;"]],
+        'patch' => [["return \$calendar !== null && GoogleWriter::bound(\$calendar) ? array_merge(\$row, \$this->overColumns(\$userId, \$row, \$over)) : \$row;", "return \$row;"]],
         'checks' => ['409 google_changed about the title, was the served title; nothing written to Google'],
     ],
     [
@@ -1082,8 +1082,8 @@ return [
     [
         'id' => 'choice-tags-on-question', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-choice',
         'what' => 'the tags of a request that asks are written anyway',
-        'patch' => [["            \$step = \$this->googleChoice(\$userId, \$calendar, \$event, \$googleFields, \$authority);\n            if (\$step === null) {\n",
-            "            \$step = \$this->googleChoice(\$userId, \$calendar, \$event, \$googleFields, \$authority);\n            if (\$step === null) {\n                if (is_array(\$in['tagNames'] ?? null)) {\n                    \$this->labels->setEventTags(\$userId, \$id, \$in['tagNames']);\n                }\n"]],
+        'patch' => [["            \$step = \$this->googleChoice(\$userId, \$calendar, \$event, \$base, \$googleFields, \$authority);\n            if (\$step === null) {\n",
+            "            \$step = \$this->googleChoice(\$userId, \$calendar, \$event, \$base, \$googleFields, \$authority);\n            if (\$step === null) {\n                if (is_array(\$in['tagNames'] ?? null)) {\n                    \$this->labels->setEventTags(\$userId, \$id, \$in['tagNames']);\n                }\n"]],
         'checks' => ['the row holds Google\'s title, nothing else changed, the tags not written'],
     ],
     [

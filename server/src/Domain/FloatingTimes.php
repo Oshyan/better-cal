@@ -77,6 +77,11 @@ trait FloatingTimes
         if ($id !== null && $row === null) {
             return $in;
         }
+        // Whose clock the request's times are on is read from the row the
+        // person was shown (Events::requestBase), as the rest of it is.
+        if ($row !== null && is_array($in['over'] ?? null)) {
+            $row = $this->requestBase($userId, $row, $in['over']);
+        }
         $home = $this->userTzid($userId);
         $allDay = array_key_exists('allDay', $in)
             ? filter_var($in['allDay'], FILTER_VALIDATE_BOOL)
@@ -86,7 +91,10 @@ trait FloatingTimes
             $in['floating'] = true;
         }
         $wasFloating = $row !== null && Floating::is($row);
-        $floats = !$allDay && (array_key_exists('floating', $in) ? filter_var($in['floating'], FILTER_VALIDATE_BOOL) : $wasFloating);
+        // The times float when the row the request leaves floats: timed, with
+        // the flag, which an all-day row a Google sync made keeps (Feeds), so
+        // a request that makes it timed again is on the device's clock.
+        $floats = !$allDay && (array_key_exists('floating', $in) ? filter_var($in['floating'], FILTER_VALIDATE_BOOL) : $row !== null && (int) ($row['floating'] ?? 0) === 1);
         $from = $this->viewer ?? Time::zone(isset($in['tzid']) ? (string) $in['tzid'] : $home);
         $own = Time::zone($row === null || (int) $row['all_day'] === 1 ? $home : (string) $row['tzid']);
         $move = static function (mixed $iso) use ($from, $own): mixed {

@@ -211,15 +211,14 @@ final class Interleave
         }
         // How the time is set here, as a client carrying `over` sends it: whole (T2), in the forms of timeRequest (a drag, a
         // resize, a start moved, the editor's all-day switch, the editor's zone picker), `zone` the other zone a form names.
-        $mineTime = in_array('time', $mine, true) ? ['form' => $r->weighted(['drag' => 4, 'resize' => 2, 'start' => 2, 'toggle' => 2, 'zone' => 2, 'moment' => 1]),
+        $mineTime = in_array('time', $mine, true) ? ['form' => $r->weighted(['drag' => 4, 'resize' => 2, 'start' => 2, 'toggle' => 2, 'zone' => 2]),
             'days' => $r->pick([0, 0, 1, 2, -1]), 'secs' => $r->pick([3600, 0, 1800]), 'zone' => $r->pick(self::SINGLE_ZONES), 'tz' => $r->pick(['utc', 'shown'])] : null;
         $same = array_values(array_filter(array_intersect($remote, $mine), static fn(string $f): bool => $r->chance(0.35)));
         // How the time changes at Google: shifted whole, its start alone, its end alone, its kind (timed made all-day over
         // one to three days from the date it shows in its zone, all-day made timed at 18:00 to 19:00 in `zone`), or its zone
         // alone (the instants kept; an all-day event's kind changed instead). No moment (a timed end at its start) is made
-        // at Google or by w-create: POST /events refuses one (invalid_request), and what a poll stores of a moment Google
-        // holds is not stated (a first draw saw it kept as the row's old end), so `over` never names one; the change here
-        // makes one (timeRequest's `moment`), a valid whole time (T4).
+        // at Google or by w-create: it is no event state (T4), and what the product stores of one is a separate, older
+        // matter; a moment appears only among the refusal draws below.
         $remoteTime = in_array('time', $remote, true) && !in_array('time', $same, true)
             ? ['how' => $r->weighted(['shift' => 3, 'start' => 2, 'end' => 2, 'kind' => 4, 'zone' => 1]), 'days' => $r->int(1, 3), 'zone' => $r->pick(self::SINGLE_ZONES)] : null;
         // A poll between the change at Google and the change here, more often when Google changed the time's kind; after it
@@ -233,11 +232,11 @@ final class Interleave
             $created['allDay'] = $r->int(1, 3); // an all-day event of one to three days
         }
         // A small share of the blocks send what a client from before the rule sends with `over` (T2, T4): the time not
-        // whole in the body or in `over`, or `over`'s time no real event state (a timed end before its start, an all-day
+        // whole in the body or in `over`, or a time in either no real event state (a timed end at or before its start, an all-day
         // end on or before its start, all-day boundaries that are not dates); the refusal is the expectation (outdated).
         $outdated = null;
         if (in_array($how, ['edit', 'delete'], true) && $r->chance(0.12)) {
-            $outdated = $r->pick($mineTime !== null ? ['pair', 'start', 'end', 'noTz', 'overNoTz', 'overPair', 'overInvalid', 'overNotDate'] : ($how === 'delete' ? ['overNoTz', 'overPair', 'overInvalid', 'overNotDate'] : ['overNoTz', 'overPair']));
+            $outdated = $r->pick($mineTime !== null ? ['pair', 'start', 'end', 'noTz', 'bodyMoment', 'bodyInvalid', 'overNoTz', 'overPair', 'overMoment', 'overInvalid', 'overNotDate'] : ($how === 'delete' ? ['overNoTz', 'overPair', 'overMoment', 'overInvalid', 'overNotDate'] : ['overNoTz', 'overPair']));
         }
         $block = [$created];
         if ($remote !== []) {
@@ -654,9 +653,10 @@ final class Interleave
 
     /**
      * Why a whole time is no event state, or null when it is one (T4, as google-conflict-choice.md (b) and api-contract.md
-     * put it: "an all-day time's boundaries are dates with the end after the start, a timed time's end is not before its
-     * start"). A boundary is a date when it is `YYYY-MM-DD`, or that date at midnight UTC, the form the API serves an
-     * all-day boundary in; the harness sends no other midnight. A timed end equal to its start is a moment, valid.
+     * put it: "an all-day time's boundaries are dates with the end after the start"; a timed time's end is after its start,
+     * as POST /events holds, so a moment, its end at its start, is no state on this path). A boundary is a date when it is
+     * `YYYY-MM-DD`, or that date at midnight UTC, the form the API serves an all-day boundary in; the harness sends no
+     * other midnight.
      */
     private static function invalidState(array $t): ?string
     {
@@ -670,7 +670,7 @@ final class Interleave
             return $e <= $s ? 'all-day end on or before its start' : null;
         }
         [$s, $e] = self::timeOf($t);
-        return $e < $s ? 'timed end before its start' : null;
+        return $e <= $s ? ($e === $s ? 'a timed moment, its end at its start' : 'timed end before its start') : null;
     }
 
     /** An instant written in a zone's own offset, as the API and Google serve a timed value. */
@@ -700,8 +700,7 @@ final class Interleave
      * zone), a resize (the end moved), a start moved (the shown end kept: the editor's start field), the editor's all-day
      * switch (a timed event made all-day over the dates it shows in its zone; an all-day one made timed at 15:00 to 16:00
      * on its first date in `zone`), and the editor's zone picker (the same wall clocks in `zone`, so the instants move;
-     * an all-day event has none and is dragged instead), and a timed event made a moment (moved, its end at its start:
-     * a valid whole time, T4; an all-day event is dragged instead). A timed value is written in its zone's offset, as served.
+     * an all-day event has none and is dragged instead). A timed value is written in its zone's offset, as served.
      */
     private static function timeRequest(array $shown, array $t): array
     {
@@ -745,7 +744,6 @@ final class Interleave
         [$s, $e] = match ($form) {
             'resize' => [$s, $e + $edge],
             'start' => [$s - $edge, $e],
-            'moment' => [$s + $by, $s + $by], // made a moment, its end its start: valid (T4)
             default => [$s + $by, $e + $by],
         };
         return ['start' => self::inZone($s, $tz), 'end' => self::inZone($e, $tz), 'allDay' => false, 'tzid' => $tz];
@@ -755,10 +753,11 @@ final class Interleave
      * A request the rule refuses (T2, T4), made from the whole one the app would send: the time left partial in the body
      * (`pair`: start and end, the 1.5.7 client's drag; `start` or `end` alone; `noTz`: three keys of four), or in `over`
      * (`overNoTz`: start, end and allDay, the 1.5.7 client's `over`; `overPair`: start and end), or `over` whole but no
-     * real event state (T4 as the design page has it): `overInvalid`, a timed end an hour before its start or an all-day
-     * end on its start; `overNotDate`, an all-day start at 15:00 (a boundary that is no date; a timed `over` takes
-     * `overInvalid`'s damage). A timed end equal to its start is a valid moment and never drawn here. `over` names the
-     * time from `$shown` where the request did not.
+     * real event state (T4): `overMoment`, its end at its start (a timed moment, or an all-day end on its start);
+     * `overInvalid`, its end before its start (an hour, or a day); `overNotDate`, an all-day start at 15:00 (a boundary
+     * that is no date; a timed `over` takes `overInvalid`'s damage); or the body whole but no state: `bodyMoment`, its
+     * end at its start, `bodyInvalid`, its end before its start. `over` names the time from `$shown` where the request
+     * did not.
      */
     private static function outdated(array $body, string $how, array $shown): array
     {
@@ -771,13 +770,24 @@ final class Interleave
                 $how === 'overNoTz' => $only($o, ['start', 'end', 'allDay']),
                 $how === 'overPair' => $only($o, ['start', 'end']),
                 $how === 'overNotDate' && $allDay => ['start' => substr((string) $o['start'], 0, 10) . 'T15:00:00+00:00'] + $o,
-                $allDay => ['end' => $o['start']] + $o,
-                default => ['end' => self::inZone(self::instantOf((string) $o['start']) - 3600, (string) $o['tzid'])] + $o,
+                default => ['end' => self::endAgainstStart($o, $how === 'overMoment')] + $o,
             };
             return $body;
         }
+        if ($how === 'bodyMoment' || $how === 'bodyInvalid') {
+            return ['end' => self::endAgainstStart($body, $how === 'bodyMoment')] + $body;
+        }
         $keep = match ($how) { 'pair' => ['start', 'end'], 'start' => ['start'], 'end' => ['end'], default => ['start', 'end', 'allDay'] };
         return $only($body, $keep);
+    }
+
+    /** An end for a whole time at its start (`$at`), or before it by an hour or, all-day, a day: no event state (T4). */
+    private static function endAgainstStart(array $t, bool $at): string
+    {
+        if (!empty($t['allDay'])) {
+            return gmdate('Y-m-d', self::instantOf(substr((string) $t['start'], 0, 10)) - ($at ? 0 : 86400));
+        }
+        return self::inZone(self::instantOf((string) $t['start']) - ($at ? 0 : 3600), (string) $t['tzid']);
     }
 
     /**
@@ -2665,13 +2675,16 @@ final class Interleave
         // A time not whole where the rule asks for one (T2: on a request carrying `over`, a time the request changes is
         // sent whole, and `over` names the time whole or not at all), or `over`'s whole time no real event state (T4 as the
         // design page has it: an all-day time's boundaries dates with its end after its start, a timed time's end not
-        // before its start, so a timed moment is valid), is refused before anything else: 400 client_outdated, nothing
+        // after its start, so a moment is no state; the body's whole time read the same way), is refused before anything else: 400 client_outdated, nothing
         // read from Google, nothing written here or there.
         $bodyTime = $action === 'delete' ? [] : array_intersect_key($body, array_flip(self::TIME_KEYS));
         $overTime = array_intersect_key($over, array_flip(self::TIME_KEYS));
         $why = [];
         if (array_key_exists('over', $body) && $bodyTime !== [] && !self::isWhole($bodyTime)) {
             $why[] = 'the time sent is not whole: ' . implode(', ', array_keys($bodyTime));
+        }
+        if (array_key_exists('over', $body) && $bodyTime !== [] && self::isWhole($bodyTime) && ($invalid = self::invalidState($bodyTime)) !== null) {
+            $why[] = "the time sent is no event state: $invalid";
         }
         if ($overTime !== [] && !self::isWhole($overTime)) {
             $why[] = "over's time is not whole: " . implode(', ', array_keys($overTime));

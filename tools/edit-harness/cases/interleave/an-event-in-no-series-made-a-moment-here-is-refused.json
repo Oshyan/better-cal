@@ -1,5 +1,5 @@
 {
-    "about": "A timed event in no series at 19:00 to 20:00 in New York, its notes changed at Google, then moved an hour here and made a moment (its end at its start), sent whole over the shown time whole: a timed end at its start is a valid event state (T4 as the design page reads it), so nothing is refused; the change goes through, a moment here and at Google, and Google's notes are kept (x-choice).",
+    "about": "An event in no series at 19:00 to 20:00 in New York, its notes changed at Google, then moved an hour here with its end set to its start (a moment), the time sent whole over the shown time whole: on a request carrying over, a timed time whose end is not after its start is no event state (T4), so it is refused: 400 client_outdated, nothing read from Google, nothing written here or there (x-choice).",
     "series": {
         "family": "weekly_bare",
         "rrule": "FREQ=WEEKLY",
@@ -37,12 +37,13 @@
             ],
             "shown": "earlier",
             "time": {
-                "form": "moment",
+                "form": "drag",
                 "days": 0,
                 "secs": 3600,
                 "zone": "UTC",
                 "tz": "utc"
-            }
+            },
+            "outdated": "bodyMoment"
         },
         {
             "do": "w-single",

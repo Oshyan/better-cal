@@ -493,10 +493,11 @@ final class OracleProbes
                     }
                     return [$out, $s0, $s1];
                 }],
-            // T4 as the design page reads it: a timed end at its start is a valid moment, never refused.
-            ['check' => 'x-choice', 'what' => 'a drag of a timed moment (its end its start), sent whole, is refused as client_outdated', 'case' => 'a-timed-moment-in-no-series-dragged-here-whole-goes-through', 'step' => 3,
+            // T4: on a request carrying `over`, a timed time whose end is not after its start is no state, so a moment sent
+            // whole is refused like any other.
+            ['check' => 'x-choice', 'what' => 'a timed moment (its end at its start), sent whole with over, is accepted', 'case' => 'an-event-in-no-series-made-a-moment-here-is-refused', 'step' => 3,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
-                    return [['ok' => false, 'error' => 'client_outdated', 'status' => 400, 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s0];
+                    return [['ok' => true, 'error' => null, 'status' => null, 'answer' => ['kept' => []]] + $out, $s0, $s1];
                 }],
             ['check' => 'x-choice', 'what' => 'Overwrite lands the yours instants in another zone here', 'case' => 'an-event-in-no-series-whose-start-moved-at-google-polled-then-its-start-moved-here-whole-asks', 'step' => 5,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {

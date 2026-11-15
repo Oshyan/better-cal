@@ -167,17 +167,24 @@ assert.deepEqual(ask({ remove: true, fields: [
 ], 'a delete over several changes');
 
 // ---- kept, on the toast -------------------------------------------------------
+//
+// Under a line that names Google Calendar ("Title changed, here and in Google
+// Calendar") the kept line says "there"; under one that doesn't, it names
+// Google Calendar itself.
 
-assert.equal(keptWords([], now), null, 'nothing kept: the toast is as always');
-assert.equal(keptWords(undefined, now), null, 'no kept at all (the setting off): the toast is as always');
-assert.equal(keptWords([{ field: 'title', now: 'Team sync' }], now), "Also changed in Google Calendar: the title is now 'Team sync'.");
-assert.equal(keptWords([{ field: 'status', now: 'tentative' }], now), 'Also changed in Google Calendar: it is now a Maybe.');
-assert.equal(keptWords([{ field: 'status', now: 'confirmed' }, { field: 'title', now: 'Standup' }], now),
-  "Also changed in Google Calendar: it is now Planned and the title is now 'Standup'.");
-assert.equal(keptWords([{ field: 'location', now: 'Sample Hall' }, { field: 'url', now: '' }], now),
-  "Also changed in Google Calendar: the location is now 'Sample Hall' and the link was removed.");
-assert.equal(keptWords([{ field: 'time', now: timed(17, '10:00', '11:00') }, { field: 'location', now: null }, { field: 'description', now: notesThere }], now),
-  'Also changed in Google Calendar: the time is now Tue, Nov 17, 10:00 AM to 11:00 AM; the location was removed; and the notes were changed.',
+const kw = (kept, there = true) => keptWords(kept, { there, now });
+assert.equal(kw([]), null, 'nothing kept: the toast is as always');
+assert.equal(kw(undefined), null, 'no kept at all (the setting off): the toast is as always');
+assert.equal(kw([{ field: 'title', now: 'Team sync' }]), "A separate change there was kept: the title is now 'Team sync'.");
+assert.equal(kw([{ field: 'title', now: 'Team sync' }], false), "A separate change in Google Calendar was kept: the title is now 'Team sync'.",
+  'under a line that does not name Google Calendar, the kept line names it');
+assert.equal(kw([{ field: 'status', now: 'tentative' }]), 'A separate change there was kept: it is now a Maybe.');
+assert.equal(kw([{ field: 'status', now: 'confirmed' }, { field: 'title', now: 'Standup' }]),
+  "Separate changes there were kept: it is now Planned and the title is now 'Standup'.");
+assert.equal(kw([{ field: 'location', now: 'Sample Hall' }, { field: 'url', now: '' }]),
+  "Separate changes there were kept: the location is now 'Sample Hall' and the link was removed.");
+assert.equal(kw([{ field: 'time', now: timed(17, '10:00', '11:00') }, { field: 'location', now: null }, { field: 'description', now: notesThere }]),
+  'Separate changes there were kept: the time is now Tue, Nov 17, 10:00 AM to 11:00 AM; the location was removed; and the notes were changed.',
   'a time with commas, and notes too long to repeat');
 
 assert.equal(stoppedWords(['Sample hike', 'Sample dinner']), "Stopped. Already deleted: 'Sample hike' and 'Sample dinner'.");
@@ -187,8 +194,8 @@ console.log('Google changed: sentences read as written');
 
 // ---- the one sender ------------------------------------------------------------
 
-const { overOf, sendEventChange, CANCELLED, keptLine, failWords } = await import('../src/app/googlechange.js');
-const { state, set, subscribe } = await import('../src/app/store.js');
+const { overOf, sendEventChange, CANCELLED, keptOf, failWords } = await import('../src/app/googlechange.js');
+const { state, set, subscribe, toast } = await import('../src/app/store.js');
 const { ApiError } = await import('../src/app/api.js');
 
 const shown = {
@@ -209,8 +216,13 @@ const realFetch = globalThis.fetch;
 const sent = [];
 let answers = [];
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+// What the server stored at a question, read back as the event's record
+// (showStored); `reads` counts those reads, apart from the requests sent.
+let stored = null;
+let reads = 0;
 globalThis.fetch = async (url, init = {}) => {
   const path = String(url).replace('/api/v1', '');
+  if (path === '/events/7/occurrence' && (init.method || 'GET') === 'GET') { reads++; return json(200, { occurrence: stored }); }
   if (!path.startsWith('/events/7')) return json(200, { events: [], cursor: null });
   sent.push({ path, method: init.method, body: init.body ? JSON.parse(init.body) : null });
   return answers.shift();
@@ -223,7 +235,10 @@ const off = subscribe((st) => {
   const a = st.confirmAsk;
   if (!a || a._seen) return;
   a._seen = true;
-  asked.push({ title: a.title, body: a.body, lines: a.lines, foot: a.foot, confirmLabel: a.confirmLabel });
+  // What every view holds of the event while the question is open.
+  const held = [...st.occ.values()].filter((o) => o.eventId === 7);
+  asked.push({ title: a.title, body: a.body, lines: a.lines, foot: a.foot, confirmLabel: a.confirmLabel,
+    held: held.map((o) => ({ title: o.title, start: o.start })), editor: !!st.editor, popover: st.popover && st.popover.instanceId });
   const yes = reply.shift();
   queueMicrotask(() => { set({ confirmAsk: null }); a.resolve(yes); });
 });
@@ -241,7 +256,8 @@ assert.deepEqual(sent.map((s) => s.body), [
   { title: 'Weekly sync', over: { title: 'Daily standup' } },
 ], 'Overwrite is the same request with over set to what Google holds now');
 assert.equal(asked[1].body, "Since 'Team sync' was last shown to you, its title was changed in Google Calendar. It is now 'Daily standup' there; your change makes it 'Weekly sync'.", 'the second question has the newer value');
-assert.equal(keptLine(res), "Also changed in Google Calendar: the location is now 'Sample Hall'.");
+assert.deepEqual(keptOf(res), [{ field: 'location', now: 'Sample Hall' }], 'the kept fields go to the toast');
+assert.equal(reads, 2, 'the stored event is read at each question: each stored something newer');
 
 // A time: Overwrite sets all three keys of over from Google's time.
 sent.length = 0; asked.length = 0;
@@ -250,7 +266,7 @@ answers = [changed([{ field: 'time', was: { start: shown.start, end: shown.end, 
 reply = [true];
 const moved = await sendEventChange(shown, '/events/7', 'PATCH', { start: at('2026-11-18', '10:00'), end: at('2026-11-18', '11:00') });
 assert.deepEqual(sent[1].body.over, now2, 'the time asked: over.start, over.end, over.allDay are Google\'s');
-assert.equal(keptLine(moved), null, 'empty kept: no line');
+assert.equal(keptOf(moved), null, 'empty kept: no line');
 
 // Overwrite sends what the question showed as yours. A drag (start and end
 // only) over an event Google made all-day: the repeat carries yours whole,
@@ -275,7 +291,8 @@ await sendEventChange(shown, '/events/7', 'PATCH', { location: 'Room 3', locatio
 assert.deepEqual(sent[1].body, { location: 'Room 3', locationLat: null, locationLng: null, over: { location: 'Sample Hall' } },
   'overwrite yours: a plain field sends yours, over from now');
 
-// Cancel: nothing more is sent, the caller's copy is put back, CANCELLED.
+// Cancel: nothing more is sent, CANCELLED. The caller's own copy came off
+// before the question opened, once.
 sent.length = 0; asked.length = 0;
 let reverted = 0;
 answers = [changed([{ field: 'location', was: 'Room 2', now: 'Sample Hall', yours: null }])];
@@ -283,19 +300,21 @@ reply = [false];
 const gone = await sendEventChange(shown, '/events/7', 'DELETE', {}, { remove: true, revert: () => { reverted++; } });
 assert.equal(gone, CANCELLED);
 assert.equal(sent.length, 1, 'Cancel sends nothing');
-assert.equal(reverted, 1, 'and puts back what the caller showed');
+assert.equal(reverted, 1, 'the caller\'s copy taken off once');
 assert.equal(asked[0].confirmLabel, 'Delete');
 assert.equal(asked[0].foot, DELETE_FOOT);
 assert.equal(sent[0].body.over.title, 'Team sync', 'a delete carries over for every field');
 
-// The editor open on the event: Cancel says it takes you back.
+// A change made in a surface that stays open holding it: Cancel says it takes you back.
 sent.length = 0; asked.length = 0;
-set({ editor: { mode: 'edit', occ: shown } });
 answers = [changed([t1])];
 reply = [false];
-assert.equal(await sendEventChange(shown, '/events/7', 'PATCH', { title: 'Weekly sync' }), CANCELLED);
+assert.equal(await sendEventChange(shown, '/events/7', 'PATCH', { title: 'Weekly sync' }, { back: true }), CANCELLED);
 assert.equal(asked[0].foot, OVERWRITE_BACK);
-set({ editor: null });
+answers = [changed([t1])];
+reply = [false];
+await sendEventChange(shown, '/events/7', 'PATCH', { title: 'Weekly sync' });
+assert.equal(asked[1].foot, OVERWRITE_STAY, 'a drag: Cancel leaves the event as Google has it');
 
 // A google_changed with no fields to ask about: thrown, its message whole.
 const whole = "Since 'Team sync' was last shown to you, its title was changed in Google Calendar. It is now 'Standup' there; your change makes it 'Weekly sync'. It wasn't changed; open the event to see it and make the change again.";
@@ -312,9 +331,105 @@ answers = [json(200, { instanceId: 'e7' })];
 const plain = await sendEventChange(shown, '/events/7', 'PATCH', { title: 'Weekly sync' });
 assert.equal(sent.length, 1);
 assert.equal(asked.length, 0);
-assert.equal(keptLine(plain), null);
+assert.equal(keptOf(plain), null);
+
+console.log('Google changed: one sender, over from what was shown, Overwrite and Cancel');
+
+// ---- the callers: what shows while the question is open, and after -----------------
+//
+// The question interrupts the action (nothing of it shows first) and the
+// screen behind it shows what the server stored (Google's values), never the
+// copy from before the action; Cancel leaves both as they are.
+
+const { deleteEvent, moveEvent, resizeEvent, updateEvent, setRelationship } = await import('../src/app/actions.js');
+state.calendars = [{ id: 3, name: 'Sample team', provider: 'google', editable: true, visible: true, role: 'mine' }];
+const put = (o) => { for (const [id, x] of state.occ) if (x.eventId === 7) state.occ.delete(id); state.occ.set(o.instanceId, o); };
+const googleTime = { start: at('2026-11-19', '15:00'), end: at('2026-11-19', '16:00') };
+const atGoogle = (extra = {}) => ({ ...shown, ...extra, instanceId: '7:google' });
+
+// A delete from the editor: the editor and the event stay while asked, and after Cancel.
+sent.length = 0; asked.length = 0; reads = 0;
+put(shown);
+set({ editor: { mode: 'edit', occ: shown }, popover: null });
+stored = atGoogle({ location: 'Sample Hall' });
+answers = [changed([{ field: 'location', was: 'Room 2', now: 'Sample Hall', yours: null }])];
+reply = [false];
+await deleteEvent(shown);
+assert.equal(asked[0].editor, true, 'A: the editor is open behind the question');
+assert.deepEqual(asked[0].held, [{ title: 'Team sync', start: shown.start }], 'A: the event is on the calendar behind the question, as stored');
+assert.ok(state.editor, 'A: Cancel leaves the editor open');
+assert.equal(state.occ.get('7:google').location, 'Sample Hall', 'B: after Cancel the event shows as Google has it');
+// Delete at the question: then it goes, and the editor closes.
+answers = [changed([{ field: 'location', was: 'Room 2', now: 'Sample Hall', yours: null }]), json(200, { undo: [] })];
+reply = [true];
+await deleteEvent(shown);
+assert.equal(state.editor, null, 'A: deleted, the editor closes');
+assert.equal([...state.occ.values()].filter((o) => o.eventId === 7).length, 0, 'A: deleted, the event leaves the calendar');
+
+// A delete from the panel: the panel stays open over the question, and follows the event.
+sent.length = 0; asked.length = 0;
+put(shown);
+set({ editor: null, popover: { instanceId: shown.instanceId } });
+stored = atGoogle({ ...googleTime });
+answers = [changed([{ field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: { ...googleTime, allDay: false }, yours: null }])];
+reply = [false];
+await deleteEvent(shown);
+assert.equal(asked[0].popover, '7:google', 'A, B: the panel is open behind the question, on the event as stored');
+assert.equal(state.popover && state.popover.instanceId, '7:google', 'A: Cancel leaves the panel open');
+
+// An edit: the calendar behind the question shows Google's title, and after Cancel.
+sent.length = 0; asked.length = 0;
+put(shown);
+set({ popover: null, editor: { mode: 'edit', occ: shown } });
+stored = atGoogle({ title: 'Standup' });
+answers = [changed([t1])];
+reply = [false];
+assert.equal(await updateEvent(shown, { title: 'Weekly sync' }), false);
+assert.deepEqual(asked[0].held.map((h) => h.title), ['Standup'], 'B: the grid behind the question shows Google\'s title');
+assert.equal(asked[0].foot, OVERWRITE_BACK, 'the editor holds the change: Cancel takes you back');
+assert.deepEqual([...state.occ.values()].filter((o) => o.eventId === 7).map((o) => o.title), ['Standup'], 'B: and after Cancel');
+set({ editor: null });
+
+// A drag, a resize, to another day: the dropped block shows Google's time
+// while asked and after Cancel, never the time from before the drag, and a
+// failure after the question doesn't put that back either.
+for (const [act, fail] of [[moveEvent, false], [resizeEvent, false], [moveEvent, true]]) {
+  sent.length = 0; asked.length = 0;
+  put(shown);
+  stored = atGoogle({ ...googleTime });
+  const time = { field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: { ...googleTime, allDay: false }, yours: { start: at('2026-11-21', '10:00'), end: at('2026-11-21', '11:00'), allDay: false } };
+  answers = fail ? [changed([time]), json(500, { error: { code: 'server', message: 'Server error' } })] : [changed([time])];
+  reply = [fail];
+  await act({ instanceId: shown.instanceId, newStart: time.yours.start, newEnd: time.yours.end });
+  assert.deepEqual(asked[0].held, [{ title: 'Team sync', start: googleTime.start }], 'B: the block shows Google\'s time behind the question');
+  assert.deepEqual([...state.occ.values()].filter((o) => o.eventId === 7).map((o) => o.start), [googleTime.start],
+    'B: ' + (fail ? 'after a failed Overwrite' : 'after Cancel') + ', Google\'s time, not the one from before the drag');
+}
+
+// Planned or Maybe: the mark taken off, the event as stored.
+sent.length = 0; asked.length = 0;
+put(shown);
+stored = atGoogle({ title: 'Standup' });
+answers = [changed([t1])];
+reply = [false];
+assert.equal(await setRelationship(shown, 'maybe'), null);
+assert.deepEqual([...state.occ.values()].filter((o) => o.eventId === 7).map((o) => [o.title, o.relationship]), [['Standup', undefined]], 'B: Cancel shows the event as stored, without the Maybe');
+
+// D: the toast after a change sent to Google Calendar names it once, and the kept line says "there".
+sent.length = 0; asked.length = 0;
+put(shown);
+set({ toasts: [] });
+answers = [json(200, { kept: [{ field: 'location', now: 'Sample Hall' }] })];
+await updateEvent(shown, { title: 'Design crit' }, null, ['title']);
+const said = state.toasts[state.toasts.length - 1];
+assert.equal(said.title, 'Design crit');
+assert.equal(said.text, 'Title changed, here and in Google Calendar');
+assert.equal(said.kept, "A separate change there was kept: the location is now 'Sample Hall'.");
+toast('Accepted. The reply went to the organizer.', { kept: [{ field: 'title', now: 'Standup' }] });
+assert.equal(state.toasts[state.toasts.length - 1].kept, "A separate change in Google Calendar was kept: the title is now 'Standup'.",
+  'D: under a line that does not name Google Calendar, the kept line names it');
 
 off();
 globalThis.fetch = realFetch;
 assert.equal(state.confirmAsk, null);
-console.log('Google changed: one sender, over from what was shown, Overwrite and Cancel');
+console.log('Google changed: the question interrupts, and every view shows what Google holds');

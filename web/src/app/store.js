@@ -5,6 +5,7 @@
 import { COMPACT_QUERY, COARSE_QUERY, PHONE_WIDE_QUERY } from '../lib/breakpoints.js';
 import { useState, useEffect, useRef } from '../../vendor/index.js';
 import { todayKey } from '../lib/dates.js';
+import { keptWords } from '../lib/planwords.js';
 
 const listeners = new Set();
 
@@ -688,6 +689,28 @@ export function removeOccurrencesOfEvent(eventId) {
   return removed;
 }
 
+/**
+ * The server's own copy of one event in no series, read after it stored
+ * what Google Calendar holds (googlechange.js, at a question): every copy
+ * of the event held here goes and this one stands, wherever it now falls,
+ * so no window has to cover the day the event was shown on for the old
+ * copy to go. Arrived, not a change: no local mark. An open panel, and an
+ * editor's way back to it, follow the event to its instanceId now (its
+ * start is in it).
+ */
+export function adoptEvent(occ) {
+  if (!occ || occ.eventId == null) return;
+  const old = new Set();
+  for (const [id, o] of state.occ) if (o.eventId === occ.eventId) { old.add(id); state.occ.delete(id); }
+  state.occ.set(occ.instanceId, { ...occ, full: true });
+  recordGen++; // a record asked before this holds what it replaced
+  const patch = { occVersion: state.occVersion + 1 };
+  const follow = (p) => (p && old.has(p.instanceId) ? { ...p, instanceId: occ.instanceId } : p);
+  if (state.popover && old.has(state.popover.instanceId)) patch.popover = follow(state.popover);
+  if (state.editor && state.editor.returnTo && old.has(state.editor.returnTo.instanceId)) patch.editor = { ...state.editor, returnTo: follow(state.editor.returnTo) };
+  set(patch);
+}
+
 let toastSeq = 0;
 // opts: title (the item's name, a first line above text), undo (the
 // journal entries its Undo undoes), error, duration, and an optional action prompt
@@ -719,8 +742,10 @@ export function toast(text, opts = {}) {
       actions: Array.isArray(opts.actions) ? opts.actions : null,
       dismissLabel: opts.dismissLabel || null,
       // A line under the text: what else changed in Google Calendar and
-      // stayed (googlechange.js keptLine). Null: the toast as always.
-      kept: opts.kept || null,
+      // stayed, from a 200's `kept` (googlechange.js keptOf). It names
+      // Google Calendar itself unless the text above already does, so it
+      // never says "there" about nothing. Null: the toast as always.
+      kept: keptWords(opts.kept, { there: /Google Calendar/.test(String(text)) }),
     }],
   });
   setTimeout(() => {

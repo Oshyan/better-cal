@@ -120,7 +120,6 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
   }, [adding, occ.eventId]); // eslint-disable-line
 
   const color = (cal && cal.color) || '#888';
-  const close = () => set({ popover: null });
   const members = links.events;
   const memberIds = new Set(members.map((m) => m.eventId));
   // What could join the trip: events during it, not already in it, on a
@@ -195,9 +194,9 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
     ${confirmDelete && html`<div class="bc-trip-confirm">
       <span>Delete this trip?</span>
       <div class="bc-trip-confirm-row">
-        <button type="button" class="bc-btn" onClick=${() => { close(); deleteTripOnly(occ); }}>Remove trip only</button>
+        <button type="button" class="bc-btn" onClick=${() => deleteTripOnly(occ)}>Remove trip only</button>
         <button type="button" class="bc-btn bc-btn-danger" disabled=${links.status !== 'ok'}
-          onClick=${() => { close(); deleteTripAndMembers(occ, members); }}
+          onClick=${() => deleteTripAndMembers(occ, members)}
         >Delete trip and its ${members.length} ${members.length === 1 ? 'event' : 'events'}</button>
         <button type="button" class="bc-btn" onClick=${() => setConfirmDelete(false)}>Cancel</button>
       </div>

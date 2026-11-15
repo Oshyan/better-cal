@@ -2155,6 +2155,11 @@ body.bc-dragging * { cursor: grabbing !important; }
 /* The values a question sets side by side, one per line, and what its buttons do. */
 .bc-confirm-lines { margin: -6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
 .bc-confirm-foot { color: var(--fg-muted); font-size: 13px; }
+/* On a phone every button in a dialog (a question, the password step-up) is
+   a full touch target; the desktop keeps its compact buttons. */
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
+  .bc-stepup-actions .bc-btn { min-height: 44px; padding: 0 18px; font-size: 16px; }
+}
 .bc-login-pw { display: flex; align-items: center; gap: 8px; }
 .bc-login-pw input { flex: 1; min-width: 0; }
 .bc-login {

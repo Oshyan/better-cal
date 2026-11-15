@@ -6,20 +6,24 @@
 //   showed (overOf: from the record or occurrence on screen, never from the
 //   editor's form), so the server compares Google's value with what the
 //   person saw, not with what a poll stored meanwhile;
-// - a 409 google_changed becomes the one question (googleChangedAsk in
-//   lib/planwords.js): Overwrite sends the same request again with `over`
-//   set to what Google holds now and each asked field's value to what the
-//   question showed as the person's, and a second google_changed asks again
-//   with the newer values; Cancel sends nothing;
-// - a 200's `kept` is said on the caller's toast (keptLine).
+// - a 409 google_changed means the server has stored what Google holds: the
+//   event is fetched and shown as stored (adoptEvent) before the question
+//   opens, so every view behind it shows what Google holds, and the
+//   caller's own local copy (revert) is gone from view, not put back;
+// - then the one question (googleChangedAsk in lib/planwords.js): Overwrite
+//   sends the same request again with `over` set to what Google holds now
+//   and each asked field's value to what the question showed as the
+//   person's, and a second google_changed asks again with the newer values;
+//   Cancel sends nothing, and what shows stays what was stored;
+// - a 200's `kept` goes on the caller's toast (keptOf; store.js toast says it).
 //
 // With the setting off (as shipped) no answer carries google_changed or
 // kept, and nothing here shows.
 
-import { state, invalidateRecords } from './store.js';
+import { adoptEvent } from './store.js';
 import { api, ApiError, refreshWindow } from './api.js';
 import { askConfirm } from './ConfirmDialog.js';
-import { googleChangedAsk, keptWords } from '../lib/planwords.js';
+import { googleChangedAsk } from '../lib/planwords.js';
 
 /** What sendEventChange resolves to when the person chose Cancel at the question: nothing was sent. */
 export const CANCELLED = Symbol('cancelled');
@@ -80,38 +84,55 @@ const askedFields = (e) => (e && e.code === 'google_changed' && e.data && e.data
   ? e.data.error.fields : null);
 
 /**
+ * What the server stored when it asked, shown: the event fetched again and
+ * put in place of every copy held here, after `revert` takes the caller's
+ * local change off (a drag's moved block, a Maybe's mark). The window is
+ * fetched again too. Never the copy from before the action: Google may
+ * hold something else now. If the event can't be read, the window still
+ * is, and shows what it holds.
+ */
+async function showStored(occ, revert) {
+  let stored = null;
+  try {
+    const d = await api('/events/' + occ.eventId + '/occurrence');
+    stored = d && d.occurrence && !d.occurrence.recurring ? d.occurrence : null;
+  } catch { /* the window's answer shows it */ }
+  if (revert) revert();
+  if (stored) adoptEvent(stored);
+  refreshWindow();
+}
+
+/**
  * Send one change or delete of the event `occ` showed: `body` with its
  * `over`. Resolves to the answer, or CANCELLED when the server asked and the
- * person chose Cancel; then `revert` (the caller's own local copy put back)
- * runs, and the event and the window are fetched again so it shows as
- * Google has it. Any other failure throws, as api() does; a google_changed
- * without its fields throws too, its message whole (failWords).
+ * person chose Cancel. At a question the event shows as the server stored
+ * it before the question opens (showStored), whatever the answer. `back`:
+ * the surface the change was made in stays open holding it (the editor, the
+ * panel's time fields), so Cancel takes the person back to it. Any other
+ * failure throws, as api() does; a google_changed without its fields throws
+ * too, its message whole (failWords).
  */
-export async function sendEventChange(occ, path, method, body = {}, { remove = false, revert = null } = {}) {
+export async function sendEventChange(occ, path, method, body = {}, { remove = false, revert = null, back = false } = {}) {
   const over = overOf(occ, body, { remove });
   let send = Object.keys(over).length ? { ...body, over } : body;
+  let shown = false;
   for (;;) {
     try {
       return await api(path, { method, body: send });
     } catch (e) {
       const fields = askedFields(e);
       if (!fields) throw e;
-      // An editor open on this event keeps the person's change on Cancel.
-      const back = !!(state.editor && state.editor.occ && state.editor.occ.eventId === occ.eventId);
+      await showStored(occ, shown ? null : revert);
+      shown = true;
       const ask = googleChangedAsk({ name: occ.title, fields, remove, back });
-      if (!(await askConfirm(ask))) {
-        if (revert) revert();
-        invalidateRecords(occ.eventId);
-        refreshWindow();
-        return CANCELLED;
-      }
+      if (!(await askConfirm(ask))) return CANCELLED;
       send = overwriteOf(send, fields);
     }
   }
 }
 
-/** The toast's line for what stayed from Google Calendar, from a 200's `kept`; null when nothing did. */
-export const keptLine = (answer) => keptWords(answer && answer.kept);
+/** A 200's `kept`, for the caller's toast (store.js toast words it); null when nothing stayed. */
+export const keptOf = (answer) => (answer && Array.isArray(answer.kept) && answer.kept.length ? answer.kept : null);
 
 /** A failed change in words: a google_changed's own sentence whole (it says what happened), else the prefix and the error. */
 export function failWords(prefix, e) {

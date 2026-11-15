@@ -1125,13 +1125,16 @@ export function googleChangedAsk({ name, fields, remove = false, back = false, n
 
 /**
  * The toast's added line when a change went through and other fields
- * changed in Google Calendar meanwhile stayed: "Also changed in Google Calendar:
- * the title is now 'Team sync'." Text too long for a
- * toast is not repeated (the event shows it). Clauses whose words hold
- * commas (a time) are apart by semicolons. Empty `kept`: null, and the
- * toast is as it always was.
+ * changed in Google Calendar meanwhile stayed: "A separate change there was
+ * kept: the title is now 'Team sync'." `there`: the line above already
+ * names Google Calendar ("Title changed, here and in Google Calendar"), so
+ * this one says "there"; otherwise it names Google Calendar itself, and
+ * never says "there" about nothing. Text too long for a toast is not
+ * repeated (the event shows it). Clauses whose words hold commas (a time)
+ * are apart by semicolons. Empty `kept`: null, and the toast is as it
+ * always was.
  */
-export function keptWords(kept, now = new Date()) {
+export function keptWords(kept, { there = false, now = new Date() } = {}) {
   const list = (kept || []).filter((k) => k && k.field);
   if (!list.length) return null;
   const ref = yearRef(list.filter((k) => k.field === 'time').map((k) => k.now), now);
@@ -1146,7 +1149,9 @@ export function keptWords(kept, now = new Date()) {
   const joined = clauses.some((c) => c.includes(',')) && clauses.length > 1
     ? clauses.slice(0, -1).join('; ') + '; and ' + clauses[clauses.length - 1]
     : andList(clauses);
-  return 'Also changed in Google Calendar: ' + joined + '.';
+  const where = there ? 'there' : 'in Google Calendar';
+  const lead = list.length === 1 ? 'A separate change ' + where + ' was kept: ' : 'Separate changes ' + where + ' were kept: ';
+  return lead + joined + '.';
 }
 
 /** A run of deletes stopped at a question the person cancelled, after some went: "Stopped. Already deleted: 'Sample hike' and 'Sample dinner'." */

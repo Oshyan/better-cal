@@ -81,8 +81,8 @@ export const handlers = {
       set({ deletePrompt: occ.instanceId });
       return true;
     }
-    // Like Delete in the event's panel: no question, Undo in the notice.
-    set({ popover: null });
+    // Like Delete in the event's panel: no question, Undo in the notice;
+    // the panel closes when it is deleted (actions.js deleteEvent).
     deleteEvent(occ);
     return true;
   },

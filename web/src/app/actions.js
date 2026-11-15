@@ -18,7 +18,7 @@ import { REL_KINDS, showRelFromConfig } from '../lib/relfilter.js';
 import { VIEW_LABELS } from './commanddefs.js';
 import { timeChange, listWords } from '../lib/changeline.js';
 import { openSeriesChange, seriesPlans, planOfError } from './serieschange.js';
-import { sendEventChange, CANCELLED, keptLine, failWords } from './googlechange.js';
+import { sendEventChange, CANCELLED, keptOf, failWords } from './googlechange.js';
 import { stoppedWords } from '../lib/planwords.js';
 
 // Split sits last so the number keys of the older views stay where they were.
@@ -362,6 +362,11 @@ function itemName(occ) { return (occ && occ.title) || 'Untitled event'; }
 function said(what, change) { return change ? what + ' · ' + change : what; }
 // Which occurrences of a series a change took, said only when it isn't the
 // one the action assumes (a drag takes this one; a calendar move, all).
+// Where a change went, on its toast, after what it did and which
+// occurrences: one sent to Google Calendar happened both here and there.
+// The one place a toast after a change of an event names Google Calendar,
+// so the kept line under it can say "there" (store.js toast).
+function whereWords(google) { return google ? ', here and in Google Calendar' : ''; }
 function seriesWords(occ, scope, usual) {
   if (!occ || !occ.recurring || !scope || scope === usual) return '';
   return scope === 'all' ? ' (all in series)' : scope === 'following' ? ' (this and following)' : ' (this occurrence)';
@@ -404,7 +409,7 @@ function maybePromptTripExit(occ, newStart, newEnd) {
           sendEventChange(trip, '/events/' + trip.eventId, 'PATCH', { start: ext.start, end: ext.end })
             .then((saved) => {
               if (saved === CANCELLED) return;
-              toast(said('Extended', timeChange(trip, { ...ext, allDay: trip.allDay })), { title: itemName(trip), undo: entriesOf(saved), kept: keptLine(saved) });
+              toast(said('Extended' + whereWords(googleBacked(trip)), timeChange(trip, { ...ext, allDay: trip.allDay })), { title: itemName(trip), undo: entriesOf(saved), kept: keptOf(saved) });
               refreshWindow();
             })
             .catch((err) => toast(failWords('Extend failed: ', err), { error: true }));
@@ -416,24 +421,32 @@ function maybePromptTripExit(occ, newStart, newEnd) {
   });
 }
 
+// A drag's or a Maybe's own copy taken off once: by the question, which then
+// shows what the server stored (googlechange.js), or by a failure, but not
+// by both, or the failure would put back the copy from before the action.
+function revertOnce(instanceId, before) {
+  let done = false;
+  return () => { if (!done) { done = true; restoreOccurrence(instanceId, before); } };
+}
+
 export async function moveEvent({ instanceId, newStart, newEnd, scope }) {
   const occ = state.occ.get(instanceId);
   if (!occ) return false;
   const before = patchOccurrence(instanceId, { start: newStart, end: newEnd });
+  const revert = revertOnce(instanceId, before);
   try {
     const saved = await sendEventChange(occ, '/events/' + occ.eventId, 'PATCH',
-      { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
-      { revert: () => restoreOccurrence(instanceId, before) });
+      { start: newStart, end: newEnd, ...scopeFields(occ, scope) }, { revert });
     if (saved === CANCELLED) return false;
     localSaved([before]);
     const viaPlugin = pluginBacked(occ);
-    const verb = (viaPlugin ? 'Moved in ' + viaPlugin : googleBacked(occ) ? 'Moved at Google' : 'Moved') + seriesWords(occ, scope || 'this', 'this');
-    toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO, kept: keptLine(saved) });
+    const verb = (viaPlugin ? 'Moved in ' + viaPlugin : 'Moved') + seriesWords(occ, scope || 'this', 'this') + whereWords(!viaPlugin && googleBacked(occ));
+    toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO, kept: keptOf(saved) });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;
   } catch (e) {
-    restoreOccurrence(instanceId, before);
+    revert();
     toast(failWords('Move failed: ', e), { error: true });
     return false;
   }
@@ -443,20 +456,20 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
   const occ = state.occ.get(instanceId);
   if (!occ) return false;
   const before = patchOccurrence(instanceId, { start: newStart, end: newEnd });
+  const revert = revertOnce(instanceId, before);
   try {
     const saved = await sendEventChange(occ, '/events/' + occ.eventId, 'PATCH',
-      { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
-      { revert: () => restoreOccurrence(instanceId, before) });
+      { start: newStart, end: newEnd, ...scopeFields(occ, scope) }, { revert });
     if (saved === CANCELLED) return false;
     localSaved([before]);
     const viaPlugin = pluginBacked(occ);
-    const verb = (viaPlugin ? 'Changed in ' + viaPlugin : googleBacked(occ) ? 'Resized at Google' : 'Resized') + seriesWords(occ, scope || 'this', 'this');
-    toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO, kept: keptLine(saved) });
+    const verb = (viaPlugin ? 'Changed in ' + viaPlugin : 'Resized') + seriesWords(occ, scope || 'this', 'this') + whereWords(!viaPlugin && googleBacked(occ));
+    toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO, kept: keptOf(saved) });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;
   } catch (e) {
-    restoreOccurrence(instanceId, before);
+    revert();
     toast(failWords('Resize failed: ', e), { error: true });
     return false;
   }
@@ -520,9 +533,9 @@ function followingThroughPlan(occ, scope, kind, route, body, done, rescope = nul
 // events that turned out not direct), the same change goes to the series
 // dialog instead of failing. Resolves to the answer, or PLANNED.
 const PLANNED = Symbol('planned');
-async function sendSeries(occ, path, method, body, dialog = {}, revert = null) {
+async function sendSeries(occ, path, method, body, dialog = {}, revert = null, back = false) {
   try {
-    return await sendEventChange(occ, path, method, body, { revert });
+    return await sendEventChange(occ, path, method, body, { revert, back });
   } catch (e) {
     if (e && e.code === 'series_plan_required' && planOfError(e)) {
       const { scope, instanceStart: _i, ...fields } = body;
@@ -615,11 +628,11 @@ function followSplit(occ, res) {
 function updateLine(occ, fields, scope, words, google) {
   const timeOnly = Object.keys(fields).every((k) => ['start', 'end', 'allDay', 'tzid'].includes(k));
   const list = words || (timeOnly ? ['time'] : null);
-  const where = (google ? ' at Google' : '') + seriesWords(occ, scope, 'this');
+  const where = seriesWords(occ, scope, 'this') + whereWords(google);
   if (list && list.length === 1 && list[0] === 'time' && fields.start) {
     return said('New time' + where, timeChange(occ, { start: fields.start, end: fields.end, allDay: fields.allDay != null ? fields.allDay : occ.allDay }));
   }
-  if (list && list.length > 0 && list.length <= 3) return 'Changed the ' + listWords(list) + where;
+  if (list && list.length > 0 && list.length <= 3) { const w = listWords(list); return w.charAt(0).toUpperCase() + w.slice(1) + ' changed' + where; }
   return 'Updated' + where;
 }
 
@@ -633,7 +646,9 @@ export async function updateEvent(occ, fields, scope, words = null, rescope = nu
     body.instanceStart = occ.start;
   }
   try {
-    const res = await sendSeries(occ, '/events/' + occ.eventId, 'PATCH', body, dialog);
+    // The editor, or the panel's time fields, stay open holding the change
+    // until it saves (EditorDrawer.js, EventPopover.js): Cancel goes back there.
+    const res = await sendSeries(occ, '/events/' + occ.eventId, 'PATCH', body, dialog, null, true);
     if (res === PLANNED) return null;
     // The person chose Cancel at the question: nothing was saved, and an
     // open editor stays open with their change.
@@ -641,7 +656,7 @@ export async function updateEvent(occ, fields, scope, words = null, rescope = nu
     // Tags, people, reminders and attendance are local even on a Google event; only content edits go to Google.
     const wentToGoogle = googleBacked(occ) && Object.keys(fields).some((k) => !['tagNames', 'personIds', 'personNames', 'reminders'].includes(k));
     toast(updateLine(occ, fields, occ.recurring ? (scope || 'this') : null, words, wentToGoogle), {
-      title: fields.title || itemName(occ), undo: entriesOf(res), note: NO_UNDO, kept: keptLine(res),
+      title: fields.title || itemName(occ), undo: entriesOf(res), note: NO_UNDO, kept: keptOf(res),
     });
     invalidateRecords(occ.eventId); // its description/reminders/rule may be what changed
     await refreshWindow();
@@ -715,26 +730,41 @@ export async function useSeriesValue(occ, names) {
   return true;
 }
 
+// A delete is shown once the server has answered: the event leaves the
+// grid, and a panel or editor open on it closes, only when it is deleted.
+// A question (googlechange.js) opens over the screen as it was, and Cancel
+// leaves the person exactly there. A second press while one is on its way
+// sends nothing.
+const deleting = new Set();
+function closeOn(eventId) {
+  const on = (id) => { const o = id != null && state.occ.get(id); return !!o && o.eventId === eventId; };
+  const patch = {};
+  if (state.popover && on(state.popover.instanceId)) patch.popover = null;
+  if (state.editor && state.editor.occ && state.editor.occ.eventId === eventId) patch.editor = null;
+  if (Object.keys(patch).length) set(patch);
+}
+
 export async function deleteEvent(occ, scope, rescope = null) {
   if (followingThroughPlan(occ, scope, 'delete', { method: 'DELETE', path: '/events/' + occ.eventId }, {}, 'Deleted this and following', rescope)) {
     set({ popover: null, editor: null });
     return;
   }
-  const removed = occ.recurring && (scope || 'this') === 'this'
-    ? [removeOccurrence(occ.instanceId)].filter(Boolean)
-    : removeOccurrencesOfEvent(occ.eventId);
-  set({ popover: null, editor: null });
+  if (deleting.has(occ.eventId)) return;
+  deleting.add(occ.eventId);
   try {
     const body = occ.recurring ? { scope: scope || 'this', instanceStart: occ.start } : {};
-    const saved = await sendEventChange(occ, '/events/' + occ.eventId, 'DELETE', body,
-      { remove: true, revert: () => { for (const r of removed) restoreOccurrence(r.instanceId, r); } });
+    const saved = await sendEventChange(occ, '/events/' + occ.eventId, 'DELETE', body, { remove: true });
     if (saved === CANCELLED) return;
-    localSaved(removed);
-    toast((googleBacked(occ) ? 'Deleted at Google' : 'Deleted') + seriesWords(occ, scope || 'this', 'this'), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO });
+    closeOn(occ.eventId);
+    localSaved(occ.recurring && (scope || 'this') === 'this'
+      ? [removeOccurrence(occ.instanceId)].filter(Boolean)
+      : removeOccurrencesOfEvent(occ.eventId));
+    toast('Deleted' + seriesWords(occ, scope || 'this', 'this') + whereWords(googleBacked(occ)), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO });
     refreshWindow();
   } catch (e) {
-    for (const r of removed) restoreOccurrence(r.instanceId, r);
     toast(failWords('Delete failed: ', e), { error: true });
+  } finally {
+    deleting.delete(occ.eventId);
   }
 }
 
@@ -819,22 +849,22 @@ export async function setRelationship(occ, relationship, scope, rescope = null) 
   const label0 = { planned: 'Planned', maybe: 'Maybe', available: 'Available', hidden: 'Hidden' }[relationship] || relationship;
   if (followingThroughPlan(occ, scope, 'answer', { method: 'POST', path: '/events/' + occ.eventId + '/relationship' }, { relationship }, label0 + ' (this and following)', rescope)) return relationship;
   const before = patchOccurrence(occ.instanceId, { relationship, attendance: relationship === 'hidden' ? 'hidden' : occ.attendance });
+  const revert = revertOnce(occ.instanceId, before);
   try {
     const body = { relationship };
     if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
-    const res = await sendSeries(occ, '/events/' + occ.eventId + '/relationship', 'POST', body, { kind: 'answer', done: label0 + seriesWords(occ, body.scope, 'all'), rescope },
-      () => restoreOccurrence(occ.instanceId, before));
-    if (res === PLANNED) { restoreOccurrence(occ.instanceId, before); return relationship; }
+    const res = await sendSeries(occ, '/events/' + occ.eventId + '/relationship', 'POST', body, { kind: 'answer', done: label0 + seriesWords(occ, body.scope, 'all'), rescope }, revert);
+    if (res === PLANNED) { revert(); return relationship; }
     if (res === CANCELLED) return null;
     localSaved([before]);
     const label = { planned: 'Planned', maybe: 'Maybe', available: 'Available', hidden: 'Hidden' }[relationship] || relationship;
     const google = mine && googleBacked(occ);
-    toast((relationship === 'hidden' ? 'Hidden' : label + (google ? ' (at Google)' : '')) + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undo: entriesOf(res), note: NO_UNDO, kept: keptLine(res) });
+    toast((relationship === 'hidden' ? 'Hidden' : label) + seriesWords(occ, body.scope, 'all') + whereWords(relationship !== 'hidden' && google), { title: itemName(occ), undo: entriesOf(res), note: NO_UNDO, kept: keptOf(res) });
     if (res && res.splitEventId) refreshWindow().then(() => followSplit(occ, res));
     else if (relationship === 'hidden' || occ.recurring || mine) refreshWindow();
     return relationship;
   } catch (e) {
-    restoreOccurrence(occ.instanceId, before);
+    revert();
     toast(failWords('Failed: ', e), { error: true });
     return null;
   }
@@ -962,7 +992,7 @@ export function maybePromptExtendTrip(tripOcc, memberOcc) {
         const saved = await sendEventChange(tripOcc, '/events/' + tripOcc.eventId, 'PATCH',
           { start: ext.start, end: ext.end, ...(tripOcc.recurring ? { scope: 'all' } : {}) });
         if (saved === CANCELLED) return;
-        toast(said('Extended', timeChange(tripOcc, { ...ext, allDay: tripOcc.allDay })), { title: itemName(tripOcc), undo: entriesOf(saved), kept: keptLine(saved) });
+        toast(said('Extended' + whereWords(googleBacked(tripOcc)), timeChange(tripOcc, { ...ext, allDay: tripOcc.allDay })), { title: itemName(tripOcc), undo: entriesOf(saved), kept: keptOf(saved) });
         refreshWindow();
       } catch (e) {
         toast(failWords('Extend failed: ', e), { error: true });
@@ -988,18 +1018,15 @@ export function openTripByEventId(eventId) {
 // "Remove trip only": deleting a trip detaches its members server-side; they
 // survive on their own calendars.
 export async function deleteTripOnly(occ) {
-  const removed = removeOccurrencesOfEvent(occ.eventId);
-  set({ popover: null });
   try {
-    const saved = await sendEventChange(occ, '/events/' + occ.eventId, 'DELETE', {},
-      { remove: true, revert: () => { for (const r of removed) restoreOccurrence(r.instanceId, r); } });
+    const saved = await sendEventChange(occ, '/events/' + occ.eventId, 'DELETE', {}, { remove: true });
     if (saved === CANCELLED) return;
-    localSaved(removed);
+    closeOn(occ.eventId);
+    localSaved(removeOccurrencesOfEvent(occ.eventId));
     toast('Trip removed, its events kept', { title: itemName(occ), undo: entriesOf(saved) });
     bumpTripLinks();
     refreshWindow();
   } catch (e) {
-    for (const r of removed) restoreOccurrence(r.instanceId, r);
     toast(failWords('Delete failed: ', e), { error: true });
   }
 }
@@ -1007,7 +1034,6 @@ export async function deleteTripOnly(occ) {
 // "Delete trip and its N events": members first, then the trip (api-contract
 // order), so repeated undo restores the trip first and then its events.
 export async function deleteTripAndMembers(occ, members) {
-  set({ popover: null });
   try {
     // One Undo for all of it: the trip, then its events.
     const entries = [];
@@ -1028,6 +1054,7 @@ export async function deleteTripAndMembers(occ, members) {
     const saved = await sendEventChange(occ, '/events/' + occ.eventId, 'DELETE', {}, { remove: true });
     if (saved === CANCELLED) { stopped(); return; }
     entries.push(...entriesOf(saved));
+    closeOn(occ.eventId);
     localSaved(removeOccurrencesOfEvent(occ.eventId));
     toast('Deleted, with its ' + members.length + (members.length === 1 ? ' event' : ' events'), { title: itemName(occ), undo: entries });
     bumpTripLinks();
@@ -1171,7 +1198,7 @@ export async function moveTrip(occ, deltaDays, withMembers) {
     if (withMembers) body.moveMembers = true;
     const saved = await sendEventChange(occ, '/events/' + occ.eventId, 'PATCH', body);
     if (saved === CANCELLED) return;
-    toast(said(withMembers ? 'Moved with its events' : 'Moved', timeChange(occ, { start: newStart, end: newEnd, allDay: occ.allDay })), { title: itemName(occ), undo: entriesOf(saved), kept: keptLine(saved) });
+    toast(said((withMembers ? 'Moved with its events' : 'Moved') + whereWords(googleBacked(occ)), timeChange(occ, { start: newStart, end: newEnd, allDay: occ.allDay })), { title: itemName(occ), undo: entriesOf(saved), kept: keptOf(saved) });
     refreshWindow();
   } catch (e) {
     toast(failWords('Move failed: ', e), { error: true });
@@ -1639,7 +1666,7 @@ export function rsvpOutcome(result, via) {
   const verb = { ACCEPTED: 'Accepted', TENTATIVE: 'Maybe', DECLINED: 'Declined' }[result.myPartstat] || 'Answered';
   if (result.unchanged) return { text: verb + ' already; nothing new was sent.' };
   if (result.sent) {
-    return { text: via === 'google' ? verb + '. Google passes your answer to the organizer.' : verb + '. The reply went to the organizer.' };
+    return { text: via === 'google' ? verb + '. Google Calendar passes your answer to the organizer.' : verb + '. The reply went to the organizer.' };
   }
   if (['sending', 'uncertain'].includes(result.reason)) return { text: result.message, error: true };
   return { text: verb + " here; the reply wasn't sent: " + (result.message || 'unknown reason'), error: true };
@@ -1661,7 +1688,7 @@ export async function rsvpEvent(occ, answer, retryUncertain = false) {
     loadReviewCount(); // an answered invitation leaves the Review queue
     const out = rsvpOutcome(result, via);
     // An answer set at Google (or kept here) undoes; one mailed can't.
-    toast(out.text, { error: !!out.error, undo: out.error ? [] : entriesOf(result), kept: keptLine(result) });
+    toast(out.text, { error: !!out.error, undo: out.error ? [] : entriesOf(result), kept: keptOf(result) });
     return result;
   } catch (e) {
     toast("Couldn't answer: " + e.message, { error: true });

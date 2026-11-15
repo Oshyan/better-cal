@@ -8,12 +8,21 @@
 
 import assert from 'node:assert/strict';
 import { googleChangedAsk, keptWords, stoppedWords, timeValueWords } from '../src/lib/planwords.js';
+import { toISOWithOffset } from '../src/lib/dates.js';
 
 // A fixed today, so a date in another year says its year whatever year the
 // test runs in.
 const now = new Date(2026, 10, 14);
 const ask = (a) => googleChangedAsk({ name: 'Team sync', now, ...a });
-const timed = (day, from, to) => ({ start: `2026-11-${day}T${from}:00-08:00`, end: `2026-11-${day}T${to}:00-08:00`, allDay: false });
+// A test of a sentence fixes the clock its times are shown on: a timed value
+// is a wall-clock time on this device's clock, as the app serves one in the
+// person's zone, so "10:00 AM" reads 10:00 AM in every zone the suite runs in.
+const at = (day, hhmm) => {
+  const [y, mo, d] = day.split('-').map(Number);
+  const [h, mi] = hhmm.split(':').map(Number);
+  return toISOWithOffset(new Date(y, mo - 1, d, h, mi));
+};
+const timed = (day, from, to) => ({ start: at(`2026-11-${day}`, from), end: at(`2026-11-${day}`, to), allDay: false });
 const allDay = (day) => ({ start: `2026-11-${day}T00:00:00+00:00`, end: `2026-11-${Number(day) + 1}T00:00:00+00:00`, allDay: true });
 const notesThere = '<p>Bring the agenda and the slides for the quarterly review, and the <b>printed</b> handouts for everyone who asked for one at the last meeting.</p>';
 const notesYours = '<p>Bring the agenda for the quarterly review, and the <b>printed</b> handouts for everyone who asked for one at the last meeting.</p>';
@@ -25,22 +34,20 @@ const DELETE_FOOT = 'Delete deletes it here and in Google Calendar. Cancel keeps
 //
 // The same fields give the same sentences on both sides: the server's 409
 // message says what this dialog says (server/tests/fixtures/google-changed-words.json,
-// read by server/tests/google-conflict-words.php too). A timed value is said on
-// the clock it is served on there and on this device's here, so a row with one
-// is checked only where the two give the same offset; the CI's Los Angeles and
-// UTC runs check every row.
+// read by server/tests/google-conflict-words.php too). The server says a time
+// on the clock it is served on; here each timed value is that same wall clock
+// on this device's clock, so every row is checked in every zone. Which clock a
+// time is shown on (the event's or the person's) is not what this table checks.
 {
   const { readFileSync } = await import('node:fs');
   const table = JSON.parse(readFileSync(new URL('../../server/tests/fixtures/google-changed-words.json', import.meta.url), 'utf8'));
   const [y, m, d] = table.now.split('-').map(Number);
-  const onThisClock = (iso) => {
-    const off = /([+-])(\d\d):(\d\d)$/.exec(iso);
-    return !!off && -new Date(iso).getTimezoneOffset() === (off[1] === '-' ? -1 : 1) * (Number(off[2]) * 60 + Number(off[3]));
-  };
-  const timed = (f) => f.field === 'time' ? [f.was, f.now, f.yours].filter((t) => t && !t.allDay).flatMap((t) => [t.start, t.end]) : [];
+  // A timed value keeps its wall clock and takes this device's offset at it,
+  // so the app reads the clock the server says it on, in any zone.
+  const onThisClock = (t) => (t && !t.allDay ? { ...t, start: at(t.start.slice(0, 10), t.start.slice(11, 16)), end: at(t.end.slice(0, 10), t.end.slice(11, 16)) } : t);
   for (const row of table.rows) {
-    if (!row.fields.flatMap(timed).every(onThisClock)) continue;
-    const a = googleChangedAsk({ name: row.name, fields: row.fields, remove: row.remove, now: new Date(y, m - 1, d) });
+    const fields = row.fields.map((f) => (f.field === 'time' ? { ...f, was: onThisClock(f.was), now: onThisClock(f.now), yours: onThisClock(f.yours) } : f));
+    const a = googleChangedAsk({ name: row.name, fields, remove: row.remove, now: new Date(y, m - 1, d) });
     assert.deepEqual({ body: a.body, lines: a.lines }, { body: row.body, lines: row.lines }, 'the server\'s table: ' + row.case);
   }
 }
@@ -143,7 +150,7 @@ assert.equal(ask({ remove: true, fields: [{ field: 'location', was: 'Room 2', no
   "Since 'Team sync' was last shown to you, its location was removed in Google Calendar; it was 'Room 2'.", 'a delete over a value removed');
 assert.equal(ask({ remove: true, fields: [{ field: 'status', was: 'confirmed', now: 'tentative', yours: null }] }).body,
   "Since 'Team sync' was last shown to you, it was changed in Google Calendar. It was Planned; it is now a Maybe.", 'a delete over Maybe');
-assert.equal(ask({ remove: true, fields: [{ field: 'time', was: { start: '2027-03-03T10:00:00-08:00', end: '2027-03-03T11:00:00-08:00', allDay: false }, now: { start: '2027-03-03T00:00:00+00:00', end: '2027-03-04T00:00:00+00:00', allDay: true }, yours: null }] }).body,
+assert.equal(ask({ remove: true, fields: [{ field: 'time', was: { start: at('2027-03-03', '10:00'), end: at('2027-03-03', '11:00'), allDay: false }, now: { start: '2027-03-03T00:00:00+00:00', end: '2027-03-04T00:00:00+00:00', allDay: true }, yours: null }] }).body,
   "Since 'Team sync' was last shown to you, its time was changed in Google Calendar. It was Wed, Mar 3, 2027, 10:00 AM to 11:00 AM; it is now all day on Wed, Mar 3, 2027.",
   'a delete over a time made all-day: read once through, the year on both sides');
 assert.equal(ask({ remove: true, fields: [{ field: 'description', was: '<p>Bring the agenda.</p>', now: '<p>Bring the agenda and slides.</p>', yours: null }] }).body,
@@ -186,7 +193,7 @@ const { ApiError } = await import('../src/app/api.js');
 
 const shown = {
   instanceId: 'e7', eventId: 7, calendarId: 3, recurring: false, title: 'Team sync', location: 'Room 2', url: null,
-  status: 'confirmed', start: '2026-11-17T10:00:00-08:00', end: '2026-11-17T11:00:00-08:00', allDay: false,
+  status: 'confirmed', start: at('2026-11-17', '10:00'), end: at('2026-11-17', '11:00'), allDay: false,
 };
 assert.deepEqual(overOf(shown, { title: 'Weekly sync', tagNames: ['x'] }), { title: 'Team sync' }, 'only the fields the request changes');
 assert.deepEqual(overOf(shown, { start: 'a', end: 'b' }), { start: shown.start, end: shown.end, allDay: false }, 'a time sends all three keys, from what was shown');
@@ -238,10 +245,10 @@ assert.equal(keptLine(res), "Changed in Google Calendar meanwhile, and kept: the
 
 // A time: Overwrite sets all three keys of over from Google's time.
 sent.length = 0; asked.length = 0;
-const now2 = { start: '2026-11-17T10:30:00-08:00', end: '2026-11-17T11:30:00-08:00', allDay: false };
-answers = [changed([{ field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: now2, yours: { start: '2026-11-18T10:00:00-08:00', end: '2026-11-18T11:00:00-08:00', allDay: false } }]), json(200, { kept: [] })];
+const now2 = { start: at('2026-11-17', '10:30'), end: at('2026-11-17', '11:30'), allDay: false };
+answers = [changed([{ field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: now2, yours: { start: at('2026-11-18', '10:00'), end: at('2026-11-18', '11:00'), allDay: false } }]), json(200, { kept: [] })];
 reply = [true];
-const moved = await sendEventChange(shown, '/events/7', 'PATCH', { start: '2026-11-18T10:00:00-08:00', end: '2026-11-18T11:00:00-08:00' });
+const moved = await sendEventChange(shown, '/events/7', 'PATCH', { start: at('2026-11-18', '10:00'), end: at('2026-11-18', '11:00') });
 assert.deepEqual(sent[1].body.over, now2, 'the time asked: over.start, over.end, over.allDay are Google\'s');
 assert.equal(keptLine(moved), null, 'empty kept: no line');
 
@@ -251,7 +258,7 @@ assert.equal(keptLine(moved), null, 'empty kept: no line');
 // fields and anything else in the body stay as they were.
 sent.length = 0; asked.length = 0;
 const googleAllDay = { start: '2026-11-17T00:00:00+00:00', end: '2026-11-18T00:00:00+00:00', allDay: true };
-const yoursAt6 = { start: '2026-11-17T18:00:00-08:00', end: '2026-11-17T19:00:00-08:00', allDay: false };
+const yoursAt6 = { start: at('2026-11-17', '18:00'), end: at('2026-11-17', '19:00'), allDay: false };
 answers = [changed([{ field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: googleAllDay, yours: yoursAt6 }]), json(200, { kept: [] })];
 reply = [true];
 await sendEventChange(shown, '/events/7', 'PATCH', { start: yoursAt6.start, end: yoursAt6.end, tagNames: ['sample'] });

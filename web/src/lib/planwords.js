@@ -367,9 +367,11 @@ export const seriesLine = (name, calendar) => quoted(name || 'Untitled event') +
 
 // ---- days --------------------------------------------------------------------
 
+// Planned or Maybe is never called a status: where a sentence has no value
+// to say it by, it is named by both its values, "Planned or Maybe".
 const FIELD_NOUNS = {
   date: 'date', time: 'time', length: 'length', allDay: 'all-day setting', title: 'title', location: 'location',
-  description: 'notes', url: 'link', reminders: 'reminders', status: 'status', attendance: 'answer',
+  description: 'notes', url: 'link', reminders: 'reminders', status: 'Planned or Maybe', attendance: 'answer',
   tags: 'tags', people: 'people', icon: 'icon', trip: 'trip',
   // References that keep a day's row (OwnFields::REFERENCES): its trip, a duplicate decision, plugin data.
   duplicates: 'duplicate decision', pluginData: 'plugin data',
@@ -573,7 +575,7 @@ export function groupLines({ count, outcome, weekday = null, shift = null, clock
 }
 
 const isOwn = (g) => /^own[A-Z]/.test(g.id || '');
-const pluralNoun = (noun) => (/s$|people|data$/.test(noun) ? noun : noun + 's');
+const pluralNoun = (noun) => (/s$|people|data$|or Maybe$/.test(noun) ? noun : noun + 's');
 
 /**
  * A day's row when choices are about it alone: what they are about.

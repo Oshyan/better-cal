@@ -34,11 +34,14 @@ final class GoogleConflict
     public const DELETE = ['deleted' => true];
 
     /**
-     * The one name a person reads for each field (the page, "Words"), and
-     * whether it is plural; null for the status, which a sentence says as
-     * Planned or Maybe, never by a name.
+     * The one name a person reads for each field (the page, "Words"; the
+     * client's fieldNoun), and whether it is plural; null for Planned or
+     * Maybe, which a sentence says by its value, never by a name.
      */
-    private const WORDS = ['title' => ['title', false], 'description' => ['notes', true], 'location' => ['location', false], 'url' => ['link', false], 'status' => null, 'time' => ['time', false]];
+    private const NOUNS = ['title' => ['title', false], 'description' => ['notes', true], 'location' => ['location', false], 'url' => ['link', false], 'status' => null, 'time' => ['time', false]];
+
+    /** Text this long is cut where two values are set side by side (the client's TEXT_MAX). */
+    private const TEXT_MAX = 80;
 
     /**
      * One outcome per field: `same` (not wanted, now equals base), `kept`
@@ -114,78 +117,228 @@ final class GoogleConflict
 
     /**
      * The sentence a 409 google_changed carries, whole on its own for an
-     * entry with no dialog: what was not done, which fields changed in
-     * Google Calendar since the event was last shown, and with one field
-     * what it is there now. $asks: [{field, was, now, yours}] in the served
-     * form; $title: the title the person was shown.
+     * entry with no dialog (Review, a plugin run, an API caller): the
+     * question's own words (question), then what was not done.
+     * $asks: [{field, was, now, yours}] in the served form; $title: the
+     * title the person was shown; $now: the day the year is said against.
      */
-    public static function message(string $title, array $asks, bool $delete): string
+    public static function message(string $title, array $asks, bool $delete, ?\DateTimeImmutable $now = null): string
     {
-        $what = trim($title) !== '' ? "'" . trim($title) . "'" : 'This event';
-        $clauses = [];
-        // The fields a noun names (WORDS), said together; with one, and not a delete, what it is now.
-        $named = array_values(array_filter($asks, static fn(array $a): bool => (self::WORDS[$a['field']] ?? null) !== null));
-        if ($named !== []) {
-            $nouns = array_map(static fn(array $a): string => self::WORDS[$a['field']][0], $named);
-            $verb = count($named) > 1 || self::WORDS[$named[0]['field']][1] ? 'were' : 'was';
-            $value = count($named) === 1 && !$delete ? self::valueWords((string) $named[0]['field'], $named[0]['now']) : '';
-            $clauses[] = 'its ' . self::listOf($nouns) . " $verb " . ($value === null ? 'removed in Google Calendar'
-                : ($value === '' ? 'changed in Google Calendar' : 'changed in Google Calendar to ' . $value));
-        }
-        // Planned or Maybe has no noun: the sentence says which it is now.
-        foreach ($asks as $a) {
-            if ((self::WORDS[$a['field']] ?? null) === null) {
-                $clauses[] = 'it was changed ' . ($clauses === [] ? 'in Google Calendar' : 'there') . ' to ' . (self::valueWords((string) $a['field'], $a['now']) ?? '');
-            }
-        }
-        return "$what wasn't " . ($delete ? 'deleted' : 'changed') . ': since it was last shown, ' . implode(', and ', $clauses) . '. '
-            . ($delete ? 'Open the event to see it, and delete it again if you still mean to.' : 'Open the event to see it and make the change again.');
-    }
-
-    /** "title", "title and location", "title, location and time". */
-    private static function listOf(array $names): string
-    {
-        if (count($names) <= 1) {
-            return (string) ($names[0] ?? '');
-        }
-        $last = array_pop($names);
-        return implode(', ', $names) . ' and ' . $last;
+        ['body' => $body, 'lines' => $lines] = self::question($title, $asks, $delete, $now);
+        return implode(' ', [$body, ...$lines]) . ' '
+            . ($delete ? "It wasn't deleted; open the event to see it, and delete it again if you still mean to." : "It wasn't changed; open the event to see it and make the change again.");
     }
 
     /**
-     * A served value as a person reads it in a sentence: text in quotes,
-     * a time as its days and clock, '' when it is not worth quoting (notes,
-     * Planned or Maybe), null when it is empty.
+     * What the question says about the fields asked, as the app's dialog
+     * says it (web/src/lib/planwords.js, googleChangedAsk, its body and
+     * lines; server/tests/fixtures/google-changed-words.json holds them to
+     * the same sentences): one field in sentences, several a line each. A
+     * field is named by its one noun, Planned or Maybe by its value; two
+     * values are never joined by "to", each its own clause after a
+     * semicolon; the time values said together say the year both or
+     * neither. Times are said on the clock each value is served on.
+     *
+     * @return array{body:string, lines:list<string>}
      */
-    private static function valueWords(string $field, mixed $value): ?string
+    public static function question(string $name, array $asks, bool $delete, ?\DateTimeImmutable $now = null): array
     {
-        if ($field === 'time') {
-            return is_array($value) ? self::timeWords($value) : '';
+        $now ??= new \DateTimeImmutable();
+        $list = array_values(array_filter($asks, static fn(mixed $a): bool => is_array($a) && isset($a['field']) && in_array($a['field'], self::FIELDS, true)));
+        $times = [];
+        foreach ($list as $a) {
+            if ($a['field'] === 'time') {
+                array_push($times, $a['was'] ?? null, $a['now'] ?? null, $a['yours'] ?? null);
+            }
         }
-        if ($field === 'status') {
-            return $value === 'tentative' ? 'Maybe' : 'Planned';
+        $withYear = self::yearSaid($times, $now);
+        $said = static fn(string $f, mixed $v, mixed $other = null): string => self::valueWords($f, $v, $other, $withYear);
+        $side = static fn(string $f, mixed $v, mixed $other): string => self::isEmpty($f, $v) ? 'no ' . self::nounOf($f) : $said($f, $v, $other);
+        $since = 'Since ' . self::quoted($name !== '' ? $name : 'Untitled event') . ' was last shown to you, ';
+        if (count($list) !== 1) {
+            $lines = array_map(static fn(array $a): string => self::labelOf($a['field']) . ': ' . ($delete
+                ? self::stop('was ' . $side($a['field'], $a['was'] ?? null, $a['now'] ?? null) . '; now ' . $side($a['field'], $a['now'] ?? null, $a['was'] ?? null))
+                : $side($a['field'], $a['now'] ?? null, $a['yours'] ?? null) . ' in Google Calendar; ' . $side($a['field'], $a['yours'] ?? null, $a['now'] ?? null) . ' in your change.'), $list);
+            return ['body' => $since . 'these were changed in Google Calendar:', 'lines' => $lines];
         }
-        if ($field === 'description') {
-            return '';
+        $a = $list[0];
+        $f = (string) $a['field'];
+        [$was, $there, $yours] = [$a['was'] ?? null, $a['now'] ?? null, $a['yours'] ?? null];
+        $plural = (self::NOUNS[$f][1] ?? false) === true;
+        [$wasWere, $isAre, $pronoun, $object] = $plural ? ['were', 'are', 'they', 'them'] : ['was', 'is', 'it', 'it'];
+        $subject = self::NOUNS[$f] === null ? 'it' : 'its ' . self::nounOf($f);
+        $changed = static fn(string $how): string => "$subject $wasWere $how in Google Calendar";
+        $It = ucfirst($pronoun);
+        if ($delete) {
+            $text = self::isEmpty($f, $there) ? $changed('removed') . "; $pronoun $wasWere " . $said($f, $was)
+                : (self::isEmpty($f, $was) ? $changed('added') . "; $pronoun $isAre now " . $said($f, $there)
+                : $changed('changed') . ". $It $wasWere " . $said($f, $was, $there) . "; $pronoun $isAre now " . $said($f, $there, $was));
+        } else {
+            $mine = self::isEmpty($f, $yours) ? "your change removes $object" : "your change makes $object " . $said($f, $yours, $there);
+            $text = self::isEmpty($f, $there) ? $changed('removed') . '; ' . $mine
+                : $changed('changed') . ". $It $isAre now " . $said($f, $there, $yours) . ' there; ' . $mine;
         }
-        $text = trim((string) $value);
-        return $text === '' ? null : "'" . $text . "'";
+        return ['body' => $since . self::stop($text), 'lines' => []];
     }
 
-    /** "Tue, Nov 18, 10:00 AM to 11:00 AM", "Tue, Nov 18, all day", on the clock the event is served on. */
-    private static function timeWords(array $t): string
+    /** A field's noun: "title", "notes"; Planned or Maybe has none, and "Planned or Maybe" stands where a label needs one. */
+    private static function nounOf(string $field): string
     {
-        try {
-            $start = new \DateTimeImmutable((string) ($t['start'] ?? ''));
-            $end = new \DateTimeImmutable((string) ($t['end'] ?? ''));
-        } catch (\Exception) {
+        return self::NOUNS[$field][0] ?? 'Planned or Maybe';
+    }
+
+    /** A line's label: "Location", "Notes", "Planned or Maybe". */
+    private static function labelOf(string $field): string
+    {
+        return ucfirst(self::nounOf($field));
+    }
+
+    private static function quoted(string $s): string
+    {
+        return "'" . $s . "'";
+    }
+
+    /** A sentence's full stop, left out after a quoted value that already ends one: "'Bring the agenda.'". */
+    private static function stop(string $s): string
+    {
+        return preg_match("/[.!?]'$/", $s) === 1 ? $s : $s . '.';
+    }
+
+    /** A value as plain text: notes as the text a person reads, never markup; whitespace runs as one space. */
+    private static function plainOf(string $field, mixed $v): string
+    {
+        if ($v === null || is_array($v)) {
             return '';
         }
-        if (!empty($t['allDay'])) {
-            $last = $end->modify('-1 day');
-            return $last > $start ? $start->format('D, M j') . ' to ' . $last->format('D, M j') . ', all day' : $start->format('D, M j') . ', all day';
+        $s = $field === 'description' ? Sanitize::toText((string) $v) : (string) $v;
+        return trim((string) preg_replace('/[\s\x{00a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}]+/u', ' ', $s));
+    }
+
+    private static function isEmpty(string $field, mixed $v): bool
+    {
+        return $field === 'time' ? !is_array($v) || empty($v['start']) || empty($v['end']) : self::plainOf($field, $v) === '';
+    }
+
+    /**
+     * A non-empty value as a sentence says it: a time in days and clock,
+     * Planned or Maybe as "Planned" or "a Maybe", text quoted and, when
+     * long, cut where it differs from $other (the value it is set beside).
+     */
+    private static function valueWords(string $field, mixed $v, mixed $other, bool $withYear): string
+    {
+        if ($field === 'time') {
+            return self::timeWords($v, $withYear);
         }
-        return $start->format('D, M j, g:i A') . ' to ' . ($start->format('Y-m-d') === $end->format('Y-m-d') ? $end->format('g:i A') : $end->format('D, M j, g:i A'));
+        if ($field === 'status') {
+            return $v === 'tentative' ? 'a Maybe' : 'Planned';
+        }
+        $o = self::isEmpty($field, $other) ? null : self::plainOf($field, $other);
+        return self::quoted(self::cut(self::plainOf($field, $v), $o));
+    }
+
+    /**
+     * A text cut to about 80 characters from a little before where it first
+     * differs from $other, at word boundaries, with "…" where cut, so the
+     * difference shows; with no $other, from its start.
+     */
+    private static function cut(string $text, ?string $other): string
+    {
+        $a = mb_str_split($text);
+        $i = 0;
+        if ($other !== null) {
+            $b = mb_str_split($other);
+            while ($i < count($a) && $i < count($b) && $a[$i] === $b[$i]) {
+                $i++;
+            }
+        }
+        $len = count($a);
+        $from = $other !== null && $i > 20 ? $i - 20 : 0;
+        if ($from > 0) {
+            $space = array_search(' ', array_slice($a, $from, null, true), true);
+            $from = $space !== false && $space < $i ? $space + 1 : $from;
+        }
+        if ($from === 0 && $len <= self::TEXT_MAX) {
+            return $text;
+        }
+        $to = min($len, $from + self::TEXT_MAX);
+        if ($to < $len) {
+            for ($space = min($to, $len - 1); $space >= 0 && $a[$space] !== ' '; $space--) {
+            }
+            if ($space > $from + self::TEXT_MAX / 2) {
+                $to = $space;
+            }
+        }
+        $piece = (string) preg_replace('/[\s,.;:]+$/u', '', implode('', array_slice($a, $from, $to - $from)));
+        return ($from > 0 ? '…' : '') . $piece . ($to < $len ? '…' : '');
+    }
+
+    /**
+     * A time value's first and last day and its ends, on the clock it is
+     * served on; an all-day value's from its dates alone. Null when it is
+     * not a time.
+     *
+     * @return array{0:\DateTimeImmutable,1:\DateTimeImmutable,2:\DateTimeImmutable}|null [start, end, last moment's day]
+     */
+    private static function timeDates(mixed $t): ?array
+    {
+        if (!is_array($t) || empty($t['start']) || empty($t['end'])) {
+            return null;
+        }
+        try {
+            if (!empty($t['allDay'])) {
+                $start = new \DateTimeImmutable(substr((string) $t['start'], 0, 10) . 'T00:00:00+00:00');
+                $end = new \DateTimeImmutable(substr((string) $t['end'], 0, 10) . 'T00:00:00+00:00');
+                return [$start, $end, $end->modify('-1 day')];
+            }
+            $start = new \DateTimeImmutable((string) $t['start']);
+            $end = new \DateTimeImmutable((string) $t['end']);
+            return [$start, $end, $end];
+        } catch (\Exception) {
+            return null;
+        }
+    }
+
+    /** Whether the time values said together say their year: when any of them is in another year than $now's. */
+    private static function yearSaid(array $times, \DateTimeImmutable $now): bool
+    {
+        foreach ($times as $t) {
+            $d = self::timeDates($t);
+            if ($d !== null && ($d[0]->format('Y') !== $now->format('Y') || $d[2]->format('Y') !== $now->format('Y'))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A time value as a sentence says it: "Tue, Nov 17, 10:00 AM to 11:00
+     * AM", "Tue, Nov 17 10:00 PM to Wed, Nov 18 1:00 AM", "all day on Tue,
+     * Nov 17", "all day on Nov 17 to Nov 19"; the year after each date when
+     * $withYear (yearSaid).
+     */
+    private static function timeWords(mixed $t, bool $withYear): string
+    {
+        $d = self::timeDates($t);
+        if ($d === null) {
+            return '';
+        }
+        [$start, $end, $last] = $d;
+        $y = $withYear ? ', Y' : '';
+        $clock = static fn(\DateTimeImmutable $at): string => $at->format('g:i A');
+        if (!empty($t['allDay'])) {
+            if ($start->format('Y-m-d') === $last->format('Y-m-d') || $last < $start) {
+                return 'all day on ' . $start->format('D, M j' . $y);
+            }
+            return 'all day on ' . $start->format('M j' . $y) . ' to ' . $last->format('M j' . $y);
+        }
+        $day = static fn(\DateTimeImmutable $at): string => $at->format('D, M j' . $y);
+        if ($start == $end) {
+            return $day($start) . ', ' . $clock($start);
+        }
+        if ($start->format('Y-m-d') === $end->format('Y-m-d')) {
+            return $day($start) . ', ' . $clock($start) . ' to ' . $clock($end);
+        }
+        return $day($start) . ' ' . $clock($start) . ' to ' . $day($end) . ' ' . $clock($end);
     }
 
     /**

@@ -53,26 +53,24 @@ return static function (Db $db): void {
     checkEq('setting on: the kept key, empty or the answer\'s own', [['kept' => []], ['kept' => [['field' => 'title', 'now' => 'Sample']]]],
         [$e->keptAnswer($u), $e->keptAnswer($u, [['field' => 'title', 'now' => 'Sample']])]);
 
-    // The 409's own sentence, one name per field (the page, "Words"): title, time, location, notes, link; the status
-    // never by a name, said as Planned or Maybe.
-    $ask = static fn(string $field, mixed $now): array => ['field' => $field, 'was' => null, 'now' => $now, 'yours' => null];
-    $words = [
-        "'Team sync' wasn't changed: since it was last shown, its title was changed in Google Calendar to 'Standup'. Open the event to see it and make the change again."
-            => GoogleConflict::message('Team sync', [$ask('title', 'Standup')], false),
-        "'Team sync' wasn't deleted: since it was last shown, its location was changed in Google Calendar. Open the event to see it, and delete it again if you still mean to."
-            => GoogleConflict::message('Team sync', [$ask('location', 'Room 7')], true),
-        "'Team sync' wasn't changed: since it was last shown, its location was removed in Google Calendar. Open the event to see it and make the change again."
-            => GoogleConflict::message('Team sync', [$ask('location', null)], false),
-        "'Team sync' wasn't changed: since it was last shown, its notes were changed in Google Calendar. Open the event to see it and make the change again."
-            => GoogleConflict::message('Team sync', [$ask('description', '<p>New</p>')], false),
-        "'Team sync' wasn't deleted: since it was last shown, its title, notes and link were changed in Google Calendar, and it was changed there to Maybe. Open the event to see it, and delete it again if you still mean to."
-            => GoogleConflict::message('Team sync', [$ask('title', 'Standup'), $ask('description', 'x'), $ask('url', 'https://example.test/x'), $ask('status', 'tentative')], true),
-        "'Team sync' wasn't deleted: since it was last shown, it was changed in Google Calendar to Planned. Open the event to see it, and delete it again if you still mean to."
-            => GoogleConflict::message('Team sync', [$ask('status', 'confirmed')], true),
-        "'Team sync' wasn't changed: since it was last shown, its time was changed in Google Calendar to Tue, Nov 18, 10:00 AM to 11:00 AM. Open the event to see it and make the change again."
-            => GoogleConflict::message('Team sync', [$ask('time', ['start' => '2025-11-18T10:00:00-08:00', 'end' => '2025-11-18T11:00:00-08:00', 'allDay' => false])], false),
-    ];
-    foreach ($words as $want => $got) {
-        checkEq('the question in words: ' . $want, $want, $got);
-    }
+    // With the setting off, as shipped, `over` is read by nothing: the same rename of two equal events, one with an
+    // invented `over` for every field, sends Google the same requests and leaves the two rows the same.
+    conflictChoice($db, $u, false);
+    $twin = static fn(): int => (int) $e->create($u, ['calendarId' => $s->calendarId, 'title' => 'Sample review', 'start' => '2027-05-04T09:00:00+00:00',
+        'end' => '2027-05-04T10:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC', 'location' => 'Room 4'])['eventId'];
+    [$plain, $invented] = [$twin(), $twin()];
+    $sent = static function (callable $write) use ($s): array {
+        $from = count($s->fake->requests);
+        $write();
+        return array_map(static fn(array $r): array => [$r['method'], $r['body']], array_slice($s->fake->requests, $from));
+    };
+    $rename = ['title' => 'Sample review, moved'];
+    $a = $sent(fn() => $e->patch($u, $plain, $rename));
+    $b = $sent(fn() => $e->patch($u, $invented, $rename + ['over' => ['title' => 'Invented', 'description' => '<p>Invented</p>', 'location' => 'Invented Hall',
+        'url' => 'https://example.test/invented', 'status' => 'tentative', 'start' => '2027-06-01T09:00:00+00:00', 'end' => '2027-06-01T10:00:00+00:00', 'allDay' => false]]));
+    $kept = static fn(array $r): array => array_intersect_key($r, array_flip(['title', 'description', 'location', 'url', 'status', 'start_utc', 'end_utc', 'all_day']));
+    checkEq('setting off: an invented over changes nothing, neither what is sent nor what is written', [$a, $kept($e->get($u, $plain))],
+        [$b, $kept($e->get($u, $invented))]);
+    checkEq('setting off: the rename went through', 'Sample review, moved', $e->get($u, $invented)['title']);
+
 };

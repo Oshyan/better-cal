@@ -549,11 +549,19 @@ final class Events
         // Only what Google holds goes to Google; a change of nothing it
         // holds sends nothing and is written here as a local change.
         $body = $googleFields === [] ? [] : self::patchBody($event, $googleFields);
+        // What needs no answer from Google is decided before Google is asked:
+        // the trip rules over the rows as the commit will leave them, the
+        // flag put back after, so a refusal sends Google nothing (not even
+        // the conflict choice's read) and the read is stored over the row as
+        // it stands, a question leaving nothing of the request written. The
+        // commit writes the flag with the other local columns.
+        $this->tripRules($id, $localFields, putBack: true);
         $read = null;
         $items = null;
         if ($body !== [] && $this->choosesOverGoogle($userId, $event)) {
             // The conflict choice: Google read and stored first, then the
             // fields to send, or a question and nothing of the request written.
+            // Its read is the write's condition (patch, below): one read.
             $step = $this->googleChoice($userId, $calendar, $event, $googleFields, $authority);
             if ($step === null) {
                 return;
@@ -561,7 +569,6 @@ final class Events
             ['event' => $event, 'read' => $read, 'items' => $items, 'columns' => $googleFields] = $step;
             $body = $googleFields === [] ? [] : self::patchBody($event, $googleFields);
         }
-        $this->tripRules($id, $localFields);
         // The row and its links before and after, as a local edit keeps
         // them: every column it changed is in the entry, Google's sent back
         // to Google on undo, the rest put back here (GoogleUndo).
@@ -1831,8 +1838,9 @@ final class Events
             // series, whichever row and scope it names. A link names a row
             // and no edit moves one, so every link the edit can make live,
             // or leave without its trip, touches these rows.
-            // A Google path runs them before its first write (tripRules), so a
-            // refusal sends Google no write: at most the conflict choice's read, whose store rolls back with the rest.
+            // A Google path runs them before Google is asked anything
+            // (tripRules), so a refusal sends Google nothing, not even the
+            // conflict choice's read; they run again here, after the commit's writes.
             $tripRows = array_key_exists('isContainer', $in) ? $this->seriesRowIds($fresh) : [];
             $outer = $this->tripRule;
             $this->tripRule = $tripRows === [] ? null : [$tripRows, Trips::flaggedAmong($this->db, $tripRows)];
@@ -1859,22 +1867,31 @@ final class Events
 
     /**
      * The trip rules (Trips::assertRules) over the patch under way's rows,
-     * as they stand. A Google path calls it before its first write to
-     * Google (after the conflict choice's read, googleChoice), with $flagRow and the local columns it will write there: the
+     * as they stand. A Google path calls it before Google is asked anything
+     * (the conflict choice's read included: the rules need no answer from
+     * Google), with $flagRow and the local columns it will write there: the
      * flag goes on first (Google never reads it, and Google's answer never
      * writes it), so the rules read the rows as the commit will leave them.
-     * Inside the patch's transaction: a refusal, or Google's failing,
-     * rolls it back.
+     * $putBack: the flag is set back as it was once the rules pass, for a
+     * path whose commit writes it with its other local columns and which may
+     * store Google's read, or stop at a question, in between
+     * (googlePatchAll). Inside the patch's transaction: a refusal, or
+     * Google's failing, rolls it back.
      */
-    private function tripRules(?int $flagRow = null, array $localFields = []): void
+    private function tripRules(?int $flagRow = null, array $localFields = [], bool $putBack = false): void
     {
         if ($this->tripRule === null) {
             return;
         }
-        if ($flagRow !== null && array_key_exists('is_container', $localFields)) {
+        $flags = $flagRow !== null && array_key_exists('is_container', $localFields);
+        $was = $flags ? $this->db->scalar('SELECT is_container FROM events WHERE id = ?', [$flagRow]) : null;
+        if ($flags) {
             $this->db->update('events', ['is_container' => $localFields['is_container']], 'id = ?', [$flagRow]);
         }
         Trips::assertRules($this->db, $this->tripRule[0], $this->tripRule[1], Trips::BY_EDIT);
+        if ($flags && $putBack) {
+            $this->db->update('events', ['is_container' => $was], 'id = ?', [$flagRow]);
+        }
     }
 
     /**

@@ -937,10 +937,17 @@ final class Model
      * edited row as read, their tags and people, the edit and the chosen
      * options; a write that leaves a row's timestamp alone (a tag-only
      * change, one in the same second) still changes it. Not `today`, which
-     * only names years in the words.
+     * only names years in the words, and not what the write stamps from the
+     * clock (Events::CLOCK_STAMPED): the change is what was asked, read the
+     * same at the preview and at its commit a second later; the commit writes
+     * the stamp with its own time.
      */
     private function hash(array $selected): string
     {
+        $edit = $this->edit;
+        if (isset($edit['columns'])) {
+            $edit['columns'] = array_diff_key($edit['columns'], array_flip(\BetterCal\Domain\Events::CLOCK_STAMPED));
+        }
         $row = static function (array $r): array {
             ksort($r);
             return array_map(static fn($v) => $v === null ? null : (string) $v, $r);
@@ -960,7 +967,7 @@ final class Model
         ksort($selected);
         return substr(sha1(json_encode([
             $row($this->master), $set($this->opts['masterTags'] ?? null), $set($this->opts['masterPeople'] ?? null),
-            $rows, $this->edit, $selected, $this->google,
+            $rows, $edit, $selected, $this->google,
         ])), 0, 10);
     }
 

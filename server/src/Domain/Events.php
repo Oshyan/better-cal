@@ -3358,6 +3358,13 @@ final class Events
         return $fields;
     }
 
+    /**
+     * The columns a write stamps from the clock, never from what was asked or what a row held: columnPatch's
+     * stamps all come from here. A series plan's hash leaves them out of the change it covers (Series\Model::hash),
+     * so a preview and its commit a second apart have one hash, and the commit writes them with its own time.
+     */
+    public const CLOCK_STAMPED = ['location_placed_at'];
+
     /** Where an event's coordinates came from (migration 048). */
     public const LOCATION_SOURCES = ['picked', 'lookup', 'supplied'];
 
@@ -3367,7 +3374,8 @@ final class Events
      * ('picked' when absent: coordinates sent with an event are a person's or
      * client's choice; null when given as null, for a copy of coordinates of
      * unknown origin), locationProvider when it's a plain provider name, and
-     * the time. Pure.
+     * the time. Pure but for the time, which is stamped from the clock
+     * (CLOCK_STAMPED).
      *
      * @return array{location_source:?string,location_provider:?string,location_placed_at:?string}
      */
@@ -3381,7 +3389,7 @@ final class Events
             : 'picked';
         $provider = $in['locationProvider'] ?? null;
         $provider = is_string($provider) && preg_match('/^[a-z0-9][a-z0-9.-]{0,31}$/', $provider) === 1 ? $provider : null;
-        return ['location_source' => $source, 'location_provider' => $provider, 'location_placed_at' => Time::nowDb()];
+        return ['location_source' => $source, 'location_provider' => $provider] + array_fill_keys(self::CLOCK_STAMPED, Time::nowDb());
     }
 
     /** Optional locationLat/locationLng on create: number or null. */

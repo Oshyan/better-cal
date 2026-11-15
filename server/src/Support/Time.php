@@ -192,9 +192,16 @@ final class Time
         return self::iso(self::fromDb($db)->setTimezone(self::zone($tzid)));
     }
 
+    /**
+     * Seconds the tests move the clock on (0 everywhere else): a test makes "a later second" an event it controls,
+     * never a wait for the wall clock. Nothing in production sets it.
+     */
+    public static int $testOffsetSeconds = 0;
+
     public static function nowUtc(): \DateTimeImmutable
     {
-        return new \DateTimeImmutable('now', self::utc());
+        $now = new \DateTimeImmutable('now', self::utc());
+        return self::$testOffsetSeconds === 0 ? $now : $now->modify((self::$testOffsetSeconds > 0 ? '+' : '') . self::$testOffsetSeconds . ' seconds');
     }
 
     public static function nowDb(): string

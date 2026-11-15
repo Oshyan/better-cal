@@ -10,6 +10,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **A toast with several buttons fits a phone.** Its buttons move under the message instead of squeezing it to one word per line.
 - **The repeat choice reads as a sentence: "Every 45 days".** The list offers "Every … days", "Every … weeks" and so on, the number goes up to 1,000, and a number past that says so under the row.
 - **Quick add reads repeats of more than 99:** "Replace water filter every 120 days".
+- **A change to a repeating event that also picks a new place goes through.** Confirmed a second or more after its preview, it was refused every time with "The series changed since this plan was made" (since 1.5.0).
 
 ## 1.5.7 (2026-11-15)
 

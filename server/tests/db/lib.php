@@ -319,7 +319,21 @@ function planned(BetterCal\Domain\Events $events, int $userId, int $id, array $i
     foreach ($plan['groups'] as $g) {
         $sel[$g['id']] ??= $g['selected'];
     }
-    $events->patch($userId, $id, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => $sel]]);
+    // The commit a second after the preview, as a person's always is: a plan that depended on the second it was made
+    // in would be refused here every time, not only when a boundary fell between the two (Time::$testOffsetSeconds).
+    // The upgrade probes run an older release's code through this helper, whose clock has no such seam: there the
+    // commit follows the preview as it comes.
+    $step = property_exists(BetterCal\Support\Time::class, 'testOffsetSeconds') ? 1 : 0;
+    if ($step === 1) {
+        BetterCal\Support\Time::$testOffsetSeconds++;
+    }
+    try {
+        $events->patch($userId, $id, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => $sel]]);
+    } finally {
+        if ($step === 1) {
+            BetterCal\Support\Time::$testOffsetSeconds--;
+        }
+    }
     return $plan;
 }
 

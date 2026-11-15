@@ -498,8 +498,25 @@ return [
     [
         'id' => 'plan-hash-without-edited-rows', 'file' => $model, 'checks' => ['s-stale'],
         'what' => 'the plan\'s hash leaves out the edited rows, so a day given its own title after the preview goes unnoticed',
-        'patch' => [["            \$rows, \$this->edit, \$selected, \$this->google,", "            [], \$this->edit, \$selected, \$this->google,"]],
+        'patch' => [["            \$rows, \$edit, \$selected, \$this->google,", "            [], \$edit, \$selected, \$this->google,"]],
         'cases' => ['daily-stale-plan-then-re-preview-commit-undo'],
+    ],
+    // A plan's hash never moves by itself (decisions.md): the clock's stamp put back into the change it covers, so a
+    // preview and its commit a second apart differ, and every confirmation slower than a second is refused as stale.
+    [
+        'id' => 'plan-hash-with-the-clock-stamp', 'file' => $model, 'dbtest' => 'series-plan-clock',
+        'what' => 'the plan\'s hash covers the coordinates\' stamp from the clock, so a change that sets a place is refused as stale a second after its preview',
+        'patch' => [["\$edit['columns'] = array_diff_key(\$edit['columns'], array_flip(\\BetterCal\\Domain\\Events::CLOCK_STAMPED));", "\$edit['columns'] = \$edit['columns'];"]],
+        'checks' => [
+            'plan clock, a calendar here, coordinates alone, all events: no stale refusal; the coordinates written, stamped with the commit\'s second',
+            'plan clock, a calendar here, coordinates alone, this and following: no stale refusal; the coordinates written, stamped with the commit\'s second',
+            'plan clock, a calendar here, a new place with its coordinates and an hour later, all events: no stale refusal; the coordinates written, stamped with the commit\'s second',
+            'plan clock, a calendar here: stale after another change, nothing of it written; the new plan then goes through, stamped with its commit\'s second',
+            'plan clock, a Google calendar, coordinates alone, all events: no stale refusal; the coordinates written, stamped with the commit\'s second',
+            'plan clock, a Google calendar, coordinates alone, this and following: no stale refusal; the coordinates written, stamped with the commit\'s second',
+            'plan clock, a Google calendar, a new place with its coordinates and an hour later, all events: no stale refusal; the coordinates written, stamped with the commit\'s second',
+            'plan clock, a Google calendar: stale after another change, nothing of it written; the new plan then goes through, stamped with its commit\'s second',
+        ],
     ],
     [
         'id' => 'moved-days-keep-ignored', 'file' => $model, 'checks' => ['s-step', 'b-placed', 'c-placement', 'c-untouched'],

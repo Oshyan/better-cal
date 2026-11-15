@@ -20,7 +20,7 @@ import { RichText } from './RichText.js';
 import { Icon } from '../ui/icons.js';
 import {
   DAY_CODES, ruleParts, ruleBase, joinRule, weekOfMonth, describeRepeat, repeatEnd, withRepeatEnd,
-  monthDayRule, monthlyOptions,
+  monthDayRule, monthlyOptions, MAX_INTERVAL, REPEAT_UNITS, repeatChoiceLabels, intervalProblem,
 } from '../lib/repeat.js';
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
@@ -751,7 +751,9 @@ export function EditorDrawer() {
     const base = baseOf(editor, openedForm()).form;
     const touched = !base || JSON.stringify(form.rrule) !== JSON.stringify(base.rrule);
     const [fs, fe] = formInstants(form);
-    if (!isNaN(fs) && !isNaN(fe) && fe > fs) {
+    // No plan for an interval no rule can hold: the line under it says why.
+    const intervalOk = form.rrule.custom || form.rrule.freq === 'none' || !intervalProblem(form.rrule.interval, form.rrule.freq);
+    if (!isNaN(fs) && !isNaN(fe) && fe > fs && intervalOk) {
       repeatAsk = editor.occ && editor.occ.recurring && !touched
         ? 'series|' + editor.occ.instanceId
         : 'new|' + buildRrule(form.rrule, form.allDay, form.tzTouched ? form.tz : untilZone(editor.occ), fromInputValue(form.start)) + '|' + fs.getTime() + '|' + fe.getTime() + '|' + form.allDay + '|' + form.calendarId;
@@ -908,6 +910,7 @@ export function EditorDrawer() {
     if (state.seriesChange) return;
     const [s, en] = formInstants(form);
     if (isNaN(s) || isNaN(en) || en <= s) return;
+    if (intervalWrong) return; // said under the repeat
     // A name nobody has confirmed as a person yet. Saving would have to either
     // invent the person or drop the name silently; ask instead. The People
     // field already shows the prompt, so just point at it.
@@ -989,6 +992,10 @@ export function EditorDrawer() {
   // --- when ---------------------------------------------------------------------
   const [whenS, whenE] = formInstants(form);
   const backwards = !isNaN(whenS) && !isNaN(whenE) && whenE <= whenS;
+  // A repeat interval no rule can hold (empty, not a whole number, over
+  // MAX_INTERVAL): said under the repeat, and nothing is saved until it is fixed.
+  const intervalWrong = !form.rrule.custom && form.rrule.freq !== 'none' ? intervalProblem(form.rrule.interval, form.rrule.freq) : null;
+  const unsaveable = backwards || !!intervalWrong;
   // Apply to: the scopes this occurrence has (scopes.js); one left out
   // stays in the list, disabled, saying why.
   const editorScopes = occ && occ.recurring ? seriesScopes(occ) : null;
@@ -1091,7 +1098,7 @@ export function EditorDrawer() {
       <div class="bc-drawer-head">
         <button type="button" class="bc-icon-btn bc-ed-x" aria-label="Close" onClick=${requestClose}><${Icon} name="close" size=${phoneOpen ? 20 : 15} /></button>
         <h2>${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}</h2>
-        ${phoneOpen && html`<button type="submit" class="bc-btn bc-btn-primary bc-ed-headsave" disabled=${backwards || !!seriesAsk}>${occ ? 'Save' : 'Create'}</button>`}
+        ${phoneOpen && html`<button type="submit" class="bc-btn bc-btn-primary bc-ed-headsave" disabled=${unsaveable || !!seriesAsk}>${occ ? 'Save' : 'Create'}</button>`}
       </div>
 
       ${!occ && html`<div class="bc-nl" title="Fills the fields below as you type. Enter or Fill applies it now; everything stays editable.">
@@ -1283,22 +1290,18 @@ export function EditorDrawer() {
             <span class="bc-ed-custom-rule">${describeRepeat(r.custom, { start: repeatStart, ends: false }) || 'Custom repeat'}</span>
             <button type="button" class="bc-link-btn" title="Set the repeat with the usual choices; the rule above is replaced when you save" onClick=${() => updRrule({ custom: null })}>Change</button>
           </div>` : html`<div class="bc-ed-inline">
-            <select value=${r.freq} onChange=${(e) => updRrule({ freq: e.target.value })} aria-label="Repeat frequency">
-              <option value="none">Does not repeat</option>
-              <option value="DAILY">Daily</option>
-              <option value="WEEKLY">Weekly</option>
-              <option value="MONTHLY">Monthly</option>
-              <option value="YEARLY">Yearly</option>
+            ${r.freq !== 'none' && html`<span>Every</span>
+              <input class="bc-num bc-ed-every" type="number" min="1" max=${MAX_INTERVAL} value=${r.interval}
+                onInput=${(e) => updRrule({ interval: e.target.value === '' ? '' : Number(e.target.value) })}
+                aria-label=${'Number of ' + REPEAT_UNITS[r.freq][1] + ' between repeats'} aria-invalid=${intervalWrong ? 'true' : null} />`}
+            <select class="bc-ed-freq" value=${r.freq} onChange=${(e) => updRrule({ freq: e.target.value })} aria-label=${r.freq === 'none' ? 'Repeat' : 'Repeat every so many days, weeks, months or years'}>
+              ${repeatChoiceLabels(r.freq, r.interval).map((c) => html`<option key=${c.value} value=${c.value}>${c.label}</option>`)}
             </select>
-            ${r.freq !== 'none' && html`<label class="bc-check">
-              <span>every</span>
-              <input class="bc-num" type="number" min="1" max="99" value=${r.interval} onInput=${(e) => updRrule({ interval: Number(e.target.value) || 1 })} aria-label="Interval" />
-              <span>${r.freq === 'DAILY' ? 'day(s)' : r.freq === 'WEEKLY' ? 'week(s)' : r.freq === 'MONTHLY' ? 'month(s)' : 'year(s)'}</span>
-            </label>`}
             ${r.freq === 'MONTHLY' && monthlyChoices.length > 0 && html`<select value=${monthlyMode} onChange=${(e) => updRrule({ monthly: e.target.value })} aria-label="Day of the month">
               ${monthlyChoices.map((c) => html`<option key=${c.value} value=${c.value}>${c.label}</option>`)}
             </select>`}
           </div>`}
+          ${intervalWrong && html`<div class="bc-ed-sub bc-ed-err" role="alert">${intervalWrong}</div>`}
           ${!r.custom && r.freq === 'WEEKLY' && html`<div class="bc-byday">
             ${BYDAY.map(([code, label]) => html`<label key=${code} class="bc-byday-day${r.byday.includes(code) ? ' is-on' : ''}">
               <input
@@ -1334,7 +1337,7 @@ export function EditorDrawer() {
       </div>
 
       <div class="bc-drawer-actions bc-ed-actions">
-        <button type="submit" class="bc-btn bc-btn-primary" disabled=${backwards || !!seriesAsk} title=${backwards ? 'The end is before the start' : (occ ? 'Save' : 'Create') + ' (' + saveKeys + ')'}>${seriesAsk === 'asking' ? 'Working out the plan…' : occ ? 'Save' : 'Create'}</button>
+        <button type="submit" class="bc-btn bc-btn-primary" disabled=${unsaveable || !!seriesAsk} title=${backwards ? 'The end is before the start' : intervalWrong ? intervalWrong : (occ ? 'Save' : 'Create') + ' (' + saveKeys + ')'}>${seriesAsk === 'asking' ? 'Working out the plan…' : occ ? 'Save' : 'Create'}</button>
         <button type="button" class="bc-btn" onClick=${requestClose}>Cancel</button>
         ${googleCalendar(Number(form.calendarId)) && (occ ? occ.recurring && scope !== 'this' : (form.rrule.custom || form.rrule.freq !== 'none'))
           && html`<span class="bc-drawer-note" title="This calendar lives at Google: a change to the series is sent there and read back, and the calendar shows what Google stores.">${occ ? 'Saves' : 'Creates'} at Google</span>`}

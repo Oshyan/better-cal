@@ -6876,5 +6876,9 @@ console.log('--- a change for more than one occurrence goes through its plan, wh
   globalThis.fetch = realFetch;
 }
 
+// The editor's repeat row, in the stand-in DOM with its own stand-in server:
+// after everything above, which shares the page's fetch.
+await import('./repeat-control.mjs');
+
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

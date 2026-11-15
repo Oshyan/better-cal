@@ -126,10 +126,12 @@ final class RepeatParser
         if (preg_match('/\bevery\s+other\s+(' . $list . ')\b/i', $work, $m)) {
             return [self::cut($work, $m[0]), ['FREQ' => 'WEEKLY', 'INTERVAL' => '2', 'BYDAY' => self::codes($m[1])], null];
         }
-        if (preg_match('/\b(?:every\s+(other|\d{1,2})|each\s+(\d{1,2}))\s+(day|week|month|year)s?\b(?:\s+on\s+(' . $list . ')\b)?/i', $work, $m)) {
+        // Any interval a rule may hold (Recurrence::MAX_INTERVAL): "every 120
+        // days" as much as "every 3 days"; a larger number is no repeat.
+        if (preg_match('/\b(?:every\s+(other|\d{1,4})|each\s+(\d{1,4}))\s+(day|week|month|year)s?\b(?:\s+on\s+(' . $list . ')\b)?/i', $work, $m)) {
             $every = $m[1] !== '' ? $m[1] : $m[2];
             $n = strtolower($every) === 'other' ? 2 : (int) $every;
-            if ($n >= 1) {
+            if ($n >= 1 && $n <= Recurrence::MAX_INTERVAL) {
                 $rule = ['FREQ' => self::unitFreq($m[3])] + ($n > 1 ? ['INTERVAL' => (string) $n] : []);
                 if (($m[4] ?? '') !== '' && $rule['FREQ'] === 'WEEKLY') {
                     $rule['BYDAY'] = self::codes($m[4]);

@@ -2562,7 +2562,8 @@ console.log('--- chronological ordering across timezone offsets ---');
   // 3 and 4. Saves to one event in flight together (the server's instanceId
   // carries the start, as the real one's does).
   const srv = { at: null, title: 'Sample review', version: 1, patches: [] };
-  const one = (start) => ({ instanceId: '7@' + Date.parse(start), eventId: 7, calendarId: 1, title: srv.title, start, end: isoAt(new Date(Date.parse(start) + 3600000)), allDay: false });
+  // The list shape names the event's zone (1.5.7); a change sends it with the time.
+  const one = (start) => ({ instanceId: '7@' + Date.parse(start), eventId: 7, calendarId: 1, title: srv.title, start, end: isoAt(new Date(Date.parse(start) + 3600000)), allDay: false, tzid: 'America/Chicago' });
   globalThis.fetch = async (url, o = {}) => {
     const u = path(url);
     const p = u.pathname.replace('/api/v1', '');

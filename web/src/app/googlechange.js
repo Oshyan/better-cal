@@ -35,7 +35,6 @@
 // switch) no answer carries google_changed or kept, and nothing here shows.
 
 import { adoptEvent, state, set } from './store.js';
-import { localTz } from '../lib/dates.js';
 import { api, ApiError, refreshWindow } from './api.js';
 import { confirmTurn } from './ConfirmDialog.js';
 import { googleChangedAsk } from '../lib/planwords.js';
@@ -97,26 +96,23 @@ export function overOf(occ, body, { remove = false } = {}) {
   const fields = remove ? FIELDS : [...new Set(Object.keys(body || {}).map((k) => FIELD_OF_KEY[k]).filter(Boolean))];
   const over = {};
   for (const f of fields) {
-    if (f === 'time') Object.assign(over, timeOf(occ) || {});
+    if (f === 'time') Object.assign(over, shownTime(occ));
     else if (f in occ && occ[f] !== undefined) over[f] = occ[f];
   }
   return over;
 }
 
 /**
- * The event as shown, with the zone of its time: the window's copy of a
- * timed event doesn't carry it (the list shape leaves `tzid` to the
- * record; api-contract.md, Occurrences), so it is read from the record
- * once, when a request about its time is to go. A record stored all-day
- * holds UTC, no clock for the timed time shown: then the device's, the
- * clock the shown times were read on. Only an event in no series; any
- * other is returned as it is.
+ * The time `occ` showed, whole. Every copy of an event the server serves
+ * names its zone (`tzid`, list shape included), so the zone of what was
+ * shown is on the copy that was shown, and is taken from nowhere else: a
+ * timed copy without one is a fault in whatever made the copy, said as
+ * such, and nothing is sent.
  */
-async function withZone(occ, needed) {
-  if (!needed || !occ || occ.recurring || occ.allDay || occ.tzid) return occ;
-  const d = await api('/events/' + occ.eventId + '/occurrence');
-  const rec = (d && d.occurrence) || {};
-  return { ...occ, tzid: !rec.allDay && rec.tzid ? rec.tzid : localTz() };
+function shownTime(occ) {
+  const t = timeOf(occ);
+  if (!t) throw new Error('This event was shown without its time zone; nothing was sent. Reload the page and make the change again.');
+  return t;
 }
 
 /**
@@ -126,6 +122,7 @@ async function withZone(occ, needed) {
  */
 function wholeBody(occ, body) {
   if (!occ || occ.recurring || !touchesTime(body)) return body;
+  shownTime(occ);
   const t = timeOf(occ, body);
   if (!t) throw new Error('The time of this change has no zone; nothing was sent.');
   return { ...body, ...t };
@@ -214,9 +211,8 @@ async function showStored(occ, revert) {
  * too, its message whole (failWords).
  */
 export async function sendEventChange(occ, path, method, body = {}, { remove = false, revert = null, back = false } = {}) {
-  const zoned = await withZone(occ, remove || touchesTime(body));
-  const whole = wholeBody(zoned, body);
-  const over = overOf(zoned, whole, { remove });
+  const whole = wholeBody(occ, body);
+  const over = overOf(occ, whole, { remove });
   let send = Object.keys(over).length ? { ...whole, over } : whole;
   let shown = false;
   // The dialog's turn (ConfirmDialog.js confirmTurn): its place in line

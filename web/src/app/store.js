@@ -291,8 +291,9 @@ export function invalidateRecords(eventId = null) {
   }
 }
 // Record fields that ALSO ride the list shape (when non-null); dropping them
-// on invalidate would blank a location the list itself supplied.
-const LIST_KEEP = { url: 1, location: 1, locationLat: 1, locationLng: 1, invite: 1, styleJson: 1 };
+// on invalidate would blank a location the list itself supplied. The zone
+// rides it too (1.5.7): a time is sent whole, its zone from the copy shown.
+const LIST_KEEP = { url: 1, location: 1, locationLat: 1, locationLng: 1, invite: 1, styleJson: 1, tzid: 1 };
 const OCCURRENCE_CACHE_MAX = 25000;
 
 // The generation (docs/design/loading-model.md): this tab's name for the

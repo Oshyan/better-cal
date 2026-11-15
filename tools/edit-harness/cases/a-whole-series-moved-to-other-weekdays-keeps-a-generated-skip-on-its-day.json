@@ -1,0 +1,80 @@
+{
+    "n": 71,
+    "seed": 7,
+    "series": {
+        "family": "weekly_list",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO,TH",
+        "import": false,
+        "bound": "count",
+        "boundAt": 13,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2026-12-29 18:00",
+        "length": 120,
+        "floating": false
+    },
+    "exceptions": [
+        {
+            "at": 0,
+            "kind": "edit",
+            "own": [
+                "title",
+                "time"
+            ],
+            "days": 2,
+            "mins": -240,
+            "zone": "Asia/Tokyo",
+            "len": -15
+        },
+        {
+            "at": 11,
+            "kind": "edit",
+            "own": [
+                "time"
+            ],
+            "days": 2,
+            "mins": -30,
+            "zone": "America/New_York",
+            "len": 30
+        },
+        {
+            "at": 2,
+            "kind": "skip"
+        }
+    ],
+    "acted": 12,
+    "from": "last",
+    "vector": {
+        "scope": "all",
+        "date": -28,
+        "clock": -3600,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 9000,
+        "trip": false,
+        "fields": {
+            "location": "Sample Annex"
+        },
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=WEEKLY;BYDAY=SU,WE",
+        "bound": null,
+        "via": "master",
+        "startOnly": false
+    },
+    "stack": null,
+    "everyOption": false,
+    "typed": false,
+    "choices": {
+        "edit": {
+            "reading": "member",
+            "edge": "without"
+        }
+    },
+    "preselected": {
+        "edit": true
+    }
+}

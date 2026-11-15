@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-// A seeded slice of the repeating-series edit harness (tools/edit-harness):
-// random series from the design's tables with skipped and edited days,
-// random edits as vectors of deltas through Events, the plan API and Undo,
-// checked against the expander and the harness's own reading of the
-// design, then the harness's fixed cases. It fails on any failure outside
-// the known code paths (the 1.4.6 "this and following", delete-following
-// and attendance-following paths until 1.5.1) and lists each; the known ones
-// are counted. A failure of a check of the plan's data (c-shape,
-// c-placement, c-next, c-untouched) is never under a known path, and the
-// slice and the fixed cases together must run every required category of
-// those checks. The full run, with shrinking, is tools/edit-harness/run.sh.
+// The repeating-series edit harness's fixed cases (tools/edit-harness/cases,
+// complete specs of series with skipped and edited days and the edits made
+// to them through Events, the plan API and Undo), checked against the
+// expander and the harness's own reading of the design. It fails on any
+// failure outside the known code paths and lists each; the known ones are
+// counted. A failure of a check of the plan's data (c-shape, c-placement,
+// c-next, c-untouched) is never under a known path, and the fixed cases must
+// run every required category of those checks. Random cases are not run
+// here: CI and tools/gates.sh full run the harness's local mode on seed 7,
+// cases 1 to 1,000, with these fixed cases (tools/edit-harness/run.sh); the
+// Google slice is edits-google.test.php.
 
 use BetterCal\EditHarness\Known;
 use BetterCal\EditHarness\Report;
@@ -22,9 +22,8 @@ use BetterCal\Infra\Db;
 require_once dirname(__DIR__, 3) . '/tools/edit-harness/lib.php';
 
 return static function (Db $db): void {
-    scenario('edit harness: a seeded slice and the fixed cases', function () use ($db): void {
+    scenario('edit harness: the fixed cases', function () use ($db): void {
         $runner = new Runner($db, domains($db), 7);
-        $runner->run(200);
         $runner->runFixed();
         $unknown = [];
         $count = [];
@@ -32,7 +31,7 @@ return static function (Db $db): void {
             if (Known::cause($f) === null) {
                 $sig = Runner::signature($f);
                 $count[$sig] = ($count[$sig] ?? 0) + 1;
-                $where = isset($f['spec']['fixed']) ? 'fixed case ' . $f['spec']['fixed'] : 'seed 7 case ' . $f['n'];
+                $where = 'fixed case ' . $f['spec']['fixed'];
                 $unknown[$sig] ??= $sig . " (first: $where, revision {$f['revision']}): " . $f['what'];
             }
         }
@@ -40,7 +39,7 @@ return static function (Db $db): void {
             $unknown[$sig] = $count[$sig] . ' x ' . $line;
         }
         $t = Report::tally($runner);
-        checkEq('edit harness: 200 drawn cases and every fixed case ran', 200 + count(Runner::fixedFiles()), $runner->counts['cases']);
+        checkEq('edit harness: every fixed case ran', count(Runner::fixedFiles()), $runner->counts['cases']);
         foreach ($t['byCause'] as $cause => $n) {
             echo "    known: $n x $cause\n";
         }
@@ -48,22 +47,6 @@ return static function (Db $db): void {
         check('edit harness: every failure is under a known code path (tools/edit-harness/README.md)', $unknown === [], implode("\n  ", array_values($unknown)));
         checkEq('edit harness: no check of the plan\'s data fails on a case under a known path', 0, $t['newOnKnown']);
         checkEq('edit harness: every required category of the plan\'s data checks ran', [], $t['missing']);
-    });
-
-    // A slice on a Google calendar served by the probe's stand-in (README,
-    // Google): every edit goes to Google through GoogleSeries, what the
-    // stand-in holds after each equals the rows here, and a poll changes
-    // nothing (8-google). Undo there is the undo stage's, not applicable.
-    scenario('edit harness: a seeded slice on a Google calendar', function () use ($db): void {
-        $runner = new Runner($db, domains($db), 11, true);
-        $runner->run(40);
-        $unknown = [];
-        foreach ($runner->failures as $f) {
-            $sig = Runner::signature($f);
-            $unknown[$sig] ??= $sig . " (first: seed 11 case {$f['n']}): " . $f['what'] . ' ' . json_encode($f['detail'] ?? null);
-        }
-        checkEq('edit harness (Google): 40 drawn cases ran', 40, $runner->counts['cases']);
-        check('edit harness (Google): every failure is a finding (none expected)', $unknown === [], implode("\n  ", array_values($unknown)));
     });
 
     // A whole-series edit of a first-Monday series whose UNTIL is the 1st of

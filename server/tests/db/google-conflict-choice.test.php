@@ -71,7 +71,7 @@ return static function (Db $db): void {
         $r = $served($t);
         return array_intersect_key($r, array_flip($keys));
     };
-    $allKeys = ['title', 'description', 'location', 'url', 'status', 'start', 'end', 'allDay'];
+    $allKeys = ['title', 'description', 'location', 'url', 'status', 'start', 'end', 'allDay', 'tzid'];
 
     // A change at Google, as another client makes it.
     $atGoogle = static function (object $t, array $body): void {
@@ -104,11 +104,11 @@ return static function (Db $db): void {
     $instants = static fn(?array $v): ?array => $v === null ? null : [strtotime((string) ($v['start'] ?? '')), strtotime((string) ($v['end'] ?? '')), (bool) ($v['allDay'] ?? false)];
     $keptOf = static fn(array $json): mixed => array_key_exists('kept', $json) ? $json['kept'] : 'no kept in the answer';
     // Overwrite as the page's section (c) says the app sends it: the same request again, with, for each field in `fields`,
-    // over[field] set to its `now` and the body's value for it set to its `yours` (the time whole: start, end, allDay); a
+    // over[field] set to its `now` and the body's value for it set to its `yours` (the time whole: start, end, allDay, tzid); a
     // delete's yours is null and sets no body value.
     $overwrite = static function (array $body, array $json): array {
         foreach ((array) ($json['error']['fields'] ?? []) as $f) {
-            $keys = $f['field'] === 'time' ? ['start', 'end', 'allDay'] : [$f['field']];
+            $keys = $f['field'] === 'time' ? ['start', 'end', 'allDay', 'tzid'] : [$f['field']];
             foreach ($keys as $k) {
                 $body['over'][$k] = $f['field'] === 'time' ? ($f['now'][$k] ?? null) : $f['now'];
                 if ($f['yours'] !== null) {
@@ -128,7 +128,7 @@ return static function (Db $db): void {
         [$status, $json] = $send($t, 'patch', ['title' => 'Weekly sync', 'over' => $overOf($t, ['title'])]);
         checkEq('edit: 200, one read and one PATCH, nothing kept', [200, ['GET', 'PATCH'], []], [$status, $methods($sent($t, $m)), $keptOf($json)]);
         $m = $mark($t);
-        [$status, $json] = $send($t, 'patch', ['start' => '2027-03-04T18:00:00+00:00', 'end' => '2027-03-04T19:00:00+00:00', 'over' => $overOf($t, ['start', 'end', 'allDay'])]);
+        [$status, $json] = $send($t, 'patch', ['start' => '2027-03-04T18:00:00+00:00', 'end' => '2027-03-04T19:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC', 'over' => $overOf($t, ['start', 'end', 'allDay', 'tzid'])]);
         checkEq('drag: 200, one read and one PATCH, nothing kept, the row at the new time', [200, ['GET', 'PATCH'], [], ['2027-03-04 18:00:00', '2027-03-04 19:00:00', 0]],
             [$status, $methods($sent($t, $m)), $keptOf($json), $row($t)['time']]);
         $m = $mark($t);
@@ -339,10 +339,10 @@ return static function (Db $db): void {
     // The damage list: a time is the whole value, never asked about by its end alone.
     scenario('a resize of the end over a start moved at Google asks about the time', function () use ($fresh, $send, $overOf, $atGoogle, $googleTime, $mark, $sent, $methods, $row, $instants): void {
         $t = $fresh();
-        $over = $overOf($t, ['start', 'end', 'allDay']);
+        $over = $overOf($t, ['start', 'end', 'allDay', 'tzid']);
         $atGoogle($t, $googleTime('2027-03-03T17:00:00+00:00', '2027-03-03T19:00:00+00:00'));
         $m = $mark($t);
-        [$status, $json] = $send($t, 'patch', ['end' => '2027-03-03T19:30:00+00:00', 'over' => $over]);
+        [$status, $json] = $send($t, 'patch', ['start' => '2027-03-03T18:00:00+00:00', 'end' => '2027-03-03T19:30:00+00:00', 'allDay' => false, 'tzid' => 'UTC', 'over' => $over]);
         $e = $json['error'] ?? [];
         $f = $e['fields'][0] ?? [];
         checkEq('409 google_changed about the time: was the served time, now Google\'s, yours the resized time; nothing written; the row holds Google\'s time', [
@@ -359,9 +359,9 @@ return static function (Db $db): void {
     // The damage list: Overwrite sends what the person was shown as theirs, never the drag read again over the stored row.
     scenario('a drag over an event made all-day at Google asks, and Overwrite puts it at the dragged time, timed', function () use ($fresh, $send, $overOf, $atGoogle, $mark, $sent, $methods, $row, $atG, $instants, $overwrite): void {
         $t = $fresh();
-        $over = $overOf($t, ['start', 'end', 'allDay']);
+        $over = $overOf($t, ['start', 'end', 'allDay', 'tzid']);
         $atGoogle($t, ['start' => ['date' => '2027-03-03', 'dateTime' => null, 'timeZone' => null], 'end' => ['date' => '2027-03-04', 'dateTime' => null, 'timeZone' => null]]);
-        $body = ['start' => '2027-03-04T18:00:00+00:00', 'end' => '2027-03-04T19:00:00+00:00', 'over' => $over];
+        $body = ['start' => '2027-03-04T18:00:00+00:00', 'end' => '2027-03-04T19:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC', 'over' => $over];
         [$status, $json] = $send($t, 'patch', $body);
         $f = $json['error']['fields'][0] ?? [];
         checkEq('409 google_changed about the time: now all-day, yours the dragged time, timed', [409, 'google_changed', 'time', true,

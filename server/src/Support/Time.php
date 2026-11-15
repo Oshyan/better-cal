@@ -82,6 +82,17 @@ final class Time
         return $at->setTimezone(self::dayZone($allDay, $tz))->format('Y-m-d');
     }
 
+    /** Whether a tzid names a zone (an IANA name or a common abbreviation), where zone() would fall back to UTC for one that doesn't. */
+    public static function isZone(string $tzid): bool
+    {
+        $tzid = self::TZ_ALIASES[strtoupper(trim($tzid))] ?? trim($tzid);
+        try {
+            return $tzid !== '' && new \DateTimeZone($tzid) instanceof \DateTimeZone;
+        } catch (\Exception) {
+            return false;
+        }
+    }
+
     /** Normalize a tzid string to a valid IANA identifier ('UTC' fallback). */
     public static function normalizeTzid(?string $tzid): string
     {

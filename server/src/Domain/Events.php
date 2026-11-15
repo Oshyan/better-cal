@@ -546,15 +546,12 @@ final class Events
     {
         $id = (int) $event['id'];
         // What the request means is read against what the person was shown
-        // (requestBase): a drag sends no all-day setting and a start alone
-        // no end, and each is completed from the base, never from a row a
-        // poll may have changed since. Each field it touches is then whole
-        // (the time is its three columns), so what is compared and sent is
-        // the field as the person wants it, whatever the row holds now.
+        // (requestBase). On the conflict choice's path a time is sent whole
+        // or refused, so nothing of it is taken from the base; with no
+        // `over` the base is the row, as in 1.5.6.
         $base = $this->requestBase($userId, $event, $this->requestOver);
         $columns = $this->columnPatch($base, $in);
-        $whole = array_merge(...array_map(static fn(string $f): array => GoogleConflict::COLUMNS[$f], GoogleConflict::fieldsIn($columns)) ?: [[]]);
-        [$googleFields, $localFields] = self::splitGoogleFields($columns + array_intersect_key($base, array_flip($whole)));
+        [$googleFields, $localFields] = self::splitGoogleFields($columns);
         // Only what Google holds goes to Google; a change of nothing it
         // holds sends nothing and is written here as a local change.
         $body = $googleFields === [] ? [] : self::patchBody($event, $googleFields);
@@ -913,50 +910,103 @@ final class Events
             'columns' => $send + array_diff_key($columns ?? [], array_flip($fieldColumns))];
     }
 
+    /** A time's keys, one value (the page "1.5.7, Slice 1", (b), T1): the clock-time flag is a field of its own. */
+    public const TIME_KEYS = ['start', 'end', 'allDay', 'tzid'];
+
+    /** The refusal of a time sent in parts or as no event state, which only a tab older than the rule sends (T2, T4). */
+    public const CLIENT_OUTDATED = 'Better-Cal was updated. Reload the page and make the change again.';
+
+    /**
+     * Whether $in (a request body or its `over`) names a time, and that it
+     * names it whole and as a real event state: the one test of a time on
+     * the conflict choice's path (the page "1.5.7, Slice 1", (b), T2 and
+     * T4). False when it names none (no time key and no typed clock); true
+     * when it names all four keys and they are a state: an all-day time's
+     * boundaries dates with the end after the start, a timed time's end not
+     * before its start (a moment with no length is an event, as columnPatch
+     * stores it), the zone a zone. Anything else is 400 client_outdated.
+     */
+    public static function wholeTime(array $in): bool
+    {
+        if (array_intersect_key($in, array_flip([...self::TIME_KEYS, 'typed'])) === []) {
+            return false;
+        }
+        $start = $in['start'] ?? null;
+        $end = $in['end'] ?? null;
+        $allDay = $in['allDay'] ?? null;
+        $tzid = $in['tzid'] ?? null;
+        $state = is_string($start) && is_string($end) && is_bool($allDay) && is_string($tzid) && Time::isZone($tzid);
+        try {
+            $state = $state && ($allDay
+                ? Time::parseAllDay($end, 'UTC') > Time::parseAllDay($start, 'UTC')
+                : Time::parseIso($end, $tzid) >= Time::parseIso($start, $tzid));
+        } catch (\InvalidArgumentException) {
+            $state = false;
+        }
+        if (!$state) {
+            throw new HttpError('client_outdated', self::CLIENT_OUTDATED, 400);
+        }
+        return true;
+    }
+
     /**
      * The row a request for one event was made against (the page "1.5.7,
      * Slice 1", (b)): for a change that goes through the conflict choice (an
-     * event in no series on a Google calendar, the setting on), the row with
-     * the columns of the request's `over` (overColumns), what the person was
-     * shown; with no `over`, or on any other path, the row itself. Every
-     * reading of a partial request is made against it (columnPatch: a
-     * missing end or all-day setting, a date or a clock, the zone; fromViewer:
-     * whose clock a floating event's times are on), so a poll that stored
-     * Google's change after the person looked does not change what their
-     * request means.
+     * event in no series on a Google calendar, the setting on) and carries
+     * `over`, the row with the columns of `over` (overColumns), what the
+     * person was shown; with no `over`, or on any other path, the row itself.
+     * On that path a time is one value, in `over` and in $body alike
+     * (wholeTime), so a time in parts is refused here, before Google is read
+     * or anything written, and the base's time is `over`'s, never the row's.
+     * $body: the request as it came in, checked too; null where it was
+     * checked where it came in (fromViewer) or names no time.
      *
      * @param array<string,mixed> $over the request's `over`, by served key
      */
-    public function requestBase(int $userId, array $row, array $over): array
+    public function requestBase(int $userId, array $row, array $over, ?array $body = null): array
     {
         if ($over === [] || !$this->choosesOverGoogle($userId, $row)) {
             return $row;
         }
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $row['calendar_id']]);
-        return $calendar !== null && GoogleWriter::bound($calendar) ? array_merge($row, $this->overColumns($userId, $row, $over)) : $row;
+        if ($calendar === null || !GoogleWriter::bound($calendar)) {
+            return $row;
+        }
+        self::wholeTime($over);
+        if ($body !== null) {
+            self::wholeTime(array_diff_key($body, ['over' => true]));
+        }
+        return array_merge($row, $this->overColumns($userId, $row, $over));
     }
 
     /**
      * The columns the request's `over` names, parsed exactly as the same keys
-     * in a request body are (fromViewer, columnPatch over the row): the base
-     * of the conflict choice. Only the six fields' columns.
+     * in a request body are (fromViewer, columnPatch): the base of the
+     * conflict choice. Only the six fields' columns, and the time's zone
+     * with them. A time is read in its own terms: `over`'s kind and zone
+     * stand in for the row's before it is parsed, so nothing of the row's
+     * time enters it (T4); whose clock a floating event's instants are on is
+     * the row's flag, a field of its own.
      *
      * @return array<string,mixed>
      */
     public function overColumns(int $userId, array $row, array $over): array
     {
-        $over = array_intersect_key($over, array_flip(['title', 'description', 'location', 'url', 'status', 'start', 'end', 'allDay']));
+        $over = array_intersect_key($over, array_flip(['title', 'description', 'location', 'url', 'status', ...self::TIME_KEYS]));
         if ($over === []) {
             return [];
         }
-        $over = $this->fromViewer($userId, (int) $row['id'], $over);
-        return array_intersect_key($this->columnPatch($row, $over), array_flip(array_merge(...array_values(GoogleConflict::COLUMNS))));
+        $timed = self::wholeTime($over);
+        $shown = $timed ? array_merge($row, ['all_day' => $over['allDay'] ? 1 : 0, 'tzid' => Time::normalizeTzid($over['tzid'])]) : $row;
+        $parsed = $this->columnPatch($shown, $this->onOwnClock($userId, $shown, $over));
+        $columns = array_intersect_key($parsed, array_flip(array_merge(...array_values(GoogleConflict::COLUMNS))));
+        return $timed ? $columns + ['tzid' => $parsed['tzid'] ?? $shown['tzid']] : $columns;
     }
 
     /**
      * A row's six fields as the API serves them (serializeFields): the form
-     * of `over`, of a question's values and of `kept`. The time is
-     * {start, end, allDay}.
+     * of `over`, of a question's values and of `kept`. The time is whole,
+     * {start, end, allDay, tzid}, an all-day time's zone UTC.
      *
      * @return array<string,mixed>
      */
@@ -966,7 +1016,7 @@ final class Events
         [$start, $end] = Floating::span($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $this->viewerFor([$row], (int) $row['user_id']));
         $s = $this->serializeFields($row, $start, $end, [], true);
         return ['title' => $s['title'], 'description' => $s['description'], 'location' => $s['location'], 'url' => $s['url'], 'status' => $s['status'],
-            'time' => ['start' => $s['start'], 'end' => $s['end'], 'allDay' => $s['allDay']]];
+            'time' => ['start' => $s['start'], 'end' => $s['end'], 'allDay' => $s['allDay'], 'tzid' => $s['allDay'] ? 'UTC' : $s['tzid']]];
     }
 
     /**
@@ -1784,6 +1834,9 @@ final class Events
             throw HttpError::badRequest('preview is answered without applying the change; send it to the preview path', 'preview_unavailable');
         }
         $event = $this->get($userId, $id);
+        // An `over` time in parts is refused before anything is asked of
+        // Google (the body was checked where it came in, fromViewer).
+        $this->requestBase($userId, $event, $this->requestOver);
         $in = $this->typedTimes($userId, $in, (string) $event['tzid']);
         $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
         if ($editKeys !== [] && !str_starts_with(ActivityContext::get(), 'plugin:')) {
@@ -2453,6 +2506,8 @@ final class Events
         $this->googleKept = [];
         $this->requestOver = $over ?? [];
         $event = $this->get($userId, $id);
+        // An `over` time in parts is refused before anything is asked of Google.
+        $this->requestBase($userId, $event, $this->requestOver);
         $this->undo->write($userId, function () use ($userId, $id, $scope, $instanceStart, $event, $authority, $plan): void {
             // As in create(): the credential is locked before the calendar.
             $authority?->assertValid($this->db);
@@ -2877,14 +2932,13 @@ final class Events
         // The list shape: what the grid draws. Everything the detail view,
         // the popover and the editor need beyond this rides the single-event
         // fetch on open (#15). Nulls and empty lists are omitted; a missing
-        // key reads as null / [] on every client surface.
+        // key reads as null / [] on every client surface. The time is whole
+        // where it is shown: start, end, allDay and the zone (tzid) on every
+        // occurrence, so a change made from the grid can name the time it
+        // showed (the page "1.5.7, Slice 1", (b), T1), and a timed context
+        // moment (sunset, a tide) keeps its own clock (docs/relationships.md).
         foreach (self::DETAIL_ONLY as $k) {
             unset($out[$k]);
-        }
-        // A timed context moment (sunset, a tide) keeps its own clock on the
-        // grid, so it alone carries its zone (docs/relationships.md).
-        if (($out['relationship'] ?? '') === 'context' && empty($out['allDay'])) {
-            $out['tzid'] = (string) $row['tzid'];
         }
         return array_filter($out, static fn($v): bool => $v !== null && $v !== []);
     }
@@ -2892,10 +2946,11 @@ final class Events
     /**
      * Fields only the single-event record carries. Measured per occurrence
      * before removal: uid 76, reminders 43, createdAt 39, updatedAt 39,
-     * rrule 35, tzid 28, reminderSource 26, description 21 — a third of the
-     * row, none of it read by anything that draws a grid.
+     * rrule 35, reminderSource 26, description 21 — a third of the row, none
+     * of it read by anything that draws a grid. The zone (28) went back on in
+     * 1.5.7: it is part of the time the grid shows.
      */
-    private const DETAIL_ONLY = ['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'rrule', 'description', 'tzid', 'geocodedAt', 'locationSource', 'locationProvider', 'locationPlacedAt'];
+    private const DETAIL_ONLY = ['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'rrule', 'description', 'geocodedAt', 'locationSource', 'locationProvider', 'locationPlacedAt'];
 
     /**
      * Beyond bytes, the list shape skips work: effective reminders need the

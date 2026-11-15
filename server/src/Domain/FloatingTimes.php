@@ -78,10 +78,17 @@ trait FloatingTimes
             return $in;
         }
         // Whose clock the request's times are on is read from the row the
-        // person was shown (Events::requestBase), as the rest of it is.
+        // person was shown (Events::requestBase), as the rest of it is; the
+        // request is checked there as it came in, a time in parts refused.
         if ($row !== null && is_array($in['over'] ?? null)) {
-            $row = $this->requestBase($userId, $row, $in['over']);
+            $row = $this->requestBase($userId, $row, $in['over'], $in);
         }
+        return $this->onOwnClock($userId, $row, $in);
+    }
+
+    /** fromViewer over a row given (null for a new event): `over`'s time is read over the row with its own kind and zone (Events::overColumns). */
+    private function onOwnClock(int $userId, ?array $row, array $in): array
+    {
         $home = $this->userTzid($userId);
         $allDay = array_key_exists('allDay', $in)
             ? filter_var($in['allDay'], FILTER_VALIDATE_BOOL)

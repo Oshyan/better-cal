@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 1.5.8 (unreleased)
+
+- **The month on a phone's month view names what fills the screen.** After Next, the top bar said the month before for some months (January and April 2027 among them).
+- **A toast with several buttons fits a phone.** Its buttons move under the message instead of squeezing it to one word per line.
+- **Quick add reads repeats of more than 99:** "Replace water filter every 120 days".
+
 ## 1.5.7 (2026-11-15)
 
 A change to one event on a Google calendar that someone changed in Google Calendar since you last saw it no longer stops with "Refresh and try again". It is on from the update.

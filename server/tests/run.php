@@ -647,6 +647,9 @@ $repeatCases = [
     ['Cleaners every 2 weeks on Monday', 'Cleaners', '2026-08-03T00:00', 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO'],
     ['Biweekly 1:1 Monday 2pm', 'Biweekly 1:1', '2026-08-03T14:00', 'FREQ=WEEKLY;INTERVAL=2'],
     ['Water plants every 3 days', 'Water plants', '2026-07-30T00:00', 'FREQ=DAILY;INTERVAL=3'],
+    ['Oil change every 45 days', 'Oil change', '2026-07-30T00:00', 'FREQ=DAILY;INTERVAL=45'],
+    ['Replace water filter every 120 days', 'Replace water filter', '2026-07-30T00:00', 'FREQ=DAILY;INTERVAL=120'],
+    ['Checkup every 6 months', 'Checkup', '2026-07-30T00:00', 'FREQ=MONTHLY;INTERVAL=6'],
     ['Board meeting every quarter', 'Board meeting', '2026-07-30T00:00', 'FREQ=MONTHLY;INTERVAL=3'],
     // Monthly
     ['Bills monthly', 'Bills', '2026-07-30T00:00', 'FREQ=MONTHLY'],

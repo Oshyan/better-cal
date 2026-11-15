@@ -140,16 +140,6 @@ final class Ranking
         return $scored;
     }
 
-    /** Record an explicit thumbs signal ('up'|'down') for an event. */
-    public function recordSignal(int $userId, int $eventId, string $kind): void
-    {
-        $this->db->insert('feedback_signals', [
-            'user_id' => $userId,
-            'event_id' => $eventId,
-            'kind' => $kind,
-        ]);
-    }
-
     /**
      * Future feed events never scored, edited since scoring, or scored before
      * the newest signal arrived (new signals invalidate old scores).

@@ -22,12 +22,16 @@ zip=$4
 [[ -f "$vendor/autoload.php" ]] || { echo "release-assemble: no autoload.php in $vendor" >&2; exit 1; }
 [[ ! -e "$out/better-cal" ]] || { echo "release-assemble: $out/better-cal already exists" >&2; exit 1; }
 mkdir -p "$out"
-# Everything but CI and the test suites, which aren't for running
-# Better-Cal. (Excluded here rather than marked export-ignore, since the
-# deploy script runs the suites from its own git archive.)
+# Everything but CI, the test suites and the tools that check the code
+# (the harnesses, the stand-in for Google, the comparison of versions, the
+# gate script), none of which is for running Better-Cal. (Excluded here
+# rather than marked export-ignore, since the deploy script runs the suites
+# from its own git archive.)
 git archive --format=tar --prefix=better-cal/ "$tag" -- . \
   ':(exclude).github' ':(exclude)server/tests' ':(exclude)web/tests' \
-  ':(exclude)scripts/tests' ':(exclude)tools/tz-harness' | tar -x -C "$out"
+  ':(exclude)scripts/tests' ':(exclude)tools/tz-harness' \
+  ':(exclude)tools/edit-harness' ':(exclude)tools/google-probe' \
+  ':(exclude)tools/compare' ':(exclude)tools/gates.sh' | tar -x -C "$out"
 # The files this release ships, with their SHA-256 (since 1.0, in shasum's
 # "HASH  PATH" form), so bin/update.php can tell the ones someone added from
 # ones a later release simply dropped, and see which shipped ones were edited

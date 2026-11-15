@@ -46,6 +46,10 @@ final class JournalGateSample
     }
 }
 
+// This file tests undo of a change to all events on a Google calendar, which ships off (google_series_undo):
+// its accounts have it on. A scenario about the refusal that ships turns it off for its own account.
+seriesUndoDefault(true);
+
 return static function (Db $db): void {
     $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
     $tz = 'America/Los_Angeles';

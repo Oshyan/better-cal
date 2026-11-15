@@ -345,10 +345,14 @@ function refusal(callable $fn): ?string
 function freshUser(Db $db): int
 {
     $u = Setup::createOwner($db, 'owner-' . bin2hex(random_bytes(4)) . '@example.test', 'correct horse battery');
-    // Undo of a whole-series change on a Google calendar is off in 1.5.5
-    // (Settings google_series_undo); the suite and the edit harness measure
-    // it on, as it will ship in 1.5.6. One scenario in google-series-undo.test.php turns it off.
-    seriesUndo($db, $u, true);
+    // Undo of a whole-series change on a Google calendar is off as shipped
+    // (Settings google_series_undo, off by default until #274 rebuilds it),
+    // so a new account has it off with nothing stored, as an install does.
+    // A file that tests that undo says so once, at its top
+    // (seriesUndoDefault(true)); the runner puts it back before the next file.
+    if (seriesUndoDefault()) {
+        seriesUndo($db, $u, true);
+    }
     // A change to one Google event reads Google first and asks only over the
     // same field (Settings google_conflict_choice): on by default, as 1.5.7
     // ships, so a new account has it on with nothing stored. A test about the
@@ -361,6 +365,19 @@ function conflictChoice(Db $db, int $userId, bool $on): void
 {
     $settings = json_decode((string) $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]), true) ?: [];
     $db->update('users', ['settings_json' => json_encode(['google_conflict_choice' => $on] + $settings)], 'id = ?', [$userId]);
+}
+
+/**
+ * Whether this test file's new accounts have google_series_undo on. Off, as shipped, unless the file sets it:
+ * seriesUndoDefault(true) at the top of a file that tests undo of a change to all events on a Google calendar.
+ */
+function seriesUndoDefault(?bool $on = null): bool
+{
+    static $default = false;
+    if ($on !== null) {
+        $default = $on;
+    }
+    return $default;
 }
 
 /** Turn the google_series_undo switch on or off for an account (Settings::DEFAULTS). */

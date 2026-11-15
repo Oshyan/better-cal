@@ -108,8 +108,8 @@ require_once __DIR__ . '/OracleProbes.php';
 if (isset($opts['flips'])) {
     BetterCal\EditHarness\Interleave::$flips = (float) $opts['flips'];
 }
-// --series-undo on|off: the account's google_series_undo setting (Product::$seriesUndo); on, the default, measures
-// whole-series undo on a Google calendar as 1.5.6 ships it, off is the product's default in 1.5.5.
+// --series-undo on|off: the account's google_series_undo setting (Product::$seriesUndo); off, the default, is what
+// ships; on measures whole-series undo on a Google calendar, held back until it is rebuilt (#274).
 if (isset($opts['series-undo'])) {
     BetterCal\EditHarness\Product::$seriesUndo = (string) $opts['series-undo'] !== 'off';
 }

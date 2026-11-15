@@ -35,6 +35,10 @@ use BetterCal\Support\Time;
 
 require_once dirname(__DIR__, 3) . '/tools/google-probe/lib/FakeGoogle.php';
 
+// This file tests undo of a change to all events on a Google calendar, which ships off (google_series_undo):
+// its accounts have it on. A scenario about the refusal that ships turns it off for its own account.
+seriesUndoDefault(true);
+
 return static function (Db $db): void {
     // The rule as SQL, over one account: the suite's one definition
     // (lib.php, linkViolations: tags, people and a NULL list under a live

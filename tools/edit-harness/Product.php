@@ -20,13 +20,12 @@ final class Product
     public static bool $plan = true;
 
     /**
-     * The account's google_series_undo setting in a run (`--series-undo on|off`, README: Google). On, the default, as the
-     * database suite's freshUser sets it, so recorded runs measure whole-series undo on a Google calendar as 1.5.6 will
-     * ship it; off is the product's default in 1.5.5, under which such an undo or redo is refused not_undoable with
-     * SERIES_UNDO_OFF, nothing written or sent, and the bare Undo passes over the entry (decisions.md, "Undo of a
-     * whole-series change on a Google calendar waits for 1.5.6").
+     * The account's google_series_undo setting in a run (`--series-undo on|off`, README: Google). Off, the default, as the
+     * product ships it and as the database suite's freshUser leaves a new account: an undo or redo of a change to all
+     * events on a Google calendar is refused not_undoable with SERIES_UNDO_OFF, nothing written or sent, and the bare
+     * Undo passes over the entry. On measures the mechanism that is held back until it is rebuilt (#274).
      */
-    public static bool $seriesUndo = true;
+    public static bool $seriesUndo = false;
 
     /** The words the contract gives that refusal (decisions.md, the same entry): the harness's own copy. */
     public const SERIES_UNDO_OFF = 'Undo of a change to all events on a Google calendar comes in a later release; this change stays. Undo of a single day still works.';
@@ -41,16 +40,14 @@ final class Product
 
     /**
      * A new account for a case, with the run's google_series_undo and google_conflict_choice settings. The database
-     * suite's freshUser leaves google_conflict_choice as it ships (on, nothing stored), so it is stored here only to
-     * follow `--conflict-choice`; on stores true, which reads the same as the default.
+     * suite's freshUser leaves both as they ship (the choice on, the undo off, nothing stored), so each is stored here
+     * only to follow its flag; a value equal to the default reads the same as nothing stored.
      */
     public static function account(Db $db): int
     {
         $u = \freshUser($db);
         \conflictChoice($db, $u, self::$conflictChoice);
-        if (!self::$seriesUndo) {
-            \seriesUndo($db, $u, false);
-        }
+        \seriesUndo($db, $u, self::$seriesUndo);
         return $u;
     }
 

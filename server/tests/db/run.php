@@ -81,6 +81,8 @@ $runHere = static function (array $tests): array {
         $GLOBALS['__rulesSeen'] = [];
         foreach ($tests as $file) {
             $files[basename($file)] = false;
+            // Each file starts with new accounts as shipped; one that tests undo of a change to all events on Google says so itself.
+            seriesUndoDefault(false);
             try {
                 (require $file)($db);
                 $files[basename($file)] = true;

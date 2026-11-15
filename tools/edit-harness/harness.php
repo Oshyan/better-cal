@@ -98,7 +98,7 @@ if (isset($opts['model'])) {
 require $harnessRoot . '/server/tests/db/lib.php';
 require __DIR__ . '/lib.php';
 BetterCal\EditHarness\Product::use($root);
-// --series-undo on|off: the account's google_series_undo setting (Product::$seriesUndo, README: Google); on by default.
+// --series-undo on|off: the account's google_series_undo setting (Product::$seriesUndo, README: Google); off by default, as shipped.
 if (isset($opts['series-undo'])) {
     BetterCal\EditHarness\Product::$seriesUndo = (string) $opts['series-undo'] !== 'off';
 }

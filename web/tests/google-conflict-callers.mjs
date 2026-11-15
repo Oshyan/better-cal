@@ -33,7 +33,7 @@ const savedDebounce = options.debounceRendering;
 options.requestAnimationFrame = (cb) => setImmediate(cb);
 options.debounceRendering = (cb) => Promise.resolve().then(cb);
 const { render, html } = await import('../vendor/index.js');
-const { state, set, subscribe, adoptEvent } = await import('../src/app/store.js');
+const { state, set, subscribe, adoptEvent, invalidateRecords } = await import('../src/app/store.js');
 const { EditorDrawer } = await import('../src/app/EditorDrawer.js');
 const { deleteEvent, moveEvent, resizeEvent, updateEvent, moveTrip, maybePromptExtendTrip } = await import('../src/app/actions.js');
 const { AppReloadBanner } = await import('../src/app/updates.js');
@@ -425,9 +425,10 @@ const put = (...list) => set({ occ: new Map(list.map((o) => [o.instanceId, o])),
 // table below (CALLERS); each runs over every event of EVENTS, and what the
 // stand-in server receives is read against the rule (wholeTimes) and the
 // event as shown, never against the product's own builder. The window's
-// copy of an event carries no zone (the list shape; api-contract.md,
-// Occurrences): the record does. Every time here is fixed in its own zone,
-// so the suite reads the same in every zone it runs in.
+// copy of an event names its zone as the record does (api-contract.md,
+// Occurrences), and the zone sent is the one on the copy shown: no request
+// goes before the change. Every time here is fixed in its own zone, so the
+// suite reads the same in every zone it runs in.
 
 const DAY = 86400000;
 const shiftIso = (iso, ms) => toISOWithOffset(new Date(parseISO(iso).getTime() + ms));
@@ -439,8 +440,8 @@ const EVENTS = [
 ];
 const record = (e, extra = {}) => ({ instanceId: e.rec.eventId + ':shown', calendarId: 3, recurring: false, title: 'Sample ' + e.rec.eventId,
   location: null, url: null, status: 'confirmed', relationship: 'planned', isContainer: false, ...e.rec, full: true, ...extra });
-// As the window holds it: the record without its zone.
-const windowCopy = (e, extra = {}) => { const { tzid: _z, full: _f, ...o } = record(e, extra); return o; };
+// As the window holds it: the list shape, its zone included.
+const windowCopy = (e, extra = {}) => { const { full: _f, ...o } = record(e, extra); return o; };
 // The time as shown, whole, as the contract serves it.
 const shownWhole = (r) => ({ start: r.start, end: r.end, allDay: r.allDay, tzid: r.allDay ? 'UTC' : r.tzid });
 
@@ -448,11 +449,14 @@ const shownWhole = (r) => ({ start: r.start, end: r.end, allDay: r.allDay, tzid:
 // from `answerFor` (a 200 by default).
 let records = {};
 let writes = [];
+// Every request about an event, in order: what goes before a change.
+let calls = [];
 let answerFor = () => json(200, { kept: [] });
 globalThis.fetch = async (url, init = {}) => {
   const path = new URL(String(url), 'http://app.test').pathname.replace('/api/v1', '');
   const id = Number((path.match(/^\/events\/(\d+)/) || [])[1]);
   const method = init.method || 'GET';
+  if (id) calls.push({ id, method, path });
   if (path.endsWith('/occurrence') && method === 'GET') return records[id] ? json(200, { occurrence: records[id] }) : json(404, { error: { code: 'not_found', message: 'Not found' } });
   if (!id || method === 'GET') return json(200, { events: [], cursor: null });
   const body = init.body ? JSON.parse(init.body) : {};
@@ -483,7 +487,8 @@ const CALLERS = [
       set({ toasts: [] });
       const member = { instanceId: '41:shown', eventId: 41, calendarId: 3, recurring: false, title: 'Sample member', allDay: false,
         start: '2027-03-11T09:00:00-08:00', end: '2027-03-11T10:00:00-08:00', containers: [{ eventId: o.eventId, title: o.title }] };
-      records[41] = { ...member, tzid: 'America/Los_Angeles' };
+      member.tzid = 'America/Los_Angeles';
+      records[41] = { ...member };
       state.occ.set(member.instanceId, member);
       await moveEvent({ instanceId: member.instanceId, newStart: '2027-04-20T09:00:00-07:00', newEnd: '2027-04-20T10:00:00-07:00' });
       const t = state.toasts.find((x) => Array.isArray(x.actions) && x.actions.some((a) => a.label === 'Extend trip'));
@@ -505,6 +510,7 @@ for (const e of EVENTS) {
     const extra = c.trip ? { isContainer: true } : {};
     records = { [e.rec.eventId]: record(e, extra) };
     writes = [];
+    calls = [];
     asked.length = 0;
     // Google Calendar holds the event two hours later than shown, for Overwrite.
     const google = { ...shownWhole(records[e.rec.eventId]), start: shiftIso(e.rec.start, 2 * 3600000), end: shiftIso(e.rec.end, 2 * 3600000) };
@@ -518,6 +524,9 @@ for (const e of EVENTS) {
     await settle();
     const mine = writes.filter((w) => w.id === e.rec.eventId);
     assert.ok(mine.length >= 1, label + ': a request is sent');
+    const ofIt = calls.filter((x) => x.id === e.rec.eventId);
+    assert.notEqual(ofIt[0].method, 'GET', label + ': the change is the first request about the event, nothing read before it: ' + JSON.stringify(ofIt[0]));
+    wChecks++;
     const shown = shownWhole(records[e.rec.eventId]);
     for (const [i, w] of mine.entries()) {
       const b = w.body;
@@ -546,6 +555,30 @@ for (const e of EVENTS) {
 }
 reply = [];
 console.log('Google conflict, a time is one value: ' + wRows + ' caller and event rows, ' + wChecks + ' checks');
+
+// A timed copy shown without its zone is a fault of whatever made it: the
+// action fails saying so, the block is back, and nothing is sent or read.
+{
+  // An event of its own: what the rows above held of theirs stays theirs.
+  const e = { rec: { ...EVENTS[0].rec, eventId: 29 } };
+  records = { 29: record(e) };
+  writes = []; calls = [];
+  const { tzid: _z, ...o } = windowCopy(e);
+  await settle(); // the window refetches of the rows before have landed
+  set({ occ: new Map([[o.instanceId, o]]), toasts: [] });
+  const ok = await moveEvent({ instanceId: o.instanceId, newStart: later(o.start, e), newEnd: later(o.end, e) });
+  assert.equal(state.occ.get(o.instanceId).start, o.start, 'no zone: the block is back');
+  await settle();
+  assert.equal(ok, false, 'no zone: the move fails');
+  assert.deepEqual(calls, [], 'no zone: nothing is sent or read');
+  assert.match(state.toasts[state.toasts.length - 1].text, /without its time zone/, 'no zone: said as a fault');
+  // The zone rides the list shape: forgetting an event's record keeps it.
+  const shownCopy = record(e);
+  set({ occ: new Map([[shownCopy.instanceId, shownCopy]]) });
+  invalidateRecords(e.rec.eventId);
+  assert.equal(state.occ.get(shownCopy.instanceId).tzid, e.rec.tzid, 'a record forgotten keeps the zone the list gave');
+  wChecks += 5;
+}
 
 // The editor's time: one row of its comparison. Any of start, end, all-day
 // or zone differing from the base sends all of it, nothing else of it

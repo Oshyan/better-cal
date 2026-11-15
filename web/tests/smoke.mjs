@@ -7,6 +7,7 @@ import './credentials.mjs';
 import './mail.mjs';
 import './resources.mjs';
 import './google-changed.mjs';
+import './dayshift-clock.mjs';
 // The series panel never guesses a clock's zone: under test a clock with none throws.
 import { setStrictClocks } from '../src/lib/planwords.js';
 setStrictClocks(true);
@@ -2562,7 +2563,8 @@ console.log('--- chronological ordering across timezone offsets ---');
   // 3 and 4. Saves to one event in flight together (the server's instanceId
   // carries the start, as the real one's does).
   const srv = { at: null, title: 'Sample review', version: 1, patches: [] };
-  const one = (start) => ({ instanceId: '7@' + Date.parse(start), eventId: 7, calendarId: 1, title: srv.title, start, end: isoAt(new Date(Date.parse(start) + 3600000)), allDay: false });
+  // The list shape names the event's zone (1.5.7); a change sends it with the time.
+  const one = (start) => ({ instanceId: '7@' + Date.parse(start), eventId: 7, calendarId: 1, title: srv.title, start, end: isoAt(new Date(Date.parse(start) + 3600000)), allDay: false, tzid: 'America/Chicago' });
   globalThis.fetch = async (url, o = {}) => {
     const u = path(url);
     const p = u.pathname.replace('/api/v1', '');
@@ -4342,6 +4344,12 @@ console.log('');
     const at = new Date(2026, 10, 7, 15, 35);
     const tide = { allDay: false, title: 'Low tide -0.4 ft', start: at.toISOString(), end: at.toISOString(), tzid: 'UTC', icon: 'tideLow' };
     eq('context token: a UTC-stored plugin moment reads on the device clock', contextToken(tide).time, compactTime(at, null));
+    // Same clock time in any zone: its times are this device's whatever zone
+    // it was stored in, so no other zone's clock and no zone label.
+    const far = Intl.DateTimeFormat().resolvedOptions().timeZone === 'Asia/Tokyo' ? 'America/New_York' : 'Asia/Tokyo';
+    const local = { ...tide, tzid: far, floating: true };
+    eq('context token: a same-clock-time moment reads on the device clock, unlabelled', [contextToken(local).time, contextToken(local).zone], [compactTime(at, null), '']);
+    eq('context token: the same moment in a far zone says its zone', !!contextToken({ ...tide, tzid: far }).zone, true);
   }
   eq('context token: AQI keeps the number, the category goes to the tooltip', [contextToken(aqi).icon, contextToken(aqi).text], ['air', '54']);
   eq('context token: a sunset is its icon and time', [contextToken(sunset).icon, contextToken(sunset).text, contextToken(sunset).time], ['sunset', '', '7:10p']);

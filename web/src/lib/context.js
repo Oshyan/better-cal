@@ -10,7 +10,7 @@
 // calendar is a day label instead, written with the date wherever a date is
 // written ("Mon, Oct 12 · Columbus Day"), and left out of the tokens.
 
-import { fmtTime, fmtTimeIn, tzAbbrev, sameClock, localTz, parseISO, occDayKey, addDaysKey } from './dates.js';
+import { fmtTime, fmtTimeIn, tzAbbrev, ownClock, parseISO, occDayKey, addDaysKey } from './dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
 
 export function isContext(occ) {
@@ -33,10 +33,12 @@ export function compactTime(d, tz) {
 // which zone. Plugin events are stored as UTC instants and carry no place,
 // so they show device time with no suffix.
 export function zoneSuffix(occ) {
-  const tz = occ.tzid;
-  if (!tz || tz === 'UTC' || occ.allDay) return '';
+  if (occ.allDay) return '';
   const at = parseISO(occ.start);
-  return sameClock(tz, localTz(), at) ? '' : tzAbbrev(tz, at);
+  // The clock its times are on (dates.js ownClock): none for an event with
+  // the same clock time in any zone, whose times are this device's.
+  const tz = ownClock(occ, at);
+  return tz ? tzAbbrev(tz, at) : '';
 }
 
 function clip(s, max) {
@@ -109,7 +111,7 @@ export function contextToken(occ, cal, max = 14) {
   return {
     icon,
     text,
-    time: timed ? compactTime(parseISO(occ.start), occ.tzid) : null,
+    time: timed ? compactTime(parseISO(occ.start), ownClock(occ, parseISO(occ.start))) : null,
     zone: timed ? zoneSuffix(occ) : '',
   };
 }

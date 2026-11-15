@@ -207,7 +207,7 @@ const shownTime = { start: shown.start, end: shown.end, allDay: false, tzid: 'Am
 assert.deepEqual(overOf(shown, { title: 'Weekly sync', tagNames: ['x'] }), { title: 'Team sync' }, 'only the fields the request changes');
 assert.deepEqual(overOf(shown, { start: 'a', end: 'b' }), shownTime, 'a time sends its four keys, from what was shown');
 assert.deepEqual(overOf(shown, { tzid: 'Asia/Tokyo' }), shownTime, 'a zone alone is the time too: the whole time as shown');
-assert.deepEqual(overOf({ ...shown, tzid: undefined }, { start: 'a', end: 'b' }), {}, 'a timed time with no zone is never named in part');
+assert.throws(() => overOf({ ...shown, tzid: undefined }, { start: 'a', end: 'b' }), /without its time zone/, 'a timed copy shown with no zone is a fault, said, never named in part');
 assert.deepEqual(overOf({ ...shown, allDay: true, start: '2026-11-17T00:00:00+00:00', end: '2026-11-20T00:00:00+00:00', tzid: undefined }, { start: 'a' }),
   { start: '2026-11-17T00:00:00+00:00', end: '2026-11-20T00:00:00+00:00', allDay: true, tzid: 'UTC' }, 'an all-day time is dates, its zone UTC');
 assert.deepEqual(overOf(shown, { relationship: 'maybe' }), { status: 'confirmed' }, 'Planned or Maybe is the status');

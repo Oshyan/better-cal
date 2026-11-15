@@ -663,15 +663,12 @@ final class Interleave
      * Why a whole time is no event state, or null when it is one. T4, narrowed 2026-11-15: the one validity check, on the
      * resolved time, is that its end is after its start. Its values are read as the API reads a time, an all-day boundary
      * as its date with any clock on it ignored (api-contract.md, Time Zones and All-Day Events), so a clock on an all-day
-     * boundary is no fault.
+     * boundary is no fault, and it is given resolved (allDayRead), where an all-day end on or before its start already
+     * reads as the day after the start (#302): an all-day time is never refused for its length.
      */
     private static function invalidState(array $t): ?string
     {
-        if (!empty($t['allDay'])) {
-            [$s, $e] = self::timeOf($t);
-            return $e <= $s ? 'all-day end on or before its start' : null;
-        }
-        [$s, $e] = self::timeOf($t);
+        [$s, $e] = self::timeOf(self::allDayRead($t));
         return $e <= $s ? ($e === $s ? 'a timed moment, its end at its start' : 'timed end before its start') : null;
     }
 
@@ -755,9 +752,10 @@ final class Interleave
      * A request the rule refuses (T2, T4), made from the whole one the app would send: the time left partial in the body
      * (`pair`: start and end, the 1.5.7 client's drag; `start` or `end` alone; `noTz`: three keys of four), or in `over`
      * (`overNoTz`: start, end and allDay, the 1.5.7 client's `over`; `overPair`: start and end), or `over` whole but no
-     * real event state (T4): `overMoment`, its end at its start (a timed moment, or an all-day end on its start);
-     * `overInvalid`, its end before its start (an hour, or a day); or the body whole but no state: `bodyMoment`, its
-     * end at its start, `bodyInvalid`, its end before its start; or `typedMoment`, a timed body whole with `typed` naming
+     * real event state (T4): `overMoment`, its end at its start; `overInvalid`, its end before its start (an hour); or the
+     * body whole but no state: `bodyMoment`, its end at its start, `bodyInvalid`, its end before its start. For an all-day
+     * time each of these four is a valid whole time, not a refusal: the API reads its end as the day after its start
+     * (allDayRead, #302), which x-choice then judges as any change; or `typedMoment`, a timed body whole with `typed` naming
      * only a start clock at the end sent, so the resolved time starts and ends there (an all-day body takes
      * `bodyMoment`). `over` names the time from `$shown` where the request did not.
      */
@@ -796,7 +794,8 @@ final class Interleave
      * and the write (typed clocks included)"). From api-contract.md, `typed`: with a typed start and no typed end, the
      * start is the instant of the typed clock in `typed.tz` (else the request's `tzid`), an instant sent beside it that is
      * not its clock's is ignored, and the end not typed is the end sent. The harness's typed clocks never fall in a gap
-     * or an overlap, so the one wall-clock rule is the plain reading. Without `typed`, the time sent.
+     * or an overlap, so the one wall-clock rule is the plain reading. Without `typed`, the time sent. Then the all-day
+     * reading every time takes (allDayRead).
      */
     private static function resolved(array $body): array
     {
@@ -806,7 +805,24 @@ final class Interleave
             $zone = (string) ($typed['tz'] ?? $t['tzid']);
             $t['start'] = self::inZone((new \DateTimeImmutable(str_replace('T', ' ', (string) $typed['start']), new \DateTimeZone($zone)))->getTimestamp(), (string) $t['tzid']);
         }
-        return $t;
+        return self::allDayRead($t);
+    }
+
+    /**
+     * An all-day time as the API reads it (T4, narrowed: values are read as the API reads any time; issue #302): its
+     * boundaries are their dates (api-contract.md, Time Zones and All-Day Events: "only its date is read"), and an end on
+     * or before the start is read as one day long, the end the day after the start (the API's reading as the owner states
+     * it for #302 and the outside read of 2026-11-15, R3, found it; the contract's sentence names the dates, not this, so
+     * the harness takes it from that statement and the docs now say it). A timed time is as sent.
+     */
+    private static function allDayRead(array $t): array
+    {
+        if (empty($t['allDay']) || !isset($t['start'], $t['end'])) {
+            return $t;
+        }
+        $s = self::instantOf(substr((string) $t['start'], 0, 10));
+        $e = self::instantOf(substr((string) $t['end'], 0, 10));
+        return ['start' => gmdate('Y-m-d', $s), 'end' => gmdate('Y-m-d', $e > $s ? $e : $s + 86400)] + $t;
     }
 
     /** An end for a whole time at its start (`$at`), or before it by an hour or, all-day, a day: no event state (T4). */
@@ -2741,7 +2757,7 @@ final class Interleave
         }
         if ($overTime !== [] && !self::isWhole($overTime)) {
             $parts[] = "over's time is not whole: " . implode(', ', array_keys($overTime));
-        } elseif ($overTime !== [] && ($invalid = self::invalidState($overTime)) !== null) {
+        } elseif ($overTime !== [] && ($invalid = self::invalidState(self::allDayRead($overTime))) !== null) {
             $invalidWhy[] = "over's time is no event state: $invalid";
         }
         if ($parts !== [] || $invalidWhy !== []) {
@@ -2767,7 +2783,7 @@ final class Interleave
             }
         }
         if ($overTime !== []) {
-            $B['time'] = self::timeOf($overTime);
+            $B['time'] = self::timeOf(self::allDayRead($overTime)); // the one resolved base (#302)
         }
         // What the change sets, only where it differs from what was shown ((a): "a field sent at its base value is not
         // wanted"). The time is the body's whole time as one value, nothing of it taken from the base or the row (T1, T4:

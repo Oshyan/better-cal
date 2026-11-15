@@ -1,0 +1,55 @@
+{
+    "about": "Issue 302: an all-day event in no series of two days, its notes changed at Google, then moved a day here, the time sent whole with its end on its start, over the shown time whole. The API reads an all-day end on or before its start as one day long (the end the day after the start), so this is a valid whole time, not a refusal: the change goes through as a one-day event a day later, here and at Google, and Google's notes are kept (x-choice; T4 narrowed, values read as the API reads any time).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-create",
+            "pick": 0.35,
+            "single": true,
+            "zone": "America/New_York",
+            "clock": "19:00",
+            "allDay": 2
+        },
+        {
+            "do": "r-single",
+            "pick": 0.0,
+            "fields": [
+                "description"
+            ],
+            "same": []
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "edit",
+            "fields": [
+                "time"
+            ],
+            "shown": "earlier",
+            "time": {
+                "form": "drag",
+                "days": 1,
+                "secs": 0,
+                "zone": "UTC",
+                "tz": "utc"
+            },
+            "outdated": "bodyMoment"
+        },
+        {
+            "do": "w-single",
+            "pick": 0.0,
+            "how": "overwrite"
+        }
+    ]
+}

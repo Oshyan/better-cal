@@ -505,6 +505,11 @@ final class OracleProbes
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => true, 'error' => null, 'status' => null, 'answer' => ['kept' => []]] + $out, $s0, $s1];
                 }],
+            // Issue 302: an all-day end on its start is read as one day long, a valid whole time, never refused.
+            ['check' => 'x-choice', 'what' => 'an all-day time sent whole with its end on its start is refused as an invalid time (invalid_request)', 'case' => 'an-all-day-event-in-no-series-moved-here-with-its-end-on-its-start-is-one-day-long', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'invalid_request', 'status' => 400, 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s0];
+                }],
             // T4: a whole time whose end is not after its start is an invalid time, 400 invalid_request, not an out-of-date
             // client.
             ['check' => 'x-choice', 'what' => 'a timed moment sent whole with over is refused as an out-of-date client (client_outdated), not as an invalid time', 'case' => 'an-event-in-no-series-made-a-moment-here-is-refused', 'step' => 3,

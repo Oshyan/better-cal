@@ -272,8 +272,9 @@ final class Settings
         'workerOffAt' => null,
         // Undo and redo of a change to a whole series on a Google calendar
         // (GoogleUndo::seriesUndoOff). An operator or test switch, never
-        // client-writable and not in the Settings page: off in 1.5.5, on in
-        // the test suites and the edit harness (tests/db/lib.php freshUser).
+        // client-writable and not in the Settings page: off in 1.5.5, and off
+        // in the test suites and the edit harness too since #290; only that
+        // undo's own tests turn it on.
         'google_series_undo' => false,
         // A change to one Google event read against what Google holds first,
         // asking only where the same field changed there (GoogleConflict;

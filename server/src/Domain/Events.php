@@ -1065,7 +1065,9 @@ final class Events
 
     /**
      * The `kept` key of a 200 (PATCH, relationship, rsvp): present only with
-     * the setting on, so with it off the answers are 1.5.6's key for key.
+     * the setting on, so with it off the answers carry no `kept`. They are not
+     * 1.5.6's key for key: a PATCH answer for an event in no series carries
+     * `occurrence` either way.
      * $kept: the answer's own (an rsvp's); else the last change's.
      *
      * @return array{kept?:list<array>}

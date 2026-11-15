@@ -9,18 +9,20 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 A change to one event on a Google calendar that someone changed in Google Calendar since you last saw it no longer stops with "Refresh and try again". It is on from the update.
 
 - **A change in Google Calendar to something you are not changing just stays.** Your change goes through, and the toast says what else changed there and was kept, with its value.
-- **A change to the same thing asks you.** It names what changed, shows what Google Calendar holds now and what your change would make it, and offers Cancel or Overwrite. Cancel saves nothing and leaves your change in the editor; Save then sends it, since you have seen what Google Calendar holds.
+- **A change to the same thing asks you.** It names what changed, shows what Google Calendar holds now and what your change would make it, and offers Cancel or Overwrite. Cancel saves nothing; a change made in the editor stays there, and Save then sends it, since you have seen what Google Calendar holds.
 - **Two questions at once are asked one after the other,** each naming its event; one that waited reads Google Calendar again before it shows.
 - **A delete asks over any change in Google Calendar,** showing what changed, with Cancel or Delete. The event stays on screen until the answer comes, so Cancel leaves you where you were.
 - **The question's buttons are full-size touch targets on phones.**
 - **A saved edit shows at once.** The editor closes, the calendar shows the change and the toast says it together, without waiting for the calendar to load again.
 - **Toasts for a change sent to Google say "here and in Google Calendar".**
+- **An event in another time zone shows that zone on its hover card,** and moving it by days keeps its clock time across a daylight saving change.
 - Where a change to a repeating event names what its days keep or take, it says Planned or Maybe instead of "status".
 - Not yet covered, refused as before: one day of a repeating event ([#268](https://github.com/Oshyan/better-cal/issues/268)).
+- For API and plugin users ([docs/api-contract.md](docs/api-contract.md)): list answers carry `tzid`; a PATCH answer for an event in no series carries `occurrence`; a change to one Google event takes `over` and answers with `kept`, 409 `google_changed` or 400 `client_outdated`.
 - For maintainers: the Google probe's reports hold nothing of an event the probe did not make ([#279](https://github.com/Oshyan/better-cal/issues/279)), the benchmark works in a folder inside the checkout ([#280](https://github.com/Oshyan/better-cal/issues/280)), and CI runs the edit harness as shipped.
 - A release no longer includes the tools that check the code (the edit harness, the stand-in for Google, the version comparison, the gate script): about 340 fewer files on an install ([#294](https://github.com/Oshyan/better-cal/issues/294)).
 - For maintainers: the database suite and the edit harness run with undo of a change to all events on Google off, as it ships; the tests of that undo turn it on themselves ([#290](https://github.com/Oshyan/better-cal/issues/290)).
-- An upgrade from 1.5.6 loses nothing. A tab left open across the update is asked to reload on its next change to an event's time, with a Reload button, and that change is not made until it is made again. A delete now waits for the server's answer before the event leaves the screen, usually well under a second.
+- An upgrade from 1.5.6 loses nothing. A tab left open from 1.5.6 shows no question until it is reloaded: its changes are read against the event as stored, as 1.5.6 read them. A delete now waits for the server's answer before the event leaves the screen, usually well under a second.
 
 Operators: no migrations; `update.php` or the update page as usual.
 

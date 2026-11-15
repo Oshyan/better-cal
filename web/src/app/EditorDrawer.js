@@ -20,7 +20,7 @@ import { RichText } from './RichText.js';
 import { Icon } from '../ui/icons.js';
 import {
   DAY_CODES, ruleParts, ruleBase, joinRule, weekOfMonth, describeRepeat, repeatEnd, withRepeatEnd,
-  monthDayRule, monthlyOptions, MAX_INTERVAL, repeatChoiceLabels, intervalProblem,
+  monthDayRule, monthlyOptions, MAX_INTERVAL, REPEAT_UNITS, repeatChoiceLabels, intervalProblem,
 } from '../lib/repeat.js';
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
@@ -1293,8 +1293,8 @@ export function EditorDrawer() {
             ${r.freq !== 'none' && html`<span>Every</span>
               <input class="bc-num bc-ed-every" type="number" min="1" max=${MAX_INTERVAL} value=${r.interval}
                 onInput=${(e) => updRrule({ interval: e.target.value === '' ? '' : Number(e.target.value) })}
-                aria-label="Repeat every how many" aria-invalid=${intervalWrong ? 'true' : null} />`}
-            <select class="bc-ed-freq" value=${r.freq} onChange=${(e) => updRrule({ freq: e.target.value })} aria-label=${r.freq === 'none' ? 'Repeat' : 'Repeat unit'}>
+                aria-label=${'Number of ' + REPEAT_UNITS[r.freq][1] + ' between repeats'} aria-invalid=${intervalWrong ? 'true' : null} />`}
+            <select class="bc-ed-freq" value=${r.freq} onChange=${(e) => updRrule({ freq: e.target.value })} aria-label=${r.freq === 'none' ? 'Repeat' : 'Repeat every so many days, weeks, months or years'}>
               ${repeatChoiceLabels(r.freq, r.interval).map((c) => html`<option key=${c.value} value=${c.value}>${c.label}</option>`)}
             </select>
             ${r.freq === 'MONTHLY' && monthlyChoices.length > 0 && html`<select value=${monthlyMode} onChange=${(e) => updRrule({ monthly: e.target.value })} aria-label="Day of the month">

@@ -86,8 +86,8 @@ for (const [freq, [one, more]] of Object.entries(REPEAT_UNITS)) {
     const sel = q('select.bc-ed-freq');
     sel.value = freq; sel.dispatch('change'); await turns();
     const num = q('input.bc-ed-every');
-    assert.equal(num.getAttribute('aria-label'), 'Repeat every how many', label + ': the number says what it is');
-    assert.equal(q('select.bc-ed-freq').getAttribute('aria-label'), 'Repeat unit', label + ': and so does the unit');
+    assert.equal(num.getAttribute('aria-label'), 'Number of ' + more + ' between repeats', label + ': the number says what it counts');
+    assert.equal(q('select.bc-ed-freq').getAttribute('aria-label'), 'Repeat every so many days, weeks, months or years', label + ': and the list says what it chooses');
     num.value = String(n); num.dispatch('input'); await turns();
     const word = n === 1 ? one : more;
     assert.equal(sentence(), 'Every ' + n + ' ' + word, label + ': the row reads as one sentence');

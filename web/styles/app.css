@@ -4481,7 +4481,10 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-ed-rem .bc-rem-add { width: 5.6em; }
 .bc-ed-rem .bc-rem-reset { font-size: 12px; }
 .bc-ed-repeat { display: flex; flex-direction: column; gap: 8px; }
-.bc-ed-repeat > .bc-ed-inline > select:first-child { width: auto; }
+.bc-ed-repeat .bc-ed-freq { width: auto; }
+/* "Every [45] days": the number is read inside the sentence, wide enough for 1,000. */
+.bc-ed-repeat .bc-ed-every { width: 64px; }
+.bc-ed-err { color: var(--danger); }
 .bc-ed-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
 .bc-ed-sub { font-size: 12.5px; color: var(--fg-muted); }
 /* An edited day's own fields, each a chip that gives it back to the series. */

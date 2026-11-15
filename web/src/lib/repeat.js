@@ -8,6 +8,40 @@
 
 import { fmtDateFull, untilDayKey, dateOfDayKey, pad, instantFromWallTime } from './dates.js';
 
+// The largest interval a rule is accepted with: the server's
+// Recurrence::MAX_INTERVAL (web/tests/repeat-control.mjs checks they agree).
+// A series that far apart is read and planned as quickly as a weekly one.
+export const MAX_INTERVAL = 1000;
+
+// The repeat units the editor offers, by frequency: the word for one and for more.
+export const REPEAT_UNITS = { DAILY: ['day', 'days'], WEEKLY: ['week', 'weeks'], MONTHLY: ['month', 'months'], YEARLY: ['year', 'years'] };
+
+/**
+ * The editor's repeat choices as one sentence, "Every [N] [unit]": each
+ * option's label in the list. Before a frequency is picked, each says a number
+ * goes with it ("Every … days"); once picked, the number sits in its own field
+ * before the list, and the options are the units for that number ("day" for
+ * 1, "days" for more), so the row reads "Every 45 days". `n` is the number
+ * typed, which may be anything while it is typed.
+ */
+export function repeatChoiceLabels(freq, n) {
+  const many = !(Number(n) === 1);
+  const out = [{ value: 'none', label: 'Does not repeat' }];
+  for (const [f, [one, more]] of Object.entries(REPEAT_UNITS)) {
+    out.push({ value: f, label: freq === 'none' ? 'Every … ' + more : many ? more : one });
+  }
+  return out;
+}
+
+/** What is wrong with a typed interval, in words; null when it is one a rule may hold. */
+export function intervalProblem(n, freq) {
+  const more = (REPEAT_UNITS[freq] || REPEAT_UNITS.DAILY)[1];
+  if (n === '' || n == null) return 'Type how many ' + more + ' apart.';
+  if (!Number.isInteger(Number(n)) || Number(n) < 1) return 'Type a whole number of ' + more + ', 1 or more.';
+  if (Number(n) > MAX_INTERVAL) return 'Repeats can be up to every ' + MAX_INTERVAL.toLocaleString() + ' ' + more + '.';
+  return null;
+}
+
 export const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA']; // Date#getDay order
 const DAY_NAMES = { MO: 'Monday', TU: 'Tuesday', WE: 'Wednesday', TH: 'Thursday', FR: 'Friday', SA: 'Saturday', SU: 'Sunday' };
 const DAY_SHORT = { MO: 'Mon', TU: 'Tue', WE: 'Wed', TH: 'Thu', FR: 'Fri', SA: 'Sat', SU: 'Sun' };

@@ -8,6 +8,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 - **The month on a phone's month view names what fills the screen.** After Next, the top bar said the month before for some months (January and April 2027 among them).
 - **A toast with several buttons fits a phone.** Its buttons move under the message instead of squeezing it to one word per line.
+- **The repeat choice reads as a sentence: "Every 45 days".** The list offers "Every … days", "Every … weeks" and so on, the number goes up to 1,000, and a number past that says so under the row.
 - **Quick add reads repeats of more than 99:** "Replace water filter every 120 days".
 
 ## 1.5.7 (2026-11-15)

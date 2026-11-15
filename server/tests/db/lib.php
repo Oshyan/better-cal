@@ -473,26 +473,37 @@ function connectionId(Db $db): int
 }
 
 /**
- * Whether the connection with that thread id is waiting on a row lock now.
- * INNODB_TRX lists every connection on the server, so a count of all
- * waiters would also see another suite's on a shared local server, and a
- * child would commit before this suite's undo had arrived. Ask it no more
- * often than every 150ms: the server refreshes what INNODB_TRX shows only
- * when nobody has read it for 100ms, so a tighter poll reads the same
- * stale answer for as long as it keeps asking (waitForWaiter).
+ * Whether the connection with that thread id is waiting now on a lock this
+ * connection's own open transaction holds. Only that is an event the two can
+ * be ordered by: "that connection is in LOCK WAIT" alone was read from a
+ * snapshot the server keeps of its transactions and refreshes only when
+ * nobody has read it for 100ms, so a child started within 100ms of the
+ * previous child's last look read that child's answer (the undo waiting on
+ * the previous scenario's holder) and went on before the undo had begun;
+ * the deadlock scenario then had no deadlock. A snapshot taken before this
+ * transaction began cannot name it as the blocker, so a stale answer here is
+ * a late one, never a wrong one. MariaDB names lock waits in
+ * information_schema, MySQL 8 in performance_schema.
  */
-function someoneWaits(Db $db, int $threadId): bool
+function waitsOnMe(Db $db, int $threadId): bool
 {
-    return (int) $db->scalar(
-        "SELECT COUNT(*) FROM information_schema.INNODB_TRX WHERE trx_state = 'LOCK WAIT' AND trx_mysql_thread_id = ?",
-        [$threadId]
-    ) > 0;
+    $mine = '(SELECT trx_id FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = CONNECTION_ID())';
+    $sql = str_contains(strtolower((string) $db->scalar('SELECT VERSION()')), 'mariadb')
+        ? "SELECT COUNT(*) FROM information_schema.INNODB_LOCK_WAITS w JOIN information_schema.INNODB_TRX r ON r.trx_id = w.requesting_trx_id
+            WHERE r.trx_mysql_thread_id = ? AND w.blocking_trx_id = $mine"
+        : "SELECT COUNT(*) FROM performance_schema.data_lock_waits w JOIN information_schema.INNODB_TRX r ON r.trx_id = w.REQUESTING_ENGINE_TRANSACTION_ID
+            WHERE r.trx_mysql_thread_id = ? AND w.BLOCKING_ENGINE_TRANSACTION_ID = $mine";
+    return (int) $db->scalar($sql, [$threadId]) > 0;
 }
 
-/** Wait until the connection with that thread id is seen waiting on a row lock, at most $seconds. */
+/**
+ * Wait until the connection with that thread id is seen waiting on a lock this connection holds, at most $seconds:
+ * the handshake of the concurrency tests (child.php). Asked every 150ms, past the 100ms in which the server answers
+ * from its last snapshot; the poll's pace changes only how soon the wait is seen, not what is seen.
+ */
 function waitForWaiter(Db $db, int $threadId, float $seconds = 15.0): bool
 {
-    return waitFor(static fn() => someoneWaits($db, $threadId), $seconds, 0.15);
+    return waitFor(static fn() => waitsOnMe($db, $threadId), $seconds, 0.15);
 }
 
 /** Remove a directory this suite made under the system temp dir, with everything in it. */

@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 // A second connection for concurrency.test.php, in its own process: holds a
 // change open until the test's own connection (its server thread id is the
-// second argument) is seen waiting on it, then finishes. Exit 0 when it
+// second argument) is seen waiting on a lock this change holds (waitsOnMe,
+// in lib.php), then finishes. Exit 0 when it
 // committed after seeing that connection wait, 4 when it committed without
 // ever seeing it wait (the two didn't overlap, so the test proved nothing),
 // 3 when the database rolled it back to break a deadlock.

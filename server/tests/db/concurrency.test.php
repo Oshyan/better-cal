@@ -3,9 +3,12 @@
 declare(strict_types=1);
 
 // Two connections at once: an undo and a change to the same rows, in
-// either order (child.php is the other connection). Each child holds its
-// change until it sees the undo waiting, and says so with its exit code
-// (0): a run where the two never overlapped proves nothing and fails.
+// either order (child.php is the other connection). Each child takes its
+// first lock, says so (the marker file), and holds it until it sees the
+// undo waiting on a lock it holds (waitsOnMe); only then does it go on. It
+// says with its exit code (0) that it saw that: a run where the two never
+// overlapped proves nothing and fails. Every step is ordered by an event,
+// none by a time.
 
 use BetterCal\Domain\Folders;
 use BetterCal\Infra\Db;

@@ -200,14 +200,20 @@ const { ApiError } = await import('../src/app/api.js');
 
 const shown = {
   instanceId: 'e7', eventId: 7, calendarId: 3, recurring: false, title: 'Team sync', location: 'Room 2', url: null,
-  status: 'confirmed', start: at('2026-11-17', '10:00'), end: at('2026-11-17', '11:00'), allDay: false,
+  status: 'confirmed', start: at('2026-11-17', '10:00'), end: at('2026-11-17', '11:00'), allDay: false, tzid: 'America/New_York',
 };
+// A time as one value, as the API serves it: start, end, all-day and zone.
+const shownTime = { start: shown.start, end: shown.end, allDay: false, tzid: 'America/New_York' };
 assert.deepEqual(overOf(shown, { title: 'Weekly sync', tagNames: ['x'] }), { title: 'Team sync' }, 'only the fields the request changes');
-assert.deepEqual(overOf(shown, { start: 'a', end: 'b' }), { start: shown.start, end: shown.end, allDay: false }, 'a time sends all three keys, from what was shown');
+assert.deepEqual(overOf(shown, { start: 'a', end: 'b' }), shownTime, 'a time sends its four keys, from what was shown');
+assert.deepEqual(overOf(shown, { tzid: 'Asia/Tokyo' }), shownTime, 'a zone alone is the time too: the whole time as shown');
+assert.deepEqual(overOf({ ...shown, tzid: undefined }, { start: 'a', end: 'b' }), {}, 'a timed time with no zone is never named in part');
+assert.deepEqual(overOf({ ...shown, allDay: true, start: '2026-11-17T00:00:00+00:00', end: '2026-11-20T00:00:00+00:00', tzid: undefined }, { start: 'a' }),
+  { start: '2026-11-17T00:00:00+00:00', end: '2026-11-20T00:00:00+00:00', allDay: true, tzid: 'UTC' }, 'an all-day time is dates, its zone UTC');
 assert.deepEqual(overOf(shown, { relationship: 'maybe' }), { status: 'confirmed' }, 'Planned or Maybe is the status');
 assert.deepEqual(overOf(shown, { description: '<p>New</p>' }), {}, 'notes the window never held are left to the server');
 assert.deepEqual(overOf({ ...shown, description: null }, { description: '<p>New</p>' }), { description: null }, 'notes the record held, even empty');
-assert.deepEqual(Object.keys(overOf(shown, {}, { remove: true })).sort(), ['allDay', 'end', 'location', 'start', 'status', 'title', 'url'], 'a delete: every field held');
+assert.deepEqual(Object.keys(overOf(shown, {}, { remove: true })).sort(), ['allDay', 'end', 'location', 'start', 'status', 'title', 'tzid', 'url'], 'a delete: every field held');
 assert.deepEqual(overOf({ ...shown, recurring: true }, { title: 'x' }), {}, 'a day of a series: none');
 assert.deepEqual(overOf(shown, { answer: 'ACCEPTED' }), {}, 'an answer to an invitation: none');
 
@@ -263,13 +269,14 @@ assert.equal(asked[1].body, "Since 'Team sync' was last shown to you, its title 
 assert.deepEqual(keptOf(res), [{ field: 'location', now: 'Sample Hall' }], 'the kept fields go to the toast');
 assert.equal(reads, 2, 'the stored event is read at each question: each stored something newer');
 
-// A time: Overwrite sets all three keys of over from Google's time.
+// A time: Overwrite sets the four keys of over from Google's time.
 sent.length = 0; asked.length = 0;
-const now2 = { start: at('2026-11-17', '10:30'), end: at('2026-11-17', '11:30'), allDay: false };
-answers = [changed([{ field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: now2, yours: { start: at('2026-11-18', '10:00'), end: at('2026-11-18', '11:00'), allDay: false } }]), json(200, { kept: [] })];
+const now2 = { start: at('2026-11-17', '10:30'), end: at('2026-11-17', '11:30'), allDay: false, tzid: 'America/New_York' };
+answers = [changed([{ field: 'time', was: shownTime, now: now2, yours: { start: at('2026-11-18', '10:00'), end: at('2026-11-18', '11:00'), allDay: false, tzid: 'America/New_York' } }]), json(200, { kept: [] })];
 reply = [true];
 const moved = await sendEventChange(shown, '/events/7', 'PATCH', { start: at('2026-11-18', '10:00'), end: at('2026-11-18', '11:00') });
-assert.deepEqual(sent[1].body.over, now2, 'the time asked: over.start, over.end, over.allDay are Google\'s');
+assert.deepEqual(sent[0].body, { start: at('2026-11-18', '10:00'), end: at('2026-11-18', '11:00'), allDay: false, tzid: 'America/New_York', over: shownTime }, 'a drag sends its time whole: the kind and zone it was shown with');
+assert.deepEqual(sent[1].body.over, now2, 'the time asked: over\'s start, end, all-day and zone are Google\'s');
 assert.equal(keptOf(moved), null, 'empty kept: no line');
 
 // Overwrite sends what the question showed as yours. A drag (start and end
@@ -277,15 +284,15 @@ assert.equal(keptOf(moved), null, 'empty kept: no line');
 // allDay false with it, and over from Google's all-day time; the scope
 // fields and anything else in the body stay as they were.
 sent.length = 0; asked.length = 0;
-const googleAllDay = { start: '2026-11-17T00:00:00+00:00', end: '2026-11-18T00:00:00+00:00', allDay: true };
-const yoursAt6 = { start: at('2026-11-17', '18:00'), end: at('2026-11-17', '19:00'), allDay: false };
-answers = [changed([{ field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: googleAllDay, yours: yoursAt6 }]), json(200, { kept: [] })];
+const googleAllDay = { start: '2026-11-17T00:00:00+00:00', end: '2026-11-18T00:00:00+00:00', allDay: true, tzid: 'UTC' };
+const yoursAt6 = { start: at('2026-11-17', '18:00'), end: at('2026-11-17', '19:00'), allDay: false, tzid: 'America/New_York' };
+answers = [changed([{ field: 'time', was: shownTime, now: googleAllDay, yours: yoursAt6 }]), json(200, { kept: [] })];
 reply = [true];
 await sendEventChange(shown, '/events/7', 'PATCH', { start: yoursAt6.start, end: yoursAt6.end, tagNames: ['sample'] });
 assert.equal(asked[0].body, "Since 'Team sync' was last shown to you, its time was changed in Google Calendar. It is now all day on Tue, Nov 17 there; your change makes it Tue, Nov 17, 6:00 PM to 7:00 PM.",
   'overwrite yours: the question said six o\'clock');
-assert.deepEqual(sent[1].body, { start: yoursAt6.start, end: yoursAt6.end, allDay: false, tagNames: ['sample'], over: googleAllDay },
-  'overwrite yours: a time sends start, end and allDay from yours, over from now');
+assert.deepEqual(sent[1].body, { ...yoursAt6, tagNames: ['sample'], over: googleAllDay },
+  'overwrite yours: a time sends its four keys from yours, over from now');
 
 // A plain field: the body's value is yours, over is now.
 sent.length = 0; asked.length = 0;
@@ -348,7 +355,7 @@ console.log('Google changed: one sender, over from what was shown, Overwrite and
 const { deleteEvent, moveEvent, resizeEvent, updateEvent, setRelationship } = await import('../src/app/actions.js');
 state.calendars = [{ id: 3, name: 'Sample team', provider: 'google', editable: true, visible: true, role: 'mine' }];
 const put = (o) => { for (const [id, x] of state.occ) if (x.eventId === 7) state.occ.delete(id); state.occ.set(o.instanceId, o); };
-const googleTime = { start: at('2026-11-19', '15:00'), end: at('2026-11-19', '16:00') };
+const googleTime = { start: at('2026-11-19', '15:00'), end: at('2026-11-19', '16:00'), tzid: 'America/New_York' };
 const atGoogle = (extra = {}) => ({ ...shown, ...extra, instanceId: '7:google' });
 
 // A delete from the editor: the editor and the event stay while asked, and after Cancel.
@@ -375,7 +382,7 @@ sent.length = 0; asked.length = 0;
 put(shown);
 set({ editor: null, popover: { instanceId: shown.instanceId } });
 stored = atGoogle({ ...googleTime });
-answers = [changed([{ field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: { ...googleTime, allDay: false }, yours: null }])];
+answers = [changed([{ field: 'time', was: shownTime, now: { ...googleTime, allDay: false }, yours: null }])];
 reply = [false];
 await deleteEvent(shown);
 assert.equal(asked[0].popover, '7:google', 'A, B: the panel is open behind the question, on the event as stored');
@@ -401,7 +408,7 @@ for (const [act, fail] of [[moveEvent, false], [resizeEvent, false], [moveEvent,
   sent.length = 0; asked.length = 0;
   put(shown);
   stored = atGoogle({ ...googleTime });
-  const time = { field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: { ...googleTime, allDay: false }, yours: { start: at('2026-11-21', '10:00'), end: at('2026-11-21', '11:00'), allDay: false } };
+  const time = { field: 'time', was: shownTime, now: { ...googleTime, allDay: false }, yours: { start: at('2026-11-21', '10:00'), end: at('2026-11-21', '11:00'), allDay: false, tzid: 'America/New_York' } };
   answers = fail ? [changed([time]), json(500, { error: { code: 'server', message: 'Server error' } })] : [changed([time])];
   reply = [fail];
   await act({ instanceId: shown.instanceId, newStart: time.yours.start, newEnd: time.yours.end });
@@ -484,7 +491,7 @@ sent.length = 0; asked.length = 0;
 put(shown);
 set({ editor: null, popover: { instanceId: shown.instanceId } });
 stored = atGoogle({ ...googleTime });
-answers = [changed([{ field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: { ...googleTime, allDay: false }, yours: { start: at('2026-11-21', '10:00'), end: at('2026-11-21', '11:00'), allDay: false } }])];
+answers = [changed([{ field: 'time', was: shownTime, now: { ...googleTime, allDay: false }, yours: { start: at('2026-11-21', '10:00'), end: at('2026-11-21', '11:00'), allDay: false, tzid: 'America/New_York' } }])];
 reply = [false];
 assert.equal(await updateEvent(shown, { start: at('2026-11-21', '10:00'), end: at('2026-11-21', '11:00') }), false);
 assert.equal(asked[0].foot, OVERWRITE_STAY, 'from the panel, Cancel does not promise a way back to a change it no longer holds');
@@ -522,7 +529,7 @@ sent.length = 0; asked.length = 0;
 put(shown);
 stored = atGoogle({ ...googleTime });
 {
-  const time = { field: 'time', was: { start: shown.start, end: shown.end, allDay: false }, now: { ...googleTime, allDay: false }, yours: { start: at('2026-11-21', '10:00'), end: at('2026-11-21', '11:00'), allDay: false } };
+  const time = { field: 'time', was: shownTime, now: { ...googleTime, allDay: false }, yours: { start: at('2026-11-21', '10:00'), end: at('2026-11-21', '11:00'), allDay: false, tzid: 'America/New_York' } };
   answers = [changed([time]), json(200, { kept: [], occurrence: savedAs({ start: time.yours.start, end: time.yours.end }) })];
   reply = [true];
   slowWindow = { asked: false, gate: new Promise((r) => { letGo = r; }) };

@@ -20,6 +20,7 @@ A change to one event on a Google calendar that someone changed in Google Calend
 - For maintainers: the Google probe's reports hold nothing of an event the probe did not make ([#279](https://github.com/Oshyan/better-cal/issues/279)), the benchmark works in a folder inside the checkout ([#280](https://github.com/Oshyan/better-cal/issues/280)), and CI runs the edit harness as shipped.
 - A release no longer includes the tools that check the code (the edit harness, the stand-in for Google, the version comparison, the gate script): about 340 fewer files on an install ([#294](https://github.com/Oshyan/better-cal/issues/294)).
 - For maintainers: the database suite and the edit harness run with undo of a change to all events on Google off, as it ships; the tests of that undo turn it on themselves ([#290](https://github.com/Oshyan/better-cal/issues/290)).
+- **A tab left open across this update** that changes an event's time is told to reload and make the change again, with a Reload button; nothing is changed.
 - An upgrade from 1.5.6 loses nothing. A delete now waits for the server's answer before the event leaves the screen, usually well under a second.
 
 Operators: no migrations; `update.php` or the update page as usual.

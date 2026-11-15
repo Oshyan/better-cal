@@ -25,6 +25,16 @@ Why this is strict: in November 2026 a migration that rewrote older undo entries
 - **Every decision gets an entry** in [docs/design/decisions.md](docs/design/decisions.md) in the same commit: what was chosen, what else was possible, what it costs, how it was verified.
 - **Do not trade diligence for speed on your own.** If a schedule seems to call for less testing, a smaller gate, or a shortcut, ask the owner; never decide it alone.
 
+## Sort what was found by likelihood, before fixing any of it
+
+- **Before any fix starts, sort the findings by how likely their cause is to occur in normal use.** This holds for every source: an outside review, a worker's report, a harness seed, an issue, a proposal of your own. For each one, write out what a person would have to do, in what order, for it to happen, and say how often that is.
+- **Likely in normal use: fix it.** Unlikely (two or three uncommon things in a row, a request the app never sends, a state only a race between a poll and a stale tab produces): bring it to the owner as "file or fix?" with the sequence written out, before any work starts. The default is to file it.
+- **A severity label is not a likelihood.** A reviewer's P2 says how bad the result is, not how often it happens. "Reproduced, in range, and a wrong value saved" is not by itself a reason to fix: the reproduction shows it can happen, the sequence shows whether it will.
+- **A silently wrong result raises the bar for filing, it does not remove the question.** Silent loss in a likely case is always a fix. Silent loss in an unlikely case is still the owner's call.
+- **The same sort applies to what a fix turns up.** A neighbour found while fixing is sorted like any other finding; it is not fixed because it is nearby.
+
+Why this is strict: in November 2026 the first outside review of 1.5.7 reproduced a wrong saved time that needed Google to change an event's kind, a poll to store it, and a drag from a tab still showing the old version, all within minutes. It was fixed because it was reproduced and in range. That fix caused the second review's regression, and the third review's findings came from the rule written to repair it: two extra review rounds for a sequence the owner, on first hearing it, called extremely unlikely. The plan for that release already said such findings are written down and not built; the rule was applied to the workers' findings and not to the reviewer's.
+
 ## Before a push
 
 Every gate completes before any push to `main`: the unit suites, the database suite, both modes of the series harness at full case counts, and the interleaving mode (see [CONTRIBUTING.md](CONTRIBUTING.md) and [tools/edit-harness/README.md](tools/edit-harness/README.md)). `tools/gates.sh full` is that set, run once on the final tree. A gate that has not finished is a gate that has not passed. The one exception is a commit that changes only documentation, which needs no gate ([CONTRIBUTING.md](CONTRIBUTING.md), "Gates: Three Levels", which also says what counts).

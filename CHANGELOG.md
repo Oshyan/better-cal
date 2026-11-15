@@ -4,7 +4,7 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## 1.5.7 (2026-11-14)
+## 1.5.7 (2026-11-15)
 
 A change to one event on a Google calendar that someone changed in Google Calendar since you last saw it no longer stops with "Refresh and try again". It is on from the update.
 

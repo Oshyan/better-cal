@@ -57,12 +57,12 @@ try {
     $n = count($occ);
     if ($n > 0) {
         $o = $occ[0];
-        foreach (['instanceId', 'eventId', 'calendarId', 'title', 'start', 'end', 'allDay'] as $k) {
+        foreach (['instanceId', 'eventId', 'calendarId', 'title', 'start', 'end', 'allDay', 'tzid'] as $k) {
             if (!array_key_exists($k, $o)) {
                 throw new \RuntimeException("window occurrence is missing '$k'");
             }
         }
-        foreach (['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'rrule', 'description', 'tzid'] as $k) {
+        foreach (['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'rrule', 'description'] as $k) {
             if (array_key_exists($k, $o)) {
                 throw new \RuntimeException("window occurrence carries '$k' (list shape regressed)");
             }

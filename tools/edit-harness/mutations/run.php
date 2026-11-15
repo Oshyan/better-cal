@@ -48,7 +48,9 @@ $exec = static function (array $cmd, array $env = []): array {
 /** The harness on fixed cases (or drawn ones), with the model loaded from $model: the failing invariants by case. */
 $harness = static function (?string $model, array $args) use ($exec, $root, $tmp): array {
     $findings = "$tmp/findings-" . bin2hex(random_bytes(3)) . '.json';
-    $cmd = array_merge([PHP_BINARY, $root . '/tools/edit-harness/harness.php', '--no-shrink', '--quiet', '--findings', $findings], $args, $model === null ? [] : ['--model', $model]);
+    // --series-undo on: some mutations damage undo of a change to all events on a Google calendar, which ships off and
+    // which the harness leaves off by default; a mutation is caught only where its mechanism runs.
+    $cmd = array_merge([PHP_BINARY, $root . '/tools/edit-harness/harness.php', '--no-shrink', '--quiet', '--series-undo', 'on', '--findings', $findings], $args, $model === null ? [] : ['--model', $model]);
     [$code, $out] = $exec($cmd);
     $f = is_file($findings) ? json_decode((string) file_get_contents($findings), true) : null;
     if (!is_array($f)) {

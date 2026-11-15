@@ -110,8 +110,12 @@ if (isset($opts['flips'])) {
 }
 // --series-undo on|off: the account's google_series_undo setting (Product::$seriesUndo); off, the default, is what
 // ships; on measures whole-series undo on a Google calendar, held back until it is rebuilt (#274).
+// The oracle's own validation (--oracle-probes) runs with it on unless told otherwise: several probes plant their damage
+// in that undo, and a probe proves its check only where the mechanism runs.
 if (isset($opts['series-undo'])) {
     BetterCal\EditHarness\Product::$seriesUndo = (string) $opts['series-undo'] !== 'off';
+} elseif (isset($opts['oracle-probes'])) {
+    BetterCal\EditHarness\Product::$seriesUndo = true;
 }
 // --conflict-choice on|off: the account's google_conflict_choice setting (Product::$conflictChoice); on, the default
 // and as 1.5.7 ships it, judges a change to one event in no series over a change at Google by the three-way comparison

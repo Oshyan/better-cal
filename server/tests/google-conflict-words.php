@@ -13,7 +13,8 @@ if (!function_exists('check')) {
     exit(1);
 }
 
-{
+// In a function of its own: run.php is one global scope, and a name set here ($now) would change the tests after it.
+(static function (): void {
     $table = json_decode((string) file_get_contents(__DIR__ . '/fixtures/google-changed-words.json'), true);
     $now = new DateTimeImmutable($table['now'] . 'T12:00:00+00:00');
     $fields = [];
@@ -44,4 +45,4 @@ if (!function_exists('check')) {
     checkEq('Conflict words: an empty title is the untitled event',
         "Since 'Untitled event' was last shown to you, its title was added in Google Calendar; it is now 'Standup'. It wasn't deleted; open the event to see it, and delete it again if you still mean to.",
         GoogleConflict::message('', [['field' => 'title', 'was' => '', 'now' => 'Standup', 'yours' => null]], true, $now));
-}
+})();

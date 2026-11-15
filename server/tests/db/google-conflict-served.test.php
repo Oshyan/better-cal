@@ -53,4 +53,24 @@ return static function (Db $db): void {
     checkEq('setting on: the kept key, empty or the answer\'s own', [['kept' => []], ['kept' => [['field' => 'title', 'now' => 'Sample']]]],
         [$e->keptAnswer($u), $e->keptAnswer($u, [['field' => 'title', 'now' => 'Sample']])]);
 
+    // With the setting off, as shipped, `over` is read by nothing: the same rename of two equal events, one with an
+    // invented `over` for every field, sends Google the same requests and leaves the two rows the same.
+    conflictChoice($db, $u, false);
+    $twin = static fn(): int => (int) $e->create($u, ['calendarId' => $s->calendarId, 'title' => 'Sample review', 'start' => '2027-05-04T09:00:00+00:00',
+        'end' => '2027-05-04T10:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC', 'location' => 'Room 4'])['eventId'];
+    [$plain, $invented] = [$twin(), $twin()];
+    $sent = static function (callable $write) use ($s): array {
+        $from = count($s->fake->requests);
+        $write();
+        return array_map(static fn(array $r): array => [$r['method'], $r['body']], array_slice($s->fake->requests, $from));
+    };
+    $rename = ['title' => 'Sample review, moved'];
+    $a = $sent(fn() => $e->patch($u, $plain, $rename));
+    $b = $sent(fn() => $e->patch($u, $invented, $rename + ['over' => ['title' => 'Invented', 'description' => '<p>Invented</p>', 'location' => 'Invented Hall',
+        'url' => 'https://example.test/invented', 'status' => 'tentative', 'start' => '2027-06-01T09:00:00+00:00', 'end' => '2027-06-01T10:00:00+00:00', 'allDay' => false]]));
+    $kept = static fn(array $r): array => array_intersect_key($r, array_flip(['title', 'description', 'location', 'url', 'status', 'start_utc', 'end_utc', 'all_day']));
+    checkEq('setting off: an invented over changes nothing, neither what is sent nor what is written', [$a, $kept($e->get($u, $plain))],
+        [$b, $kept($e->get($u, $invented))]);
+    checkEq('setting off: the rename went through', 'Sample review, moved', $e->get($u, $invented)['title']);
+
 };

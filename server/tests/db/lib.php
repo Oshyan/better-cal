@@ -350,11 +350,10 @@ function freshUser(Db $db): int
     // it on, as it will ship in 1.5.6. One scenario in google-series-undo.test.php turns it off.
     seriesUndo($db, $u, true);
     // A change to one Google event reads Google first and asks only over the
-    // same field (Settings google_conflict_choice): off as 1.5.7 ships, and so in the
-    // suite unless BC_TEST_CONFLICT_CHOICE=1; a test about it turns it on itself.
-    if (getenv('BC_TEST_CONFLICT_CHOICE') === '1') {
-        conflictChoice($db, $u, true);
-    }
+    // same field (Settings google_conflict_choice): the product being built, so
+    // on in the suite, though off as 1.5.7 ships for one release. A test about
+    // the shipped-off path turns it off itself (google-conflict-served.test.php).
+    conflictChoice($db, $u, true);
     return $u;
 }
 

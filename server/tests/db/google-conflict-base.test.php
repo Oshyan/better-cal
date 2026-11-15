@@ -308,8 +308,6 @@ return static function (Db $db): void {
                         'a zone alone' => ['tzid' => 'America/New_York'],
                         'a typed clock alone' => ['typed' => ['start' => '2027-03-04T09:00', 'end' => '2027-03-04T10:00', 'tz' => 'UTC']],
                         'a time with no zone' => array_diff_key($moved, ['tzid' => true]),
-                        // Whole, but no state: a timed moment, as POST /events refuses it.
-                        'a timed moment (the end on the start)' => ['start' => '2027-03-04T20:00:00-05:00', 'end' => '2027-03-04T20:00:00-05:00', 'allDay' => false, 'tzid' => 'America/New_York'],
                     ];
                     foreach ($parts as $pName => $body) {
                         $refused("body in parts ($pName), over whole, $cell", $t, 'patch', $body + ['over' => $over]);
@@ -317,23 +315,55 @@ return static function (Db $db): void {
                     H::done($t);
                 });
 
-                // `over` whole that is no event state: refused the same way.
-                scenario("over no state, $cell", function () use ($setUp, $shownAllDay, $change, $polled, $timeKeys, $refused, $shift, $cell): void {
+                // Whole means present, of the types the API reads (the page's (b), T4): `over` with a part of no type the
+                // API reads is a time in parts, refused at the entry.
+                scenario("over not whole, $cell", function () use ($setUp, $shownAllDay, $change, $polled, $timeKeys, $refused, $shift, $cell): void {
                     [$t, $shown] = $setUp($shownAllDay, $change, $polled);
                     $time = array_intersect_key($shown, array_flip($timeKeys));
                     $req = $shift($time, '+2 days');
                     $bad = [
-                        'an all-day time with the end on the start' => ['allDay' => true, 'start' => '2027-03-03', 'end' => '2027-03-03', 'tzid' => 'UTC'],
-                        'an all-day time whose boundaries are not dates' => ['allDay' => true, 'start' => 'Wednesday', 'end' => 'Thursday', 'tzid' => 'UTC'],
-                        'a timed end before its start' => ['allDay' => false, 'start' => '2027-03-03T19:00:00+00:00', 'end' => '2027-03-03T18:00:00+00:00', 'tzid' => 'UTC'],
-                        'a timed moment (the end on the start)' => ['allDay' => false, 'start' => '2027-03-03T20:00:00-05:00', 'end' => '2027-03-03T20:00:00-05:00', 'tzid' => 'America/New_York'],
+                        'boundaries it cannot read' => ['allDay' => true, 'start' => 'Wednesday', 'end' => 'Thursday', 'tzid' => 'UTC'],
                         'a zone that is no zone' => ['tzid' => 'Mars/Olympus_Mons'] + $time,
                         'an all-day setting that is no boolean' => ['allDay' => 'yes'] + $time,
                     ];
                     foreach ($bad as $bName => $over) {
-                        $refused("over no state ($bName), $cell", $t, 'patch', $req + ['over' => $over + $shown]);
+                        $refused("over not whole ($bName), $cell", $t, 'patch', $req + ['over' => $over + $shown]);
                     }
                     H::done($t);
+                });
+
+                // The one check of the values, on the resolved time (T4): a time whose end, once read, is not after its
+                // start is refused before Google is read, whether the request's own time, `over`'s, or a typed clock makes
+                // it so (a typed start with no typed end, on the request's end: the third outside read's case).
+                scenario("resolved time not after its start, $cell", function () use ($setUp, $shownAllDay, $change, $polled, $timeKeys, $refused, $shift, $cell): void {
+                    [$t, $shown] = $setUp($shownAllDay, $change, $polled);
+                    $time = array_intersect_key($shown, array_flip($timeKeys));
+                    $moment = ['allDay' => false, 'start' => '2027-03-04T20:00:00-05:00', 'end' => '2027-03-04T20:00:00-05:00', 'tzid' => 'America/New_York'];
+                    $overMoment = ['start' => '2027-03-03T20:00:00-05:00', 'end' => '2027-03-03T20:00:00-05:00', 'allDay' => false, 'tzid' => 'America/New_York'] + $shown;
+                    $refused("resolved time a moment (the body), $cell", $t, 'patch', $moment + ['over' => $shown]);
+                    $refused("resolved time a moment (over), $cell", $t, 'patch', $shift($time, '+2 days') + ['over' => $overMoment]);
+                    $refused("resolved time a moment (a typed start with no typed end), $cell", $t, 'patch',
+                        ['allDay' => false, 'start' => '2027-03-04T18:00:00Z', 'end' => '2027-03-04T19:00:00Z', 'tzid' => 'UTC', 'typed' => ['start' => '2027-03-04T19:00', 'tz' => 'UTC'], 'over' => $shown]);
+                    $refused("resolved time a moment (a delete over a moment), $cell", $t, 'delete', ['over' => $overMoment]);
+                    H::done($t);
+                });
+
+                // Values are read as the API reads any time (T4): an all-day time sent with clock boundaries is its dates,
+                // in the body and in `over`, and goes through or asks as those dates say.
+                scenario("all-day boundaries with a clock, read as their dates, $cell", function () use ($setUp, $shownAllDay, $change, $polled, $timeKeys, $timeOf, $threeWay, $theirs, $shift, $cell): void {
+                    [$t, $shown] = $setUp($shownAllDay, $change, $polled);
+                    $time = array_intersect_key($shown, array_flip($timeKeys));
+                    $body = ['allDay' => true, 'start' => '2027-03-05T15:00:00+00:00', 'end' => '2027-03-07T15:00:00+00:00', 'tzid' => 'UTC'];
+                    $threeWay("all-day with 15:00 boundaries in the body, $cell", $t, $body + ['over' => $time], $timeOf($time), $theirs, $timeOf($body), 'UTC');
+                    H::done($t);
+                    if ($shownAllDay) {
+                        [$t, $shown] = $setUp($shownAllDay, $change, $polled);
+                        $time = array_intersect_key($shown, array_flip($timeKeys));
+                        $clocked = ['start' => substr((string) $time['start'], 0, 10) . 'T15:00:00+00:00', 'end' => substr((string) $time['end'], 0, 10) . 'T15:00:00+00:00'] + $time;
+                        $req = $shift($time, '+2 days');
+                        $threeWay("all-day with 15:00 boundaries in over, $cell", $t, $req + ['over' => $clocked], $timeOf($time), $theirs, $timeOf($req), 'UTC');
+                        H::done($t);
+                    }
                 });
 
                 // No `over` (an API caller, a plugin, Review): the base is the row, as in 1.5.6. A whole request is read as

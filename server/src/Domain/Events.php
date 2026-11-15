@@ -883,6 +883,14 @@ final class Events
     private function googleChoice(int $userId, array $calendar, array $event, array $baseRow, ?array $columns, ?RequestAuthority $authority): ?array
     {
         $wantedRow = array_merge($baseRow, $columns ?? []);
+        // The one check of a time's values on a request carrying `over` (the
+        // page "1.5.7, Slice 1", (b), T4): the time as resolved, after every
+        // reading between the request's entry and here, and the base read
+        // from `over`, each end after its start, before Google is read.
+        if ($this->requestOver !== []) {
+            self::resolvedTime($baseRow);
+            self::resolvedTime($wantedRow);
+        }
         $wanted = $columns === null
             ? array_fill_keys(GoogleConflict::FIELDS, GoogleConflict::DELETE)
             : array_intersect_key(GoogleConflict::mapOf($wantedRow), array_flip(GoogleConflict::fieldsIn($columns)));
@@ -913,19 +921,19 @@ final class Events
     /** A time's keys, one value (the page "1.5.7, Slice 1", (b), T1): the clock-time flag is a field of its own. */
     public const TIME_KEYS = ['start', 'end', 'allDay', 'tzid'];
 
-    /** The refusal of a time sent in parts or as no event state, which only a tab older than the rule sends (T2, T4). */
+    /** The refusal of a time sent in parts, or resolved to no event state, on a request carrying `over` (T2, T4). */
     public const CLIENT_OUTDATED = 'Better-Cal was updated. Reload the page and make the change again.';
 
     /**
      * Whether $in (a request body or its `over`) names a time, and that it
-     * names it whole and as a real event state: the one test of a time on
-     * the conflict choice's path (the page "1.5.7, Slice 1", (b), T2 and
-     * T4). False when it names none (no time key and no typed clock); true
-     * when it names all four keys and they are a state: an all-day time's
-     * boundaries dates with the end after the start, a timed time's end
-     * after its start (as POST /events holds: a moment with no length is no
-     * state here, and nothing the app shows or sends is one), the zone a
-     * zone. Anything else is 400 client_outdated.
+     * names it whole: the entry check of a time on the conflict choice's
+     * path (the page "1.5.7, Slice 1", (b), T2 and T4). False when it names
+     * none (no time key and no typed clock); true when all four parts are
+     * there and of the types the API reads (a boolean allDay, a zone it
+     * knows, boundaries it can read as the kind says). Their values are not
+     * judged here: they are read as the API reads any time, and the one
+     * check of the resolved time is resolvedTime. A time in parts is 400
+     * client_outdated.
      */
     public static function wholeTime(array $in): bool
     {
@@ -936,18 +944,33 @@ final class Events
         $end = $in['end'] ?? null;
         $allDay = $in['allDay'] ?? null;
         $tzid = $in['tzid'] ?? null;
-        $state = is_string($start) && is_string($end) && is_bool($allDay) && is_string($tzid) && Time::isZone($tzid);
+        $whole = is_string($start) && is_string($end) && is_bool($allDay) && is_string($tzid) && Time::isZone($tzid);
         try {
-            $state = $state && ($allDay
-                ? Time::parseAllDay($end, 'UTC') > Time::parseAllDay($start, 'UTC')
-                : Time::parseIso($end, $tzid) > Time::parseIso($start, $tzid));
+            foreach ($whole ? [$start, $end] : [] as $at) {
+                $allDay ? Time::parseAllDay($at, 'UTC') : Time::parseIso($at, $tzid);
+            }
         } catch (\InvalidArgumentException) {
-            $state = false;
+            $whole = false;
         }
-        if (!$state) {
+        if (!$whole) {
             throw new HttpError('client_outdated', self::CLIENT_OUTDATED, 400);
         }
         return true;
+    }
+
+    /**
+     * The one check of a time's values (the page "1.5.7, Slice 1", (b), T4):
+     * a row's time as it will be compared and written, its end after its
+     * start, else 400 client_outdated. Called by googleChoice, which every
+     * change and delete on the conflict choice's path passes through right
+     * before Google is read, for the base read from `over` and the time
+     * resolved from the request.
+     */
+    private static function resolvedTime(array $row): void
+    {
+        if (Time::fromDb((string) $row['end_utc']) <= Time::fromDb((string) $row['start_utc'])) {
+            throw new HttpError('client_outdated', self::CLIENT_OUTDATED, 400);
+        }
     }
 
     /**

@@ -1101,31 +1101,11 @@ return [
         'patch' => [["return [\$f['start_utc'], \$f['end_utc'], \$f['all_day']];", "return [\$f['end_utc']];"]],
         'checks' => ['409 google_changed about the time: was the served time, now Google\'s, yours the resized time; nothing written; the row holds Google\'s time'],
     ],
-    // A time is one value (the page's (b), T1 to T4): the one test of a time named whole and as a state, weakened to say
-    // no time is named, so a time in parts is read over the base again. Every refusal of google-conflict-base.test.php's
-    // table fails (the second outside read's two cases among them, "body in parts (an end alone)" and "(a start alone)"
-    // over an all-day event Google made timed west of UTC, polled), and with them the base's zone: an `over` with no zone
-    // read over the polled row's zone again, so the question's `was` names the row's zone, and Maybe over that same
-    // event keeps nothing (the R1 base, its dates moved a day).
-    [
-        'id' => 'choice-time-in-parts', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-base',
-        'what' => 'a time in parts (in the body or in `over`) is not refused but read over the base, filling its missing parts',
-        'patch' => [["if (array_intersect_key(\$in, array_flip([...self::TIME_KEYS, 'typed'])) === []) {", "if (true) {"]],
-        'checks' => (static function (): array {
+    // A time is one value (the page's (b), T1 to T4). The labels of google-conflict-base.test.php's refusals for the rows
+    // given, in every cell of its table.
+    ...(static function (): array {
+        $refusals = static function (array $rows): array {
             $refused = ": 400 client_outdated, the page's words; nothing read from Google or sent; the row, Google and Activity as they were";
-            $senders = ['drag', 'resize or extend', 'resize of the start', 'editor save (title and time)', 'typed clock', 'all-day switch', 'zone change', 'delete', 'Maybe'];
-            $rows = [];
-            foreach (['no zone', 'start and end alone'] as $part) {
-                foreach ($senders as $s) {
-                    $rows[] = "over in parts ($part), $s";
-                }
-            }
-            foreach (['a drag (start and end)', 'an end alone', 'a start alone', 'the all-day switch alone', 'a zone alone', 'a typed clock alone', 'a time with no zone', 'a timed moment (the end on the start)'] as $p) {
-                $rows[] = "body in parts ($p), over whole";
-            }
-            foreach (['an all-day time with the end on the start', 'an all-day time whose boundaries are not dates', 'a timed end before its start', 'a timed moment (the end on the start)', 'a zone that is no zone', 'an all-day setting that is no boolean'] as $b) {
-                $rows[] = "over no state ($b)";
-            }
             $out = [];
             foreach (['shown timed', 'shown all-day'] as $kind) {
                 foreach (['Google timed west of UTC', 'Google timed east of UTC', 'Google timed in UTC', 'Google all-day'] as $g) {
@@ -1136,9 +1116,45 @@ return [
                     }
                 }
             }
-            $out[] = "over whole, Maybe, shown all-day, Google timed west of UTC, polled: 200, Google's time kept and named, Google tentative, Google and the row hold Google's time";
-            $out[] = 'was, now and yours keys; now in the zone Google set';
             return $out;
-        })(),
-    ],
+        };
+        $senders = ['drag', 'resize or extend', 'resize of the start', 'editor save (title and time)', 'typed clock', 'all-day switch', 'zone change', 'delete', 'Maybe'];
+        $parts = [];
+        foreach (['no zone', 'start and end alone'] as $part) {
+            foreach ($senders as $s) {
+                $parts[] = "over in parts ($part), $s";
+            }
+        }
+        foreach (['a drag (start and end)', 'an end alone', 'a start alone', 'the all-day switch alone', 'a zone alone', 'a typed clock alone', 'a time with no zone'] as $p) {
+            $parts[] = "body in parts ($p), over whole";
+        }
+        foreach (['boundaries it cannot read', 'a zone that is no zone', 'an all-day setting that is no boolean'] as $b) {
+            $parts[] = "over not whole ($b)";
+        }
+        $resolved = array_map(static fn(string $w): string => "resolved time a moment ($w)", ['the body', 'over', 'a typed start with no typed end', 'a delete over a moment']);
+        return [
+            // The entry check weakened to say no time is named, so a time in parts is read over the base again: every
+            // refusal of a time in parts fails (the second outside read's two cases among them, "body in parts (an end
+            // alone)" and "(a start alone)" over an all-day event Google made timed west of UTC, polled), and with them
+            // the base's zone: an `over` with no zone is read over the polled row's zone again, so the question's `was`
+            // names the row's zone, and Maybe over that same event keeps nothing (the R1 base, its dates moved a day).
+            [
+                'id' => 'choice-time-in-parts', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-base',
+                'what' => 'a time in parts (in the body or in `over`) is not refused but read over the base, filling its missing parts',
+                'patch' => [["if (array_intersect_key(\$in, array_flip([...self::TIME_KEYS, 'typed'])) === []) {", "if (true) {"]],
+                'checks' => array_merge($refusals($parts), [
+                    "over whole, Maybe, shown all-day, Google timed west of UTC, polled: 200, Google's time kept and named, Google tentative, Google and the row hold Google's time",
+                    'was, now and yours keys; now in the zone Google set',
+                ]),
+            ],
+            // The one check of the resolved time removed: a moment reached by the body, by `over`, by a typed start with
+            // no typed end (the third outside read's R2) or by a delete over a moment goes to Google.
+            [
+                'id' => 'choice-resolved-time-unchecked', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-base',
+                'what' => 'the resolved time is not checked, so a time whose end is not after its start, by any reading, is read from and sent to Google',
+                'patch' => [["            self::resolvedTime(\$baseRow);\n            self::resolvedTime(\$wantedRow);\n", ""]],
+                'checks' => $refusals($resolved),
+            ],
+        ];
+    })(),
 ];

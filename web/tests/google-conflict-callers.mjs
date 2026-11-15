@@ -14,6 +14,11 @@
 //    asked one at a time in the order they came, each naming its event, and
 //    one that waited asks from what the server says when its turn comes.
 //
+// W. A time is one value: every request that changes an event's time sends
+//    start, end, all-day and zone together, and `over` names the time as
+//    shown the same way; a request the server refuses as from an older
+//    page is undone, said as given, and offers the update's Reload.
+//
 // Run: node web/tests/google-conflict-callers.mjs (google-changed.mjs runs
 // it after its own checks, so smoke.mjs does too). Invented events only.
 
@@ -30,7 +35,8 @@ options.debounceRendering = (cb) => Promise.resolve().then(cb);
 const { render, html } = await import('../vendor/index.js');
 const { state, set, subscribe, adoptEvent } = await import('../src/app/store.js');
 const { EditorDrawer } = await import('../src/app/EditorDrawer.js');
-const { deleteEvent, moveEvent } = await import('../src/app/actions.js');
+const { deleteEvent, moveEvent, resizeEvent, updateEvent, moveTrip, maybePromptExtendTrip } = await import('../src/app/actions.js');
+const { AppReloadBanner } = await import('../src/app/updates.js');
 const { askConfirm } = await import('../src/app/ConfirmDialog.js');
 const { toISOWithOffset, parseISO, dayKeyOf } = await import('../src/lib/dates.js');
 
@@ -68,7 +74,10 @@ set({ calendars: [
 
 const at = (day, hhmm) => { const [h, m] = hhmm.split(':').map(Number); return toISOWithOffset(new Date(2027, 2, day, h, m)); };
 const dayOf = (iso) => dayKeyOf(parseISO(iso));
-const timeOf = (key) => { const d = Number(key.slice(8)); return { start: at(d, '10:00'), end: at(d, '11:00'), allDay: false }; };
+// The time a date key names, whole; Google Calendar's times (the 5th, the
+// 6th) are in another zone than the event opened with, so a base that takes
+// a question's time takes its zone too.
+const timeOf = (key) => { const d = Number(key.slice(8)); return { start: at(d, '10:00'), end: at(d, '11:00'), allDay: false, tzid: d >= 5 ? 'Asia/Tokyo' : 'America/Los_Angeles' }; };
 const opening = {
   instanceId: '7:open', eventId: 7, calendarId: 3, recurring: false, rrule: null, full: true,
   title: 'Sample review', url: 'https://example.test/one', location: 'Room 2', description: 'Bring the agenda',
@@ -176,9 +185,24 @@ const readRequest = (body) => ({
 });
 // Only the fields of the table, never another key of a row: `typed` and
 // `allDay` go with a time, locationLat/Lng with a place.
-const ROW_KEYS = new Set(['over', 'title', 'start', 'end', 'allDay', 'typed', 'location', 'locationLat', 'locationLng', 'url', 'description', 'status', 'tagNames', 'calendarId', 'isContainer', 'reminders']);
+const ROW_KEYS = new Set(['over', 'title', 'start', 'end', 'allDay', 'tzid', 'typed', 'location', 'locationLat', 'locationLng', 'url', 'description', 'status', 'tagNames', 'calendarId', 'isContainer', 'reminders']);
 
 let checks = 0;
+// T1, T2 (a time is one value): a request that sends any part of a time
+// sends all four, and an `over` that names any part names all four. The
+// keys from the API contract, never from the product's own list.
+const TIME = ['start', 'end', 'allDay', 'tzid'];
+function wholeTimes(body, label) {
+  let n = 0;
+  for (const [where, o] of [['the request', body], ['over', body.over || {}]]) {
+    if (!TIME.some((k) => k in o)) continue;
+    for (const k of TIME) assert.ok(o[k] !== undefined && o[k] !== null && o[k] !== '', label + ': ' + where + ' names the time whole, ' + k + ' too: ' + JSON.stringify(o));
+    assert.equal(typeof o.allDay, 'boolean', label + ': ' + where + ': all-day is a flag');
+    if (o.allDay) assert.equal(o.tzid, 'UTC', label + ': ' + where + ': an all-day time is dates, its zone UTC');
+    n++;
+  }
+  return n;
+}
 async function save(label, answer) {
   const want = expectSave();
   sent.length = 0;
@@ -194,6 +218,7 @@ async function save(label, answer) {
     return;
   }
   assert.ok(sent.length >= 1, label + ': a request is sent');
+  for (const b of sent) checks += wholeTimes(b, label);
   assert.deepEqual(readRequest(sent[0]), { fields: want.first.fields, over: want.first.over }, label + ': exactly what differs from the base, over from the base');
   for (const k of Object.keys(sent[0])) assert.ok(ROW_KEYS.has(k), label + ': only rows of changed fields go: ' + k);
   checks += 2;
@@ -390,6 +415,245 @@ const put = (...list) => set({ occ: new Map(list.map((o) => [o.instanceId, o])),
   await plain;
   assert.equal(other, true, 'Q: answered, once');
   assert.equal(showing(), null);
+}
+
+// ---- W: a time is one value (T1, T2) -------------------------------------------
+//
+// Every request from the app that changes the time of an event in no series
+// sends start, end, all-day and zone together, and its `over` names the
+// time as shown with the same four. The inventory of those requests is the
+// table below (CALLERS); each runs over every event of EVENTS, and what the
+// stand-in server receives is read against the rule (wholeTimes) and the
+// event as shown, never against the product's own builder. The window's
+// copy of an event carries no zone (the list shape; api-contract.md,
+// Occurrences): the record does. Every time here is fixed in its own zone,
+// so the suite reads the same in every zone it runs in.
+
+const DAY = 86400000;
+const shiftIso = (iso, ms) => toISOWithOffset(new Date(parseISO(iso).getTime() + ms));
+// A timed event west of UTC, one east of it, and an all-day event of three days.
+const EVENTS = [
+  { name: 'a timed event in Los Angeles', rec: { eventId: 21, start: '2027-03-10T10:00:00-08:00', end: '2027-03-10T11:00:00-08:00', allDay: false, tzid: 'America/Los_Angeles' } },
+  { name: 'a timed event in Tokyo', rec: { eventId: 22, start: '2027-03-10T10:00:00+09:00', end: '2027-03-10T11:30:00+09:00', allDay: false, tzid: 'Asia/Tokyo' } },
+  { name: 'an all-day event of three days', rec: { eventId: 23, start: '2027-03-10T00:00:00+00:00', end: '2027-03-13T00:00:00+00:00', allDay: true, tzid: 'UTC' } },
+];
+const record = (e, extra = {}) => ({ instanceId: e.rec.eventId + ':shown', calendarId: 3, recurring: false, title: 'Sample ' + e.rec.eventId,
+  location: null, url: null, status: 'confirmed', relationship: 'planned', isContainer: false, ...e.rec, full: true, ...extra });
+// As the window holds it: the record without its zone.
+const windowCopy = (e, extra = {}) => { const { tzid: _z, full: _f, ...o } = record(e, extra); return o; };
+// The time as shown, whole, as the contract serves it.
+const shownWhole = (r) => ({ start: r.start, end: r.end, allDay: r.allDay, tzid: r.allDay ? 'UTC' : r.tzid });
+
+// The stand-in server: the record on GET, every write recorded and answered
+// from `answerFor` (a 200 by default).
+let records = {};
+let writes = [];
+let answerFor = () => json(200, { kept: [] });
+globalThis.fetch = async (url, init = {}) => {
+  const path = new URL(String(url), 'http://app.test').pathname.replace('/api/v1', '');
+  const id = Number((path.match(/^\/events\/(\d+)/) || [])[1]);
+  const method = init.method || 'GET';
+  if (path.endsWith('/occurrence') && method === 'GET') return records[id] ? json(200, { occurrence: records[id] }) : json(404, { error: { code: 'not_found', message: 'Not found' } });
+  if (!id || method === 'GET') return json(200, { events: [], cursor: null });
+  const body = init.body ? JSON.parse(init.body) : {};
+  writes.push({ id, method, body });
+  return answerFor({ id, method, body }, writes.filter((w) => w.id === id).length);
+};
+
+// The inventory: every request from the app that changes an event's time,
+// or names it as shown, for an event in no series. `run(occ, e)` does it from
+// the event as the window holds it; `time`: the request changes the time.
+const later = (iso, e) => (e.rec.allDay ? shiftIso(iso, 2 * DAY) : shiftIso(iso, 2 * DAY + 3600000));
+const CALLERS = [
+  { name: 'a drag', time: true, run: (o, e) => moveEvent({ instanceId: o.instanceId, newStart: later(o.start, e), newEnd: later(o.end, e) }) },
+  { name: 'a resize', time: true, run: (o) => resizeEvent({ instanceId: o.instanceId, newStart: o.start, newEnd: shiftIso(o.end, DAY) }) },
+  // EventPopover.js saveTime: the start and end typed, as instants.
+  { name: 'the panel\'s time fields', time: true, run: (o) => updateEvent(o, { start: shiftIso(o.start, DAY), end: shiftIso(o.end, DAY) }) },
+  { name: 'a trip moved', time: true, trip: true, run: (o) => moveTrip(o, 2, false) },
+  { name: 'a trip moved with its events', time: true, trip: true, run: (o) => moveTrip(o, 2, true) },
+  { name: 'Extend from attaching an event outside the trip', time: true, trip: true,
+    run: async (o) => {
+      set({ toasts: [] });
+      maybePromptExtendTrip(o, { ...o, eventId: 40, instanceId: '40:x', isContainer: false, start: shiftIso(o.start, 9 * DAY), end: shiftIso(o.end, 9 * DAY) });
+      const t = state.toasts.find((x) => x.actionLabel === 'Extend');
+      await t.onAction();
+    } },
+  { name: 'Extend trip after an event of it moved outside', time: true, trip: true,
+    run: async (o) => {
+      set({ toasts: [] });
+      const member = { instanceId: '41:shown', eventId: 41, calendarId: 3, recurring: false, title: 'Sample member', allDay: false,
+        start: '2027-03-11T09:00:00-08:00', end: '2027-03-11T10:00:00-08:00', containers: [{ eventId: o.eventId, title: o.title }] };
+      records[41] = { ...member, tzid: 'America/Los_Angeles' };
+      state.occ.set(member.instanceId, member);
+      await moveEvent({ instanceId: member.instanceId, newStart: '2027-04-20T09:00:00-07:00', newEnd: '2027-04-20T10:00:00-07:00' });
+      const t = state.toasts.find((x) => Array.isArray(x.actions) && x.actions.some((a) => a.label === 'Extend trip'));
+      t.actions.find((a) => a.label === 'Extend trip').run();
+      await turns(() => writes.some((w) => w.id === o.eventId));
+      await settle();
+    } },
+  { name: 'a delete', time: false, run: (o) => deleteEvent(o) },
+  // Overwrite: the request again with the question's yours and its now.
+  { name: 'Overwrite at a question about the time', time: true, overwrite: true,
+    run: (o, e) => { reply = [true]; return moveEvent({ instanceId: o.instanceId, newStart: later(o.start, e), newEnd: later(o.end, e) }); } },
+];
+
+let wRows = 0;
+let wChecks = 0;
+for (const e of EVENTS) {
+  for (const c of CALLERS) {
+    const label = c.name + ', ' + e.name;
+    const extra = c.trip ? { isContainer: true } : {};
+    records = { [e.rec.eventId]: record(e, extra) };
+    writes = [];
+    asked.length = 0;
+    // Google Calendar holds the event two hours later than shown, for Overwrite.
+    const google = { ...shownWhole(records[e.rec.eventId]), start: shiftIso(e.rec.start, 2 * 3600000), end: shiftIso(e.rec.end, 2 * 3600000) };
+    if (e.rec.allDay) Object.assign(google, { start: '2027-03-11T00:00:00+00:00', end: '2027-03-14T00:00:00+00:00' });
+    answerFor = c.overwrite
+      ? (w, n) => (n === 1 ? changed([{ field: 'time', was: shownWhole(w.body.over), now: google, yours: { start: w.body.start, end: w.body.end, allDay: w.body.allDay, tzid: w.body.tzid } }]) : json(200, { kept: [] }))
+      : () => json(200, { kept: [] });
+    const o = windowCopy(e, extra);
+    set({ occ: new Map([[o.instanceId, o]]), editor: null, popover: null, toasts: [] });
+    await c.run(o, e);
+    await settle();
+    const mine = writes.filter((w) => w.id === e.rec.eventId);
+    assert.ok(mine.length >= 1, label + ': a request is sent');
+    const shown = shownWhole(records[e.rec.eventId]);
+    for (const [i, w] of mine.entries()) {
+      const b = w.body;
+      wChecks += wholeTimes(b, label);
+      if (c.time) {
+        assert.ok(TIME.every((k) => k in b), label + ': the request sends the time: ' + JSON.stringify(b));
+        assert.equal(b.allDay, e.rec.allDay, label + ': the kind as shown');
+        assert.equal(b.tzid, shown.tzid, label + ': the zone as shown');
+        wChecks += 3;
+      } else {
+        assert.ok(!TIME.some((k) => k in b), label + ': no time in the request');
+        wChecks++;
+      }
+      const overTime = b.over ? Object.fromEntries(TIME.filter((k) => k in b.over).map((k) => [k, b.over[k]])) : {};
+      assert.deepEqual(overTime, i === 0 ? shown : google, label + ': over names the time ' + (i === 0 ? 'as shown' : 'as the question showed Google\'s') + ', whole');
+      wChecks++;
+    }
+    if (c.overwrite) {
+      assert.equal(mine.length, 2, label + ': Overwrite sends again');
+      assert.deepEqual(TIME.map((k) => mine[1].body[k]), TIME.map((k) => mine[0].body[k]), label + ': Overwrite sends yours, whole');
+      wChecks += 2;
+    }
+    if (c.name.endsWith('with its events')) { assert.equal(mine[0].body.moveMembers, true, label + ': its events go with it'); wChecks++; }
+    wRows++;
+  }
+}
+reply = [];
+console.log('Google conflict, a time is one value: ' + wRows + ' caller and event rows, ' + wChecks + ' checks');
+
+// The editor's time: one row of its comparison. Any of start, end, all-day
+// or zone differing from the base sends all of it, nothing else of it
+// otherwise; "Same clock time in any zone" is a field of its own.
+const device = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const EDITS = [
+  { name: 'the title alone', time: false, edit: () => type(q('.bc-ed-title'), 'Sample renamed') },
+  { name: 'the start date', time: true,
+    // A day after the date the field shows: a timed start's on this
+    // device's clock, an all-day one's its own date.
+    edit: async (e) => {
+      const el = q(e.rec.allDay ? 'input[aria-label="First day"]' : 'input[aria-label="Start date"]');
+      const shownDay = e.rec.allDay ? e.rec.start.slice(0, 10) : dayKeyOf(parseISO(e.rec.start));
+      const [y, m, d] = shownDay.split('-').map(Number);
+      await type(el, dayKeyOf(new Date(y, m - 1, d + 1)));
+      el.dispatch('blur');
+      await settle();
+    },
+    kind: (e) => e.rec.allDay, zone: (e) => (e.rec.allDay ? 'UTC' : e.rec.tzid) },
+  { name: 'the all-day switch', time: true, edit: (e) => tick(ed.querySelectorAll('label.bc-check').find((l) => /All day/.test(l.textContent)).querySelector('input'), !e.rec.allDay),
+    // A timed event made all-day is dates; an all-day one made timed is on
+    // the clock its fields were filled on, this device's.
+    kind: (e) => !e.rec.allDay, zone: (e) => (e.rec.allDay ? device : 'UTC') },
+  { name: 'a zone picked', time: true, timedOnly: true,
+    edit: async () => {
+      ed.querySelectorAll('button').find((b) => /^Time zone:/.test(b.getAttribute('aria-label') || '')).click();
+      await settle();
+      const input = ed.querySelector('input[aria-label="Time zone"]');
+      input.dispatch('focus');
+      await settle();
+      input.value = 'Lisbon';
+      input.dispatch('input');
+      await settle();
+      ed.querySelectorAll('li').find((li) => /Lisbon/.test(li.textContent)).click();
+      await settle();
+    },
+    kind: () => false, zone: () => 'Europe/Lisbon' },
+  { name: 'same clock time in any zone', time: false, timedOnly: true,
+    edit: () => tick(ed.querySelectorAll('label.bc-check').find((l) => /Same clock time in any zone/.test(l.textContent)).querySelector('input'), true),
+    also: (b) => b.floating === true },
+];
+let eRows = 0;
+for (const e of EVENTS) {
+  for (const x of EDITS) {
+    if (x.timedOnly && e.rec.allDay) continue;
+    const label = 'the editor, ' + x.name + ', ' + e.name;
+    const rec = record(e);
+    records = { [e.rec.eventId]: rec };
+    writes = [];
+    answerFor = () => json(200, { kept: [], occurrence: rec });
+    render(null, ed);
+    set({ editor: null, editorDirty: false, occ: new Map([[rec.instanceId, rec]]) });
+    await settle();
+    set({ editor: { mode: 'edit', occ: rec } });
+    render(html`<${EditorDrawer} />`, ed);
+    await settle();
+    for (const s2 of dom.doc.head.childNodes) if (s2.onerror && !s2.failed) { s2.failed = true; s2.onerror(); await settle(); }
+    await settle();
+    await x.edit(e);
+    q('form').dispatch('submit');
+    await turns(() => !state.editor || writes.length, 200);
+    await settle();
+    assert.equal(writes.length, 1, label + ': one request');
+    const b = writes[0].body;
+    wChecks += wholeTimes(b, label);
+    if (x.time) {
+      assert.deepEqual([b.allDay, b.tzid], [x.kind(e), x.zone(e)], label + ': the time whole, its kind and zone');
+      assert.deepEqual(Object.fromEntries(TIME.map((k) => [k, b.over[k]])), shownWhole(rec), label + ': over names the time as shown, whole');
+    } else {
+      assert.ok(!TIME.some((k) => k in b) && !TIME.some((k) => k in (b.over || {})), label + ': no part of the time: ' + JSON.stringify(b));
+    }
+    if (x.also) assert.ok(x.also(b), label + ': its own field: ' + JSON.stringify(b));
+    wChecks += 2;
+    eRows++;
+  }
+}
+render(null, ed);
+set({ editor: null, editorDirty: false });
+await settle();
+console.log('Google conflict, the editor\'s time: ' + eRows + ' edit and event rows, one row of its comparison');
+
+// The refusal (T2): a page older than the server sent a time in part. The
+// change is undone here as on any failed save, the server's sentence shown
+// as it is, the update banner's Reload offered with it, and nothing sent again.
+{
+  const outdated = 'Better-Cal was updated. Reload the page and make the change again.';
+  const e = EVENTS[0];
+  records = { [e.rec.eventId]: record(e) };
+  writes = [];
+  answerFor = () => json(400, { error: { code: 'client_outdated', message: outdated } });
+  const o = windowCopy(e);
+  set({ occ: new Map([[o.instanceId, o]]), toasts: [], appUpdateReady: false });
+  const ok = await moveEvent({ instanceId: o.instanceId, newStart: later(o.start, e), newEnd: later(o.end, e) });
+  await settle();
+  assert.equal(ok, false, 'refused: the move did not happen');
+  assert.equal(writes.length, 1, 'refused: nothing is sent again');
+  assert.equal(state.occ.get(o.instanceId).start, o.start, 'refused: the block is back where it was shown');
+  const said = state.toasts[state.toasts.length - 1];
+  assert.deepEqual([said.text, said.error], [outdated, true], 'refused: the server\'s sentence, as it is');
+  assert.equal(state.appUpdateReady, true, 'refused: the update banner is up');
+  const banner = dom.doc.createElement('div');
+  dom.doc.body.appendChild(banner);
+  render(html`<${AppReloadBanner} />`, banner);
+  await settle();
+  assert.ok(banner.querySelectorAll('button').some((b) => b.textContent === 'Reload'), 'refused: with its Reload');
+  render(null, banner);
+  set({ appUpdateReady: false, toasts: [] });
+  console.log('Google conflict, a refused time: undone, said as given, Reload offered');
 }
 
 off();

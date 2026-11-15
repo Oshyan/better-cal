@@ -43,6 +43,7 @@ import { openSeriesChange, cancelSeriesChange, seriesPlans } from './serieschang
 import { SeriesDialog } from './SeriesDialog.js';
 import { creationLine } from '../lib/seriesplan.js';
 import { seriesScopes } from './scopes.js';
+import { timeOf } from './googlechange.js';
 
 const BYDAY = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
 
@@ -269,9 +270,12 @@ function seedForm(occ, draft = {}, seriesRule = '') {
  * clocks typed, the place, the reminders as a list or null (inherit), the
  * trip and floating flags, and Planned or Maybe as the status where it is
  * one (`mine`: the form's calendar is one of mine). `occ`: the event the
- * editor is open on, for the zone a repeat's end is read in.
+ * editor is open on, for the zone a repeat's end is read in. `shown`: the
+ * event as the person has been shown it (baseOf), whose own zone the time
+ * keeps unless one is picked: the zone is the event's, not a field the
+ * form holds, so the form and its base read it from the same event.
  */
-function formFields(fm, occ, mine) {
+function formFields(fm, occ, mine, shown = occ) {
   const [fs, fe] = formInstants(fm);
   const out = {
     title: fm.title,
@@ -314,7 +318,16 @@ function formFields(fm, occ, mine) {
   // A zone the owner picked becomes the event's own zone: it is what a
   // repeating event keeps its clock time in across DST changes. All-day
   // events are dates and have no use for one.
-  if (fm.tzTouched && !fm.allDay && !fm.floating) out.tzid = fm.tz;
+  const picked = fm.tzTouched && !fm.allDay && !fm.floating ? fm.tz : null;
+  // An event in no series (and a new one): the time is one value, sent
+  // whole, its zone the one picked, else the timed event's own as shown,
+  // else this device's, the clock the fields were filled on
+  // (googlechange.js timeOf). Changed as one (lib/editfields.js, the Time
+  // row): any part of it differing from the base sends all of it. A series
+  // keeps its own request shape: the zone only when picked.
+  const own = shown && !shown.allDay ? shown.tzid : null;
+  if (!(occ && occ.recurring)) Object.assign(out, timeOf(null, { start: out.start, end: out.end, allDay: fm.allDay, tzid: picked || own || localTz() }));
+  else if (picked) out.tzid = picked;
   return out;
 }
 
@@ -356,15 +369,16 @@ function baseOf(editor, opened) {
  */
 function saveOf(editor, opened, form) {
   const mine = isMineCal(state.calendars.find((c) => c.id === Number(form.calendarId)));
-  const fields = formFields(form, editor.occ, mine);
   if (!editor.occ) {
+    const fields = formFields(form, null, mine);
     for (const [k, v] of Object.entries(NEW_EVENT_BASE)) if (sameValue(fields[k], v)) delete fields[k];
     return { occ: null, fields, base: null, was: {} };
   }
   const base = baseOf(editor, opened);
+  const fields = formFields(form, editor.occ, mine, base.occ);
   // No base to compare with: everything goes.
   if (!base.form) return { occ: base.occ, fields, base: null, was: {} };
-  const was = formFields(base.form, editor.occ, mine);
+  const was = formFields(base.form, editor.occ, mine, base.occ);
   return {
     occ: base.occ,
     fields: changedFields(fields, was, { rruleTouched: JSON.stringify(form.rrule) !== JSON.stringify(base.form.rrule) }),

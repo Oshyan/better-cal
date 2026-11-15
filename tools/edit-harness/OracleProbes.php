@@ -484,6 +484,21 @@ final class OracleProbes
                     }
                     return [$out, $s0, $s1];
                 }],
+            ['check' => 'x-choice', 'what' => "the question's all-day yours names a zone other than UTC", 'case' => 'an-all-day-event-in-no-series-made-timed-in-new-york-at-google-polled-then-its-end-moved-here-whole-asks-then-overwrite-lands', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        if (($f['field'] ?? '') === 'time' && is_array($f['yours'] ?? null)) {
+                            $out['extra']['fields'][$i]['yours']['tzid'] = 'America/New_York';
+                        }
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            // T4: on a request carrying `over`, a timed time whose end is not after its start is no state, so a moment sent
+            // whole is refused like any other.
+            ['check' => 'x-choice', 'what' => 'a timed moment (its end at its start), sent whole with over, is accepted', 'case' => 'an-event-in-no-series-made-a-moment-here-is-refused', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => true, 'error' => null, 'status' => null, 'answer' => ['kept' => []]] + $out, $s0, $s1];
+                }],
             ['check' => 'x-choice', 'what' => 'Overwrite lands the yours instants in another zone here', 'case' => 'an-event-in-no-series-whose-start-moved-at-google-polled-then-its-start-moved-here-whole-asks', 'step' => 5,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     $s1['rows'][$this->singles[(string) $this->single]]['tzid'] = 'Pacific/Honolulu';

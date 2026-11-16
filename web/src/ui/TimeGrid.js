@@ -29,6 +29,7 @@ import {
 import { EventBlock, EventBar, HiddenMark, TripBand } from './EventChip.js';
 import { isBand, canReschedule } from '../lib/bands.js';
 import { ContextStrip, ContextMark, DayLabel } from './ContextStrip.js';
+import { foldedMarks } from '../lib/filtermarks.js';
 import { contextByDay, dayLabelsByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
 import { withAlpha } from '../lib/color.js';
@@ -462,7 +463,8 @@ export function TimeGrid({
     return days.map((k) => {
       const ed = epochDayOfKey(k);
       const out = [];
-      let total = 0;
+      // What "+N more" folds, whose filter marks it wears.
+      const folded = [];
       // Events first, then away times and plugin bands, so a band never takes
       // an event's place and sends it to "more".
       const ordered = [...occurrences.filter((o) => !isBand(o)), ...occurrences.filter(isBand)];
@@ -473,12 +475,14 @@ export function TimeGrid({
         const s = epochDayOfKey(startKey);
         const e = epochDayOfKey(endKey);
         if (s > ed || e < ed) continue;
-        total++;
         if (out.length < storeMax) {
           out.push({ occ, seg: { contLeft: s < ed, contRight: e > ed }, dayOf: e > s ? [ed - s + 1, e - s + 1] : null });
+        } else {
+          folded.push(occ);
         }
       }
-      out.overflow = total - out.length;
+      out.overflow = folded.length;
+      out.folded = folded;
       return out;
     });
   }, [vstack, phone, days, occurrences]);
@@ -535,7 +539,8 @@ export function TimeGrid({
     const m = new Map();
     for (const b of allDayBars) {
       if (barLanes.get(b.occ.instanceId) < visibleBarLanes || isQuiet(b.occ) || filteredOut(b.occ)) continue;
-      for (let c = b.seg.startCol; c <= b.seg.endCol; c++) m.set(c, (m.get(c) || 0) + 1);
+      // The bars themselves, not a count: "+N" wears their filter marks.
+      for (let c = b.seg.startCol; c <= b.seg.endCol; c++) { if (!m.has(c)) m.set(c, []); m.get(c).push(b.occ); }
     }
     return m.size ? m : null;
   }, [allDayBars, barLanes, visibleBarLanes, dimSet]);
@@ -1201,11 +1206,11 @@ export function TimeGrid({
   };
   // Phone week: "+N" under the lanes on each day that has more; it opens
   // the day's full list.
-  const moreSlots = moreByCol ? [...moreByCol].map(([c, n]) => html`<button
-    type="button" key=${'more' + c} class="bc-tg-allday-more"
+  const moreSlots = moreByCol ? [...moreByCol].map(([c, folded]) => [c, folded.length, foldedMarks(folded)]).map(([c, n, fold]) => html`<button
+    type="button" key=${'more' + c} class=${'bc-tg-allday-more' + fold.cls}
     style=${infinite
       ? `left:${(epochDayOfKey(days[0]) - minDay + c) * colW}px;width:${colW}px;top:${visibleBarLanes * lanePitch}px`
-      : `left:${(c / days.length) * 100}%;width:${100 / days.length}%;top:${visibleBarLanes * lanePitch}px`}
+      : `left:${(c / days.length) * 100}%;width:${100 / days.length}%;top:${visibleBarLanes * lanePitch}px`}${fold.style ? ';' + fold.style : ''}
     title=${n + ' more all-day on this day'}
     onPointerDown=${(e) => e.stopPropagation()}
     onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(days[c]); }}
@@ -1257,7 +1262,11 @@ export function TimeGrid({
     const ed = epochDayOfKey(k);
     const inRange = rangeSel && ed >= rangeSel.a && ed <= rangeSel.b;
     const timedContext = (ctxByDay.get(k) || []).filter((o) => !o.allDay);
-    const hiddenTimed = layoutByDay[i].overflow + Math.max(0, timedContext.length - TIMED_CONTEXT_PER_DAY);
+    // "+N more" folds the events the lanes had no room for and the moments
+    // past the few drawn, and wears their filter marks.
+    const foldedTimed = [...layoutByDay[i].overflowItems.map((it) => it.occ), ...timedContext.slice(TIMED_CONTEXT_PER_DAY)];
+    const hiddenTimed = foldedTimed.length;
+    const timedFold = foldedMarks(foldedTimed);
     return html`<div
     key=${k}
     class="bc-tg-col${k === tKey ? ' is-today' : ''}${infinite && isWeekendEpochDay(ed) ? ' is-weekend' : ''}${infinite && k.endsWith('-01') ? ' is-month-start' : ''}${inRange ? ' is-range-draft' : ''}"
@@ -1287,7 +1296,7 @@ export function TimeGrid({
       />`;
     })}
     ${hiddenTimed > 0 && html`<button
-      type="button" class="bc-tg-density-more"
+      type="button" class=${'bc-tg-density-more' + timedFold.cls} style=${timedFold.style}
       title=${hiddenTimed + ' more events on this day'}
       onPointerDown=${(e) => e.stopPropagation()}
       onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(k); }}
@@ -1363,11 +1372,11 @@ export function TimeGrid({
                     dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent}
                     ...${barDrags(occ)}
                   />`))}
-                  ${bars.overflow > 0 && html`<button
-                    type="button" class="bc-vday-more"
+                  ${bars.overflow > 0 && ((fold) => html`<button
+                    type="button" class=${'bc-vday-more' + fold.cls} style=${fold.style}
                     title="List everything on this day"
                     onClick=${() => onExpandDay && onExpandDay(k)}
-                  >+${bars.overflow} more</button>`}
+                  >+${bars.overflow} more</button>`)(foldedMarks(bars.folded))}
                 </div>
               </header>`}
               <div class="bc-tg-vday-body">

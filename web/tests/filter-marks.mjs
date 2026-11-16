@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fakeDom } from './fakedom.mjs';
 
-const { filterClasses, hlStyle, combinedFilterMarks } = await import('../src/lib/filtermarks.js');
+const { filterClasses, hlStyle, combinedFilterMarks, foldedMarks } = await import('../src/lib/filtermarks.js');
 
 let checks = 0;
 const ok = (cond, msg) => { assert.ok(cond, msg); checks++; };
@@ -115,6 +115,16 @@ eq(rows.length, 3, 'the day sheet lists the day\'s context');
 ok(classOf(rowOf(dim)).includes('is-filter-dimmed'), 'a dimmed context row in the day sheet is dimmed');
 ok(classOf(rowOf(lit)).includes('is-highlighted') && styleOf(rowOf(lit)).includes('--hl:#c95d5d'), 'a highlighted one is highlighted in its colour');
 ok(!/is-filter-dimmed|is-highlighted/.test(classOf(rowOf(plain))), 'and an unmatched one carries neither');
+// "+N" stands for the tokens it folds (#307): highlighted when any is,
+// dimmed only when all are.
+const more = (occs) => { draw(html`<${ContextStrip} occs=${occs} calendars=${cals} max=${1} />`); return host.querySelector('.bc-ctx-more'); };
+const litMore = more([plain, lit]);
+ok(classOf(litMore).includes('is-highlighted') && styleOf(litMore).includes('--hl:#c95d5d'), 'a highlighted token folded behind "+N": the "+N" is highlighted in its colour');
+ok(!classOf(more([lit, plain])).includes('is-highlighted'), 'one drawn, not folded: the "+N" for the rest is not');
+const dim2 = day(8, '57/49 haze', { dimmed: true });
+ok(classOf(more([plain, dim, dim2])).includes('is-filter-dimmed'), 'every folded token dimmed: the "+N" is dimmed');
+ok(!classOf(more([plain, dim, plain])).includes('is-filter-dimmed'), 'one folded token not dimmed: the "+N" is not');
+ok(!/is-filter-dimmed|is-highlighted/.test(classOf(more([plain, day(9, '60/50 clear')]))), 'nothing marked behind it: a plain "+N"');
 render(null, host);
 await turns();
 if (savedRaf === undefined) delete options.requestAnimationFrame; else options.requestAnimationFrame = savedRaf;
@@ -127,8 +137,35 @@ ok(hlRule, 'the highlight\'s underline rule is there');
 for (const part of ['.bc-chip-title', '.bc-ctx-token-text', '.bc-ctx-token-time', '.bc-dayexpand-ctxtext']) {
   ok(hlRule[1].includes(part), 'the highlight underlines ' + part);
 }
-ok(/\.bc-daylabel\.is-highlighted\s*\{\s*text-decoration: underline/.test(css), 'and a holiday\'s label');
-ok(/:is\(\.bc-ctx-token, \.bc-dayexpand-ctxrow, \.bc-daylabel\)\.is-highlighted \{ color: var\(--hl, var\(--accent\)\); \}/.test(css), 'quiet context type takes the highlight\'s colour');
+const MORE = ['.bc-ctx-more', '.bc-more', '.bc-tg-allday-more', '.bc-tg-density-more', '.bc-vday-more', '.bc-agenda-overflow'];
+const underlined = css.match(/,\n:is\(([^)]*)\)\.is-highlighted \{\n  text-decoration: underline/);
+const coloured = css.match(/:is\(([^)]*)\)\.is-highlighted \{ color: var\(--hl, var\(--accent\)\); \}/);
+for (const part of ['.bc-daylabel', ...MORE]) ok(underlined && underlined[1].includes(part), 'the highlight underlines ' + part);
+for (const part of ['.bc-ctx-token', '.bc-dayexpand-ctxrow', '.bc-daylabel', ...MORE]) ok(coloured && coloured[1].includes(part), part + ' takes the highlight\'s colour');
+
+// Every other "+N" in the app takes the folded items' marks the same way:
+// the lists behind them, and each one's class.
+const { layoutOverlaps } = await import('../src/ui/layout.js');
+const laid = layoutOverlaps([{ id: 'a', occ: plain, startMin: 600, endMin: 660 }, { id: 'b', occ: lit, startMin: 610, endMin: 670 }], 30, { maxItems: 1 });
+eq([laid.overflow, laid.overflowItems.map((it) => it.occ.instanceId)], [1, [lit.instanceId]], 'the timeline layout names what it folds');
+const { buildAgendaGroups } = await import('../src/ui/agendarails.js');
+const agendaDay = (id, extra) => ({ ...ev, instanceId: 'a' + id, eventId: 100 + id, title: 'Sample errand ' + id, start: `2031-03-04T${String(8 + id).padStart(2, '0')}:00:00-08:00`, end: `2031-03-04T${String(9 + id).padStart(2, '0')}:00:00-08:00`, ...extra });
+const agendaGroup = buildAgendaGroups([agendaDay(1), agendaDay(2, { highlighted: true, highlightColor: '#3d9dc9' })], { maxRowsPerDay: 1 })
+  .find((g) => g.overflow > 0);
+ok(agendaGroup && agendaGroup.folded.length === agendaGroup.overflow, 'the agenda names what "+N more on this day" folds');
+eq(foldedMarks(agendaGroup.folded), { cls: ' is-highlighted', style: '--hl:#3d9dc9' }, 'and it is highlighted when what it folds is');
+eq(foldedMarks([]), { cls: '', style: undefined }, 'nothing folded: no mark');
+const src = (f) => readFileSync(new URL('../src/ui/' + f, import.meta.url), 'utf8');
+const month = src('MonthGrid.js');
+const grid = src('TimeGrid.js');
+const agenda = src('AgendaList.js');
+ok(/class=\$\{'bc-more' \+ fold\.cls\} style=\$\{fold\.style\}/.test(month) && /foldedMarks\(\[\.\.\.plan\.more, \.\.\.foldedByCol\[col\]\]\)/.test(month),
+  'the month cell\'s "+N more" wears the marks of the singles and bars it folds');
+ok(/class=\$\{'bc-tg-allday-more' \+ fold\.cls\}/.test(grid), 'the week\'s all-day "+N" wears the marks of the bars it folds');
+ok(/class=\$\{'bc-tg-density-more' \+ timedFold\.cls\} style=\$\{timedFold\.style\}/.test(grid) && /overflowItems\.map\(\(it\) => it\.occ\), \.\.\.timedContext\.slice\(TIMED_CONTEXT_PER_DAY\)/.test(grid),
+  'the timeline\'s "+N more" wears the marks of the events and moments it folds');
+ok(/class=\$\{'bc-vday-more' \+ fold\.cls\} style=\$\{fold\.style\}/.test(grid) && /foldedMarks\(bars\.folded\)/.test(grid), 'the day view\'s all-day "+N more" wears the marks of the bars it folds');
+ok(/class=\$\{'bc-agenda-overflow' \+ fold\.cls\}/.test(agenda) && /foldedMarks\(g\.folded\)/.test(agenda), 'the agenda\'s "+N more on this day" wears the marks of what it folds');
 ok(/^\.is-filter-dimmed \{/m.test(css), 'the dim is one rule for every shape');
 
 console.log('Filter marks: ' + checks + ' checks (context items take a filter\'s dim and highlight as events do)');

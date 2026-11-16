@@ -25,7 +25,7 @@ export function hlStyle(occ) {
 
 /**
  * One mark standing for several occurrences (a group of near-duplicates, a
- * day's holidays written as one label): dimmed only when every one is,
+ * day's holidays written as one label, a "+N" for what did not fit): dimmed only when every one is,
  * highlighted when any is, in the colour of the first highlighted one.
  */
 export function combinedFilterMarks(occs) {
@@ -36,4 +36,15 @@ export function combinedFilterMarks(occs) {
     highlighted: !!lit,
     highlightColor: lit ? lit.highlightColor : undefined,
   };
+}
+
+/**
+ * A "+N" (or any mark standing for items folded out of sight), as the class
+ * suffix and the style its element takes: the combined marks of what it
+ * folds, so a highlighted item behind it still shows (#307). style is
+ * undefined when there is no colour, so no empty attribute is written.
+ */
+export function foldedMarks(occs) {
+  const m = combinedFilterMarks(occs);
+  return { cls: filterClasses(m), style: hlStyle(m) || undefined };
 }

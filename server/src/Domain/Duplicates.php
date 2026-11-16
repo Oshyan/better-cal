@@ -22,6 +22,19 @@ use BetterCal\Support\Time;
  * client shows a linked group as one event, the copy from the most live
  * source, and the event's details say where else it is. Reminders fire from
  * one copy only.
+ *
+ * What a stored link is for decides which are stored (#317): its readers are
+ * the views and search (linkedFor; any date a person can go to, and the
+ * app collapses a group among the calendars shown), reminders (silenced;
+ * hidden calendars remind too) and the app badge. So every pair is stored,
+ * whatever its date and whether a calendar is hidden: a hidden calendar
+ * shown again collapses at once, with no wait for a scan. Nothing caps the
+ * rows over the account's life; they are bounded by how they are made: a
+ * same-UID group is a star (one row per extra copy, and a calendar holds a
+ * UID once), a title link needs the owner's own calendars on both sides and
+ * is made at most once per event a pass. The limits bound one slice's work
+ * (rows, comparisons, pairs, seconds; the next slice resumes by cursor), one
+ * read (linkedFor), and the Review queue.
  */
 final class Duplicates
 {
@@ -30,6 +43,8 @@ final class Duplicates
     /** How far back the title scan looks; ahead it looks a year. */
     private const SCAN_BACK = 'P14D';
     private const SCAN_AHEAD = 'P400D';
+    /** How far apart two starts can be and still be one event (nearest()). */
+    private const MATCH_REACH = 'PT38H';
 
     private const PREFIXES = '/^(?:(?:updated\s+)?invitation(?:\s+from\s+[^:]{1,80})?:|(?:your\s+)?reservation\s+(?:at|for|with)|booking\s+(?:at|for|confirmed:?|confirmation:?)|(?:order\s+)?confirmed:|registration\s+confirmed:?|you\'?re\s+(?:registered\s+for|going\s+to|in:?)|tickets?\s+(?:for|to):?|rsvp:|reminder:)\s*/u';
     private const STOPWORDS = ['the', 'a', 'an', 'at', 'with', 'and', 'of', 'for', 'to', 'in', 'on'];
@@ -237,8 +252,13 @@ final class Duplicates
      * than a new table. If a worker dies after storing pairs but before it
      * enqueues/finishes, the event-pair unique key makes retry idempotent.
      *
+     * `throttled` says the slice stopped at a bound on one slice's work (its
+     * rows, comparisons, pairs or seconds), which the next slice continues
+     * from the cursor; `skipped` is what this pass will not come back to
+     * (see mergeSkipped).
+     *
      * @param array{userId?:int,phase?:string,afterId?:int,activityRecorded?:bool} $cursor
-     * @return array{linked:int,possible:int,more:bool,cursor:?array,throttled:bool,comparisons:int,rows:int}
+     * @return array{linked:int,possible:int,more:bool,cursor:?array,throttled:bool,skipped:array,comparisons:int,rows:int}
      */
     public function scanAllSlice(array $cursor = [], ?\DateTimeImmutable $now = null): array
     {
@@ -248,7 +268,7 @@ final class Duplicates
             $userId = (int) ($this->db->scalar('SELECT id FROM users ORDER BY id LIMIT 1') ?? 0);
         }
         if ($userId < 1) {
-            return ['linked' => 0, 'possible' => 0, 'more' => false, 'cursor' => null, 'throttled' => false, 'comparisons' => 0, 'rows' => 0];
+            return ['linked' => 0, 'possible' => 0, 'more' => false, 'cursor' => null, 'throttled' => false, 'skipped' => [], 'comparisons' => 0, 'rows' => 0];
         }
         if (($cursor['phase'] ?? 'uid') === 'uid' && max(0, (int) ($cursor['afterId'] ?? 0)) === 0) {
             $this->pruneStaleAutomatic($userId);
@@ -267,6 +287,7 @@ final class Duplicates
                 'more' => true,
                 'cursor' => ['userId' => $userId, 'activityRecorded' => $activityRecorded] + $slice['cursor'],
                 'throttled' => $slice['throttled'],
+                'skipped' => $slice['skipped'],
                 'comparisons' => $slice['comparisons'],
                 'rows' => $slice['rows'],
             ];
@@ -276,12 +297,137 @@ final class Duplicates
             'more' => $nextUser > 0,
             'cursor' => $nextUser > 0 ? ['userId' => $nextUser, 'phase' => 'uid', 'afterId' => 0] : null,
             'throttled' => $slice['throttled'],
+            'skipped' => $slice['skipped'],
             'comparisons' => $slice['comparisons'],
             'rows' => $slice['rows'],
         ];
     }
 
-    /** @return array{pairs:list<array>,more:bool,cursor:array,throttled:bool,comparisons:int,rows:int} */
+    /** The health line a pass over every account leaves (Settings, System; Activity). */
+    public const HEALTH_SUBJECT = 'job:duplicate_scan_budget';
+    public const HEALTH_LABEL = 'Duplicate check';
+
+    /**
+     * One worker job: one slice, and once a pass over every account ends,
+     * its health line. A pass that left nothing out clears the line; one
+     * that did says what, in words, and the same words twice are recorded
+     * once (SystemHealth::recordCondition). Returns the slice and the next
+     * job's payload, null when the pass is done.
+     *
+     * @param array{cursor?:array,skipped?:array} $payload
+     * @return array{slice:array,next:?array,skipped:array,words:?string}
+     */
+    public function workerSlice(array $payload, SystemHealth $health, ?\DateTimeImmutable $now = null): array
+    {
+        $cursor = is_array($payload['cursor'] ?? null) ? $payload['cursor'] : [];
+        $slice = $this->scanAllSlice($cursor, $now);
+        $skipped = self::mergeSkipped(is_array($payload['skipped'] ?? null) ? $payload['skipped'] : [], $slice['skipped']);
+        if ($slice['more'] && is_array($slice['cursor'])) {
+            return ['slice' => $slice, 'next' => ['cursor' => $slice['cursor'], 'skipped' => $skipped], 'skipped' => $skipped, 'words' => null];
+        }
+        $calendarIds = [];
+        foreach ($skipped as $kind) {
+            $calendarIds += $kind['calendars'];
+        }
+        $names = [];
+        if ($calendarIds !== []) {
+            [$in, $params] = Db::in(array_keys($calendarIds));
+            foreach ($this->db->all("SELECT id, name FROM calendars WHERE id IN $in", $params) as $cal) {
+                $names[(int) $cal['id']] = (string) $cal['name'];
+            }
+        }
+        $words = self::shortfallWords($skipped, $names);
+        if ($words !== null) {
+            $health->recordCondition(self::HEALTH_SUBJECT, 'job', null, self::HEALTH_LABEL, $words);
+        } else {
+            $health->clearCondition(self::HEALTH_SUBJECT, self::HEALTH_LABEL, 'every event was checked again, and nothing was left out.');
+        }
+        return ['slice' => $slice, 'next' => null, 'skipped' => $skipped, 'words' => $words];
+    }
+
+    /**
+     * What a pass left out, summed across its slices. Two kinds, each of
+     * events counted once (an event is one slice's anchor): `crowded`, an
+     * event with more neighbours within a day and a half than one event is
+     * compared with (DUPLICATE_CANDIDATES_PER_EVENT); `waiting`, an event
+     * with a possible duplicate not added to Review because Review holds as
+     * many as it takes (`reviewFull`) or the event already has its share.
+     * Each: {events, calendars:{calendarId: events}}. Pure; sanitises what a
+     * job payload carried.
+     */
+    public static function mergeSkipped(array $a, array $b): array
+    {
+        $out = [];
+        foreach ([$a, $b] as $side) {
+            foreach (['crowded', 'waiting'] as $kind) {
+                $part = $side[$kind] ?? null;
+                if (!is_array($part) || (int) ($part['events'] ?? 0) < 1) {
+                    continue;
+                }
+                $out[$kind] ??= ['events' => 0, 'calendars' => [], 'reviewFull' => false];
+                $out[$kind]['events'] += (int) $part['events'];
+                foreach (is_array($part['calendars'] ?? null) ? $part['calendars'] : [] as $id => $n) {
+                    if ((int) $id > 0) {
+                        $out[$kind]['calendars'][(int) $id] = ($out[$kind]['calendars'][(int) $id] ?? 0) + max(1, (int) $n);
+                    }
+                }
+                $out[$kind]['reviewFull'] = $out[$kind]['reviewFull'] || !empty($part['reviewFull']);
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * The health line for what a pass left out, or null when it left out
+     * nothing: which calendars, about how many events, what a person sees,
+     * what they can do. Counts are rounded ("about 2,400") so a condition
+     * that holds unchanged reads the same each pass. Pure.
+     *
+     * @param array<int,string> $calendarNames id => name
+     */
+    public static function shortfallWords(array $skipped, array $calendarNames): ?string
+    {
+        $about = static function (int $n): string {
+            if ($n < 20) {
+                return (string) $n;
+            }
+            $step = 10 ** max(0, strlen((string) $n) - 2);
+            return 'about ' . number_format((int) (round($n / $step) * $step));
+        };
+        $calendars = static function (array $counts) use ($calendarNames): string {
+            arsort($counts);
+            $names = [];
+            foreach (array_keys($counts) as $id) {
+                $names[] = $calendarNames[$id] ?? 'a removed calendar';
+            }
+            $names = array_values(array_unique($names));
+            $shown = array_slice($names, 0, 3);
+            $more = count($names) - count($shown);
+            if ($more > 0) {
+                return implode(', ', $shown) . " and $more more calendar" . ($more === 1 ? '' : 's');
+            }
+            return count($shown) > 1 ? implode(', ', array_slice($shown, 0, -1)) . ' and ' . $shown[count($shown) - 1] : ($shown[0] ?? '');
+        };
+        $parts = [];
+        if (isset($skipped['crowded'])) {
+            $n = (int) $skipped['crowded']['events'];
+            $max = Limits::get('DUPLICATE_CANDIDATES_PER_EVENT');
+            $parts[] = ucfirst($about($n)) . ' event' . ($n === 1 ? '' : 's') . ' on busy days in ' . $calendars($skipped['crowded']['calendars'])
+                . " were compared with only $max of the events within a day and a half, so a copy on another calendar may show twice."
+                . " Setting BETTERCAL_LIMIT_DUPLICATE_CANDIDATES_PER_EVENT above $max checks them all.";
+        }
+        if (isset($skipped['waiting'])) {
+            $n = (int) $skipped['waiting']['events'];
+            $why = !empty($skipped['waiting']['reviewFull'])
+                ? 'Review already holds ' . Limits::get('DUPLICATE_OPEN_SUGGESTIONS') . ' waiting for your answer'
+                : 'each of ' . ($n === 1 ? 'them' : 'those events') . ' already has ' . Limits::get('DUPLICATE_OPEN_SUGGESTIONS_PER_EVENT') . ' waiting in Review';
+            $parts[] = 'Possible duplicates of ' . $about($n) . ' event' . ($n === 1 ? '' : 's') . ' in ' . $calendars($skipped['waiting']['calendars'])
+                . " are not in Review yet, because $why. Answering those makes room, and the next check adds the rest.";
+        }
+        return $parts === [] ? null : implode(' ', $parts);
+    }
+
+    /** @return array{pairs:list<array>,more:bool,cursor:array,throttled:bool,skipped:array,comparisons:int,rows:int} */
     private function discoverUserSlice(int $userId, array $cursor, \DateTimeImmutable $now): array
     {
         $phase = ($cursor['phase'] ?? 'uid') === 'time' ? 'time' : 'uid';
@@ -295,11 +441,6 @@ final class Duplicates
     {
         $maxRows = Limits::get('DUPLICATE_SCAN_ROWS');
         $maxPairs = Limits::get('DUPLICATE_PAIRS');
-        $maxLinked = Limits::get('DUPLICATE_LINKED_EDGES');
-        $linkedTotal = (int) ($this->db->scalar(
-            "SELECT COUNT(*) FROM event_duplicates WHERE user_id = ? AND status = 'linked'",
-            [$userId]
-        ) ?? 0);
         $deadline = $this->nowSeconds() + Limits::get('DUPLICATE_SCAN_SECONDS');
         $base = $this->eligibleBase();
         $rows = $this->db->all(
@@ -344,20 +485,15 @@ final class Duplicates
             $repId = $representatives[(string) $row['uid']] ?? (int) $row['id'];
             if ($repId !== (int) $row['id']) {
                 $rep = ['id' => $repId, 'title' => $repTitles[$repId] ?? (string) $row['title']];
-                $existing = $this->pairStatus($rep, $row, $userId, $known);
-                if ($existing === null && $linkedTotal >= $maxLinked) {
-                    $throttled = true;
-                } elseif ($this->addPair($rep, $row, 'linked', 'uid', $userId, $known, $pairs) === 'added') {
-                    $linkedTotal++;
-                }
+                $this->addPair($rep, $row, 'linked', 'uid', $userId, $known, $pairs);
             }
             $lastCompleted = (int) $row['id'];
         }
         $stopped = $lastCompleted < (int) ($rows[count($rows) - 1]['id'] ?? $lastCompleted);
         if ($hasAnotherPage || $stopped) {
-            return ['pairs' => $pairs, 'more' => true, 'cursor' => ['phase' => 'uid', 'afterId' => $lastCompleted], 'throttled' => $throttled, 'comparisons' => 0, 'rows' => count($rows)];
+            return ['pairs' => $pairs, 'more' => true, 'cursor' => ['phase' => 'uid', 'afterId' => $lastCompleted], 'throttled' => $throttled, 'skipped' => [], 'comparisons' => 0, 'rows' => count($rows)];
         }
-        return ['pairs' => $pairs, 'more' => true, 'cursor' => ['phase' => 'time', 'afterId' => 0], 'throttled' => $throttled, 'comparisons' => 0, 'rows' => count($rows)];
+        return ['pairs' => $pairs, 'more' => true, 'cursor' => ['phase' => 'time', 'afterId' => 0], 'throttled' => $throttled, 'skipped' => [], 'comparisons' => 0, 'rows' => count($rows)];
     }
 
     /** Different-UID title candidates: bounded anchors, neighbours, work and output. */
@@ -369,7 +505,6 @@ final class Duplicates
         // Independently tuned limits must still make progress: an operator
         // may set the aggregate comparison ceiling below the per-event value.
         $maxCandidates = min(Limits::get('DUPLICATE_CANDIDATES_PER_EVENT'), $maxComparisons);
-        $maxLinked = Limits::get('DUPLICATE_LINKED_EDGES');
         $maxOpenSuggestions = Limits::get('DUPLICATE_OPEN_SUGGESTIONS');
         $maxOpenSuggestionsPerEvent = Limits::get('DUPLICATE_OPEN_SUGGESTIONS_PER_EVENT');
         $maxPairs = Limits::get('DUPLICATE_PAIRS');
@@ -393,10 +528,7 @@ final class Duplicates
 
         $known = [];
         $openPossibleCounts = [];
-        $linkedTotal = (int) ($this->db->scalar(
-            "SELECT COUNT(*) FROM event_duplicates WHERE user_id = ? AND status = 'linked'",
-            [$userId]
-        ) ?? 0);
+        $skipped = [];
         $openPossibleTotal = (int) ($this->db->scalar(
             "SELECT COUNT(*) FROM event_duplicates p
              JOIN events a ON a.id = p.event_a AND a.deleted_at IS NULL
@@ -419,29 +551,17 @@ final class Duplicates
                 $throttled = true;
                 break;
             }
-            $start = Time::fromDb((string) $row['start_utc']);
-            $candidates = $this->db->all(
-                "SELECT e.id, e.calendar_id, e.uid, e.title, e.start_utc, e.all_day, e.tzid,
-                        e.source, e.created_via, c.kind AS calendar_kind,
-                        COALESCE(c.provider, 'ics') AS calendar_provider
-                 FROM events e JOIN calendars c ON c.id = e.calendar_id
-                 WHERE $base AND e.rrule IS NULL AND e.id <> ? AND e.uid <> ?
-                   AND e.start_utc >= ? AND e.start_utc <= ?
-                 ORDER BY e.start_utc, e.id LIMIT " . ($maxCandidates + 1),
-                [
-                    $userId,
-                    (int) $row['id'],
-                    (string) $row['uid'],
-                    Time::toDb($start->sub(new \DateInterval('PT38H'))),
-                    Time::toDb($start->add(new \DateInterval('PT38H'))),
-                ]
-            );
-            if (count($candidates) > $maxCandidates) {
+            $candidates = $this->nearest($row, $base, $userId, $maxCandidates);
+            // More neighbours than one event is compared with: the rest are
+            // never compared with it this pass, which the pass reports.
+            $crowded = count($candidates) > $maxCandidates;
+            if ($crowded) {
                 array_pop($candidates);
                 $throttled = true;
             }
             $completedAnchor = true;
             $linkedForAnchor = false;
+            $waiting = false;
             foreach ($candidates as $candidate) {
                 if ($this->nowSeconds() >= $deadline) {
                     $completedAnchor = false;
@@ -453,16 +573,8 @@ final class Duplicates
                 if ($verdict !== null) {
                     if ($verdict['status'] === 'linked') {
                         if (!$linkedForAnchor) {
-                            $existing = $this->pairStatus($row, $candidate, $userId, $known);
-                            if ($existing === null && $linkedTotal >= $maxLinked) {
-                                $throttled = true;
-                            } else {
-                                $pairState = $this->addPair($row, $candidate, 'linked', $verdict['basis'], $userId, $known, $pairs);
-                                if ($pairState === 'added') {
-                                    $linkedTotal++;
-                                }
-                                $linkedForAnchor = $pairState === 'added' || $pairState === 'linked';
-                            }
+                            $pairState = $this->addPair($row, $candidate, 'linked', $verdict['basis'], $userId, $known, $pairs);
+                            $linkedForAnchor = $pairState === 'added' || $pairState === 'linked';
                         }
                     } else {
                         $hasCapacity = $openPossibleTotal < $maxOpenSuggestions
@@ -474,6 +586,7 @@ final class Duplicates
                             $openPossibleCounts[(int) $candidate['id']]++;
                         } elseif (!$hasCapacity && $this->pairStatus($row, $candidate, $userId, $known) === null) {
                             $throttled = true;
+                            $waiting = $openPossibleTotal >= $maxOpenSuggestions ? 'full' : ($waiting ?: 'event');
                         }
                     }
                 }
@@ -486,6 +599,14 @@ final class Duplicates
             if (!$completedAnchor) {
                 break;
             }
+            // Counted once per event: an unfinished anchor is redone by the
+            // next slice and counted there.
+            if ($crowded) {
+                $skipped = self::mergeSkipped($skipped, ['crowded' => ['events' => 1, 'calendars' => [(int) $row['calendar_id'] => 1]]]);
+            }
+            if ($waiting !== false) {
+                $skipped = self::mergeSkipped($skipped, ['waiting' => ['events' => 1, 'calendars' => [(int) $row['calendar_id'] => 1], 'reviewFull' => $waiting === 'full']]);
+            }
             $lastCompleted = (int) $row['id'];
         }
         $pairs = $this->withoutAlreadyLinkedPossibles($userId, $pairs, $throttled);
@@ -495,9 +616,52 @@ final class Duplicates
             'more' => $hasAnotherPage || $stopped,
             'cursor' => ['phase' => 'time', 'afterId' => $lastCompleted],
             'throttled' => $throttled,
+            'skipped' => $skipped,
             'comparisons' => $comparisons,
             'rows' => count($rows),
         ];
+    }
+
+    /**
+     * The events one event is compared with: at most $max + 1 (one more
+     * says there were more), nearest its start first, by distance and then
+     * id, so a cap drops the farthest. MATCH_REACH is how far apart two
+     * events can be and still be one (when()): an all-day day is stored at
+     * its UTC midnight and a timed event is on its own clock's date, from
+     * 14 hours before that midnight (UTC+14) to 36 after (UTC-12, late in
+     * the evening); two timed ones are within NEAR_SECONDS. Each side is
+     * read on the (user_id, start_utc) index in its own order, nearest
+     * first, and the two are merged here; the order by distance itself
+     * could not use the index.
+     *
+     * @return list<array>
+     */
+    private function nearest(array $row, string $base, int $userId, int $max): array
+    {
+        $start = Time::fromDb((string) $row['start_utc']);
+        $cols = "e.id, e.calendar_id, e.uid, e.title, e.start_utc, e.all_day, e.tzid,
+                 e.source, e.created_via, c.kind AS calendar_kind,
+                 COALESCE(c.provider, 'ics') AS calendar_provider";
+        $where = "$base AND e.rrule IS NULL AND e.id <> ? AND e.uid <> ?";
+        $params = [$userId, (int) $row['id'], (string) $row['uid']];
+        $reach = new \DateInterval(self::MATCH_REACH);
+        $before = $this->db->all(
+            "SELECT $cols FROM events e JOIN calendars c ON c.id = e.calendar_id
+             WHERE $where AND e.start_utc >= ? AND e.start_utc <= ?
+             ORDER BY e.start_utc DESC, e.id LIMIT " . ($max + 1),
+            [...$params, Time::toDb($start->sub($reach)), Time::toDb($start)]
+        );
+        $after = $this->db->all(
+            "SELECT $cols FROM events e JOIN calendars c ON c.id = e.calendar_id
+             WHERE $where AND e.start_utc > ? AND e.start_utc <= ?
+             ORDER BY e.start_utc, e.id LIMIT " . ($max + 1),
+            [...$params, Time::toDb($start), Time::toDb($start->add($reach))]
+        );
+        $at = $start->getTimestamp();
+        $all = [...$before, ...$after];
+        usort($all, static fn(array $a, array $b): int => [abs(Time::fromDb((string) $a['start_utc'])->getTimestamp() - $at), (int) $a['id']]
+            <=> [abs(Time::fromDb((string) $b['start_utc'])->getTimestamp() - $at), (int) $b['id']]);
+        return array_slice($all, 0, $max + 1);
     }
 
     private function eligibleBase(): string
@@ -727,7 +891,7 @@ final class Duplicates
         $frontier = $requested;
         $expanded = [];
         $edges = [];
-        $maxEdges = Limits::get('DUPLICATE_LINKED_EDGES');
+        $maxEdges = Limits::get('DUPLICATE_LINK_READ_EDGES');
         $maxQueries = Limits::get('DUPLICATE_LINK_TRAVERSAL_QUERIES');
         $queries = 0;
         while ($frontier !== [] && count($edges) < $maxEdges) {

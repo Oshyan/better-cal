@@ -215,9 +215,12 @@ return static function (Db $db): void {
         $after = $db->all("SELECT recurrence_instance_utc AS k, show_as, override_fields FROM events WHERE calendar_id = ? AND deleted_at IS NULL ORDER BY k", [$t->s->calendarId]);
         $db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$t->s->calendarId]);
         checkEq('a whole read after the delta poll changes no row', [], H::pollChanges($t));
-        checkEq('after both reads: the series free; a day Google keeps a record of keeps that record\'s busy, and a day held here alone follows the series',
-            [['k' => null, 'show_as' => 'free'], ['k' => '2027-03-08 18:00:00', 'show_as' => 'busy', 'own' => ['title']], ['k' => '2027-03-15 17:00:00', 'show_as' => 'free', 'own' => ['tags']],
-             ['k' => '2027-03-22 17:00:00', 'show_as' => 'busy', 'own' => ['title', 'tags']]],
+        // Google copies a master's transparency onto every exception record (live probe of 2026-11-16, series-model.md,
+        // Google as a Contract; #318), so every day follows the series to free. No day owns showAs: each record now
+        // holds the series' value, and a field read equal to its series is no day's own (Rows from Elsewhere).
+        checkEq('after both reads: the series free, and every day with it, Google\'s records included; no day owns showAs',
+            [['k' => null, 'show_as' => 'free'], ['k' => '2027-03-08 18:00:00', 'show_as' => 'free', 'own' => ['title']], ['k' => '2027-03-15 17:00:00', 'show_as' => 'free', 'own' => ['tags']],
+             ['k' => '2027-03-22 17:00:00', 'show_as' => 'free', 'own' => ['title', 'tags']]],
             array_map(static fn(array $r): array => ['k' => $r['k'], 'show_as' => $r['show_as']] + ($r['k'] === null ? [] : ['own' => json_decode((string) $r['override_fields'], true)]), $after));
         H::done($t);
     });
@@ -239,4 +242,19 @@ return static function (Db $db): void {
             H::done($t);
         });
     }
+    // A change to all events made here sets the marking, and Google copies it onto every record, a day's own marking
+    // included; a day that owns showAs and differs is sent again with its own value by the read-back.
+    scenario('show as: a day made free on its own keeps free through all events made free, then busy, here', function () use ($db): void {
+        $t = H::make($db, ['start' => '2027-07-05T18:00:00+00:00', 'end' => '2027-07-05T19:00:00+00:00', 'tzid' => 'UTC', 'rrule' => 'FREQ=DAILY;COUNT=6']);
+        H::this($t, '2027-07-07T18:00:00+00:00', ['showAs' => 'free']);
+        H::change($t, ['scope' => 'all', 'instanceStart' => '2027-07-05T18:00:00+00:00', 'showAs' => 'free']);
+        H::change($t, ['scope' => 'all', 'instanceStart' => '2027-07-05T18:00:00+00:00', 'showAs' => 'busy']);
+        $row = $db->one('SELECT show_as, override_fields FROM events WHERE calendar_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$t->s->calendarId, '2027-07-07 18:00:00']);
+        $atGoogle = static fn(?array $item): string => ($item['transparency'] ?? 'opaque') === 'transparent' ? 'free' : 'busy';
+        checkEq('the series busy; the day free here and in Google Calendar, owning showAs',
+            ['busy', 'free', ['showAs'], 'busy', 'free'],
+            [$db->scalar('SELECT show_as FROM events WHERE id = ?', [$t->id]), $row['show_as'] ?? null, json_decode((string) ($row['override_fields'] ?? 'null'), true),
+             $atGoogle($t->s->fake->events[$t->gid] ?? null), $atGoogle($t->s->fake->events[$t->gid . '_20270707T180000Z'] ?? null)]);
+        H::done($t);
+    });
 };

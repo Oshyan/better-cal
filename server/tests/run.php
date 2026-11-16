@@ -524,6 +524,57 @@ checkEq('fp59 commas inside the name stay', ['Salt, Fat, Acid, Heat reading', '2
 $d = $p('Standup, every weekday, 9am');
 checkEq('fp60 a repeat takes its commas', 'Standup', $d['title']);
 
+// Where a place ends (#236, #258): from "at" to the end of the text or a
+// with-clause, the separator before "with" not part of it, a comma inside it
+// kept. A house number with a street name is a place, and a street address
+// leaves the title; a venue's name stays in it.
+$place = static fn(array $d): array => [$d['title'], $d['location'], $d['personNames']];
+checkEq('fp61 a comma before "with" keeps the place',
+    ['Movie night at Sample Theater, with Alex Example', 'Sample Theater', ['Alex Example']],
+    $place($p('Movie night Friday 8pm at Sample Theater, with Alex Example')));
+checkEq('fp62 a street address is the place and leaves the title',
+    ['Lunch', '123 Example St', []], $place($p('Lunch tomorrow 3pm at 123 Example St')));
+checkEq('fp63 the whole address, the city after its comma too',
+    ['Pick up the cake', '123 Example St, Springfield CA', []], $place($p('Pick up the cake at 3pm at 123 Example St, Springfield CA')));
+checkEq('fp64 an address with its time after it',
+    ['Pick up the cake', '123 Example St Springfield CA', []], $place($p('Pick up the cake at 123 Example St Springfield CA at 3PM')));
+checkEq('fp65 an address, its city, then a with-clause',
+    ['Dinner with Sam Sample', '45 Sample Ave, Springfield', ['Sam Sample']], $place($p('Dinner Friday 7pm at 45 Sample Ave, Springfield, with Sam Sample')));
+checkEq('fp66 "@" before an address', ['Brunch', '12B Example Rd', []], $place($p('Brunch Sunday 11am @ 12B Example Rd')));
+$d = $p('Coffee at Sample Cafe, Tuesday 10am');
+checkEq('fp67 a date after the place and a comma is the date, not the place', ['Coffee at Sample Cafe', 'Sample Cafe', '2026-08-04T10:00'],
+    [$d['title'], $d['location'], substr($d['start'], 0, 16)]);
+checkEq('fp68 a number with no name after it is no place', ['Dinner at 7 sharp', null, []], $place($p('Dinner at 7 sharp')));
+$d = $p('Drinks Friday at 7');
+checkEq('fp69 a time after "at" is the time', [null, '2026-07-31T19:00'], [$d['location'], substr($d['start'], 0, 16)]);
+
+// The next such weekday and a past date's year, each one function (#288),
+// with every phrasing typed on the day it names. Fri 2026-07-31 and Mon
+// 2026-08-03, at 10:00.
+$on = static fn(string $text, string $day): string => substr(FallbackParser::parse($text, $tz, new DateTimeImmutable($day . 'T10:00:00', new DateTimeZone($tz)))['start'], 0, 10);
+$onFriday = static fn(string $text): string => $on($text, '2026-07-31');
+checkEq('fp70 a weekday counted from is the coming one, typed on that weekday', [
+    'Dentist a week from Friday 3pm' => '2026-08-14',
+    'Piano every Friday starting a week from Friday' => '2026-08-14',
+    'Piano every Friday starting week from Friday' => '2026-08-14',
+    'Dentist 2 weeks from Friday' => '2026-08-21',
+    'Dentist 3 days from Friday' => '2026-08-10',
+    'Dentist Friday after next' => '2026-08-14',
+    'Dentist next Friday' => '2026-08-07',
+    'Dentist next week Friday' => '2026-08-07',
+], array_combine($t = ['Dentist a week from Friday 3pm', 'Piano every Friday starting a week from Friday', 'Piano every Friday starting week from Friday',
+    'Dentist 2 weeks from Friday', 'Dentist 3 days from Friday', 'Dentist Friday after next', 'Dentist next Friday', 'Dentist next week Friday'], array_map($onFriday, $t)));
+checkEq('fp71 a weekday named alone, typed on that weekday, is today', [
+    'Dentist Friday' => '2026-07-31', 'Dentist this Friday' => '2026-07-31', 'Workshop Fri-Sun' => '2026-07-31',
+    'Workshop Mon-Fri next week' => '2026-08-10',
+], array_combine(['Dentist Friday', 'Dentist this Friday', 'Workshop Fri-Sun', 'Workshop Mon-Fri next week'],
+    [$onFriday('Dentist Friday'), $onFriday('Dentist this Friday'), $onFriday('Workshop Fri-Sun'), $on('Workshop Mon-Fri next week', '2026-08-03')]));
+checkEq('fp72 a date typed on its own day is this year, the day before it next year', [
+    'Party 7/31' => '2026-07-31', 'Party July 31' => '2026-07-31', 'Party 31 July' => '2026-07-31', 'Retro last Friday of July' => '2026-07-31',
+    'Trip July 31-Aug 2' => '2026-07-31', 'Party 7/30' => '2027-07-30', 'Trip July 30 to Aug 2' => '2027-07-30',
+], array_combine($t = ['Party 7/31', 'Party July 31', 'Party 31 July', 'Retro last Friday of July', 'Trip July 31-Aug 2', 'Party 7/30', 'Trip July 30 to Aug 2'],
+    array_map($onFriday, $t)));
+
 // Completeness + confidence gates feeding the QuickAdd LLM-skip decision.
 checkEq('fp complete date+time', true, $p('Meeting tomorrow 9am')['complete']);
 checkEq('fp complete date-only allDay', true, $p('Trip 2026-08-15')['complete']);
@@ -751,7 +802,8 @@ $phraseCases = [
     ['Errands Sat afternoon', 'Errands', '2026-08-01T14:00', '2026-08-01T15:00', null],
     ['Lunch Fri at noon', 'Lunch', '2026-07-31T12:00', '2026-07-31T13:00', null],
     ['Sun Valley ski trip Friday', 'Sun Valley ski trip', '2026-07-31T00:00', '2026-08-01T00:00', null],
-    ['Dinner at 5 Main St Friday 7pm', 'Dinner at 5 Main St', '2026-07-31T19:00', '2026-07-31T20:00', null],
+    // A street address is the place and leaves the title (#258).
+    ['Dinner at 5 Main St Friday 7pm', 'Dinner', '2026-07-31T19:00', '2026-07-31T20:00', null],
     ['Flight Friday 9:40am EST', 'Flight', '2026-07-31T06:40', '2026-07-31T07:40', null],
     // Alerts
     ['Call with Sam tomorrow 3pm alert 30 minutes', 'Call with Sam', '2026-07-31T15:00', '2026-07-31T16:00', [30]],

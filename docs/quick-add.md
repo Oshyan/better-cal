@@ -43,7 +43,7 @@ Typing a marker lists what it can name, narrowing as you type: `/` your calendar
 ## What It Reads
 
 - **Days:** today, tomorrow, tonight, Friday, next Friday, Fri, Aug 3, 8/3, 2026-08-15, the 15th. A date already past this year means next year.
-- **Counted from now:** in 2 weeks, 3 days from now, 3 weeks from Monday, Friday after next, end of the month, this weekend, next weekend.
+- **Counted from now:** in 2 weeks, 3 days from now, a week from Friday, 3 weeks from Monday, Friday after next, end of the month, this weekend, next weekend. A weekday counted from is the coming one, never today: typed on a Friday, "a week from Friday" is two weeks out. "Friday" alone on a Friday is today, and "next Friday" a week out.
 - **Times:** 7pm, 7:30 pm, 19:00, noon, midnight, "at 7" (1 to 7 are afternoon, 8 to 11 morning), this evening, Sunday evening.
 - **Time ranges and lengths:** 7-9pm, 11am-1pm, 9am-noon, 6pm to midnight, 10pm to 6am, for 2 hours, for 90 min.
 - **Zones:** EST, PT, GMT, UTC, CET and others, after a time. Two-letter ones only in capitals, and not before an ordinary word ("3pm CT scan"); "3pm ET with Sam" is fine.
@@ -53,7 +53,7 @@ Typing a marker lists what it can name, narrowing as you type: `/` your calendar
 - **Repeat start and end:** starting Nov 3, until Dec 15, for 6 weeks, 10 times.
 - **Alerts:** alert 30 minutes, remind me 15 min before, with a 1 hour reminder. Up to four weeks.
 - **Same clock time in any zone:** "local time" or "floating" right after the time ("6:30am local time", "7am floating", the word iCalendar and Apple's Calendar use) keeps the event at that clock time wherever you are: a routine at 7 is at 7 at home and at 7 on a trip, and so are its reminders. A calendar can give this to all its new timed events (its settings, "New timed events keep their clock time in any zone"). Never all-day events or invitations.
-- **People and places:** "with Sam", "w/ Sam and Alex", and "at Luna" or "@ Luna" at the end for the place. A date or time word is never read as a person or place, and a weekday next to a date ("November 16, Monday") goes with the date when it matches.
+- **People and places:** "with Sam", "w/ Sam and Alex", and "at Luna" or "@ Luna" at the end for the place. The place runs to the end of the line or to "with", so "at Luna, with Sam" is Luna. A venue's name stays in the title ("Lunch at Luna"); a street address is the place and leaves it, city and all: "Lunch tomorrow at 123 Example St, Springfield" is "Lunch" at "123 Example St, Springfield". A date or time word is never read as a person or place, and a weekday next to a date ("November 16, Monday") goes with the date when it matches.
 - **Away and busy times:** "Sam is away Aug 10-15", "Sam busy tomorrow".
 - **Links:** an event page's link, pasted or shared from a phone, becomes that event. See [Event Links](#event-links).
 
@@ -88,3 +88,4 @@ Not events: a calendar's `.ics` or `webcal://` address opens Subscribe instead.
 - "In 2 hours" isn't read; use a clock time.
 - "9-5" isn't read as hours; write "9am-5pm".
 - A short day name or a day range at the very start stays in the title ("Wed planning", "Mon-Fri schedule review") unless a time follows it.
+- A street address is read when its street name starts with a capital ("at 123 Example St"). In lower case ("at 123 example st") it stays in the title, as "at 7 sharp" does.

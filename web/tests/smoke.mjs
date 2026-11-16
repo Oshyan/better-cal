@@ -3661,6 +3661,51 @@ console.log('--- chronological ordering across timezone offsets ---');
     globalThis.fetch = editorFetch;
   }
 
+  // A layer open above the page holds the keyboard: with the New event
+  // drawer edited and focus on its body (not a field), n changes nothing,
+  // nor does any other global shortcut; with no layer open they act.
+  {
+    const { installKeyboard, shortcutActs } = await import('../src/app/keyboard.js');
+    const stopKeys = installKeyboard();
+    const key = (k, more = {}) => {
+      const ev = { type: 'keydown', key: k, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() {}, ...more };
+      for (const fn of [...(dom.win.listeners.keydown || [])]) fn(ev);
+      return ev.defaultPrevented;
+    };
+    render(null, ed);
+    put({ editor: null, quickAddOpen: false, searchOpen: false, paletteOpen: false, jumpOpen: false, shortcutsOpen: false, popover: null });
+    await settle();
+    put({ editor: { mode: 'create', draft: { title: '', calendarId: 21, start: '2027-03-10T09:00:00-08:00', end: '2027-03-10T10:00:00-08:00' } } });
+    render(html`<${EditorDrawer} />`, ed);
+    await settle();
+    await calendar(22);
+    const allDay = ed.querySelectorAll('label.bc-check').find((l) => l.textContent.trim().startsWith('All day'));
+    if (allDay) { allDay.querySelector('input').checked = true; allDay.querySelector('input').dispatch('change'); await settle(); }
+    const editorBefore = st.editor;
+    const drawn = () => [ed.querySelector('select.bc-calselect').value, allDay ? allDay.querySelector('input').checked : null];
+    const before = drawn();
+    ed.querySelector('form').focus();
+    const anchorBefore = st.anchor;
+    const keysTried = ['n', 'c', '/', 'g', '?', 't', 'v', '2', 'p', 'ArrowRight', '0'];
+    const acted = keysTried.filter((k) => key(k));
+    await settle();
+    eq('a draft edited, focus on the drawer: no single-key shortcut acts', acted, []);
+    eq('a draft edited: n leaves the same drawer with its edits, nothing else opened', [st.editor === editorBefore, drawn(), st.quickAddOpen, st.searchOpen, st.jumpOpen, st.shortcutsOpen, st.anchor === anchorBefore],
+      [true, before, false, false, false, false, true]);
+    eq('a draft edited: the edits it holds are the ones made', before, ['22', allDay ? true : null]);
+    eq('a draft edited: Cmd-K opens no palette over it', [key('k', { metaKey: true }), st.paletteOpen], [false, false]);
+    render(null, ed);
+    put({ editor: null });
+    await settle();
+    eq('no layer open: n opens the New event drawer', [key('n'), st.editor && st.editor.mode], [true, 'create']);
+    put({ editor: null });
+    await settle();
+    eq('no layer open: / opens search', [key('/'), st.searchOpen], [true, true]);
+    put({ searchOpen: false });
+    eq('the palette key closes the palette when it is the open layer', [shortcutActs('palette', [{ classList: { contains: (c) => c === 'bc-palette-overlay' } }]), shortcutActs('newEvent', [{ classList: { contains: (c) => c === 'bc-palette-overlay' } }]), shortcutActs('today', [])], [true, false, true]);
+    stopKeys();
+  }
+
   // Search opens on All with every calendar, every time (#304). A choice
   // made in a search is that search's: Back to it and a reload keep it, a
   // new search does not, and nothing is stored on the device.

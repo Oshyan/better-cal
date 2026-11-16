@@ -2737,9 +2737,10 @@ body.bc-rescheduling { user-select: none; }
    alike, and it composes with hover, dimming and the active-now ring for
    free because it never touches box-shadow or background. */
 /* Context items take it by the same rule (lib/filtermarks.js, #72): a
-   token's value and time, the day sheet's row, a holiday's label. */
+   token's value and time, the day sheet's row, a holiday's label. So does
+   every "+N" for what it folds, highlighted when anything behind it is (#307). */
 .is-highlighted :is(.bc-chip-title, .bc-band-label, .bc-ctx-token-text, .bc-ctx-token-time, .bc-dayexpand-ctxtext),
-.bc-daylabel.is-highlighted {
+:is(.bc-daylabel, .bc-ctx-more, .bc-more, .bc-tg-allday-more, .bc-tg-density-more, .bc-vday-more, .bc-agenda-overflow).is-highlighted {
   text-decoration: underline;
   text-decoration-color: var(--hl, var(--accent));
   text-decoration-thickness: 2px;
@@ -2755,8 +2756,9 @@ body.bc-rescheduling { user-select: none; }
 }
 /* Context is quiet grey type, so an underline alone barely reads on it: a
    highlighted token, day-sheet row or holiday label is also written in the
-   filter's colour. Last among the rules that colour them, so hover keeps it. */
-:is(.bc-ctx-token, .bc-dayexpand-ctxrow, .bc-daylabel).is-highlighted { color: var(--hl, var(--accent)); }
+   filter's colour, as is a highlighted "+N". Last among the rules that colour
+   them, so hover keeps it. */
+:is(.bc-ctx-token, .bc-dayexpand-ctxrow, .bc-daylabel, .bc-ctx-more, .bc-more, .bc-tg-allday-more, .bc-tg-density-more, .bc-vday-more, .bc-agenda-overflow).is-highlighted { color: var(--hl, var(--accent)); }
 /* A moment's label is filled with its calendar's colour and its text is
    chosen for contrast with it, dark or white: the underline leans toward that
    text, as a solid bar's leans toward its white. */

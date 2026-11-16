@@ -8,7 +8,7 @@ import { Icon } from './icons.js';
 import { contrastText, ink } from '../lib/color.js';
 import { contextToken, contextTitle, compactTime, HOST_ICON, dayLabelText, dayLabelLines } from '../lib/context.js';
 import { parseISO } from '../lib/dates.js';
-import { filterClasses, hlStyle, combinedFilterMarks } from '../lib/filtermarks.js';
+import { filterClasses, hlStyle, combinedFilterMarks, foldedMarks } from '../lib/filtermarks.js';
 
 const CONTEXT_RENDER_MAX = 100;
 const CONTEXT_OVERFLOW_TITLE_MAX = 20;
@@ -108,10 +108,12 @@ export function ContextStrip({ occs, calendars, max = Infinity, fit = null, more
   const rest = occs.length - limit;
   const overflowTitles = occs.slice(limit, limit + CONTEXT_OVERFLOW_TITLE_MAX).map((o) => contextTitle(o));
   if (rest > overflowTitles.length) overflowTitles.push(`…and ${rest - overflowTitles.length} more`);
+  // "+N" stands for the tokens it folds and wears their filter marks (#307).
+  const fold = foldedMarks(occs.slice(limit));
   return html`<span class="bc-ctxstrip" role="list" aria-label="Context for this day" ref=${ref}>
     ${rendered.map((occ, i) => (fit !== null || i < limit) && html`<${Token} key=${occ.instanceId} occ=${occ} cal=${calendars && calendars[occ.calendarId]} onOpen=${onOpen} zone=${zone} overflow=${i >= limit} />`)}
     ${more && rest > 0 && html`<span
-      role="button" tabindex="0" class="bc-ctx-more"
+      role="button" tabindex="0" class=${'bc-ctx-more' + fold.cls} style=${fold.style}
       data-hovertext=${overflowTitles.join('\n')} aria-label=${overflowTitles.join(', ')}
       onPointerDown=${(e) => e.stopPropagation()}
       onClick=${(e) => { e.stopPropagation(); if (onMore) onMore(); }}

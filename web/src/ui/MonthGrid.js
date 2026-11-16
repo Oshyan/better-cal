@@ -41,6 +41,7 @@ import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight, coveredAt } from './DragController.js';
 import { normalizeDayRange, dayRangeDraft } from '../lib/quickcreate.js';
 import { setGlideActive, glideDistance, samePlace } from '../lib/glide.js';
+import { foldedMarks } from '../lib/filtermarks.js';
 
 const WEEK_SPAN = 522; // weeks either side of today (~10 years)
 const CHIP_ROW = 22;   // px per chip/bar lane
@@ -166,11 +167,13 @@ function weekLanes(bars, bands, dimSet, columns, barLaneLimit, chipRow, bandH) {
   for (const l of bandLanes.values()) if (l < MAX_BAND_LANES) bandLaneCount = Math.max(bandLaneCount, l + 1);
   const bandOffset = Math.min(bandLaneCount, MAX_BAND_LANES) * bandH;
   const bandExtraByCol = new Array(columns).fill(0);
+  // The bands and bars counted in a day's "+N", whose filter marks it wears.
+  const foldedByCol = Array.from({ length: columns }, () => []);
   const visibleBands = [];
   for (const b of bandList) {
     const lane = bandLanes.get(b.occ.instanceId + ':' + b.seg.startCol);
     if (lane < MAX_BAND_LANES) visibleBands.push({ ...b, lane });
-    else if (!isQuiet(b.occ)) for (let c = b.seg.startCol; c <= b.seg.endCol; c++) bandExtraByCol[c]++;
+    else if (!isQuiet(b.occ)) for (let c = b.seg.startCol; c <= b.seg.endCol; c++) { bandExtraByCol[c]++; foldedByCol[c].push(b.occ); }
   }
   // Lanes are reserved PER COLUMN, not per row: a band or bar on Wednesday
   // must not push Monday's chips down. Multi-day segments still align across
@@ -192,7 +195,7 @@ function weekLanes(bars, bands, dimSet, columns, barLaneLimit, chipRow, bandH) {
   for (const b of barList) {
     const lane = lanes.get(b.occ.instanceId + ':' + b.seg.startCol);
     if (lane < maxBarLanes) visibleBars.push({ ...b, lane });
-    else if (!isQuiet(b.occ)) for (let c = b.seg.startCol; c <= b.seg.endCol; c++) extraByCol[c]++;
+    else if (!isQuiet(b.occ)) for (let c = b.seg.startCol; c <= b.seg.endCol; c++) { extraByCol[c]++; foldedByCol[c].push(b.occ); }
   }
   const barLanesByCol = new Array(columns).fill(0);
   for (const b of visibleBars) {
@@ -205,7 +208,7 @@ function weekLanes(bars, bands, dimSet, columns, barLaneLimit, chipRow, bandH) {
   const chipTopByCol = barLanesByCol.map((n, col) => (n > 0
     ? CELL_HEAD + bandOffset + n * chipRow
     : CELL_HEAD + bandLanesByCol[col] * bandH));
-  return { visibleBands, bandExtraByCol, bandOffset, visibleBars, extraByCol, chipTopByCol, shownByFilter, isQuiet };
+  return { visibleBands, bandExtraByCol, bandOffset, visibleBars, extraByCol, foldedByCol, chipTopByCol, shownByFilter, isQuiet };
 }
 
 // The height a week needs to show everything (rows that fit their contents,
@@ -1032,7 +1035,7 @@ function WeekRow({
     return fit && !capped ? Infinity : Math.max(1, cap - 1);
   };
   const L = weekLanes(bars, bands, dimSet, columns, laneLimit, chipRow, bandH);
-  const { visibleBands, bandExtraByCol, bandOffset, visibleBars, extraByCol, chipTopByCol, shownByFilter, isQuiet } = L;
+  const { visibleBands, bandExtraByCol, bandOffset, visibleBars, extraByCol, foldedByCol, chipTopByCol, shownByFilter, isQuiet } = L;
 
   const cells = keys.map((k, col) => {
     const [y, m, d] = k.split('-').map(Number);
@@ -1041,6 +1044,8 @@ function WeekRow({
     const room = Math.max(0, Math.min(capacity, Math.floor((rowH - chipTop - 4) / chipRow)));
     const plan = planCell(singles, isQuiet, room, extraByCol[col] + bandExtraByCol[col]);
     const hidden = plan.hidden;
+    // "+N" stands for what it folds: the singles and the bars past the lanes.
+    const fold = foldedMarks([...plan.more, ...foldedByCol[col]]);
     // Ribbon rows have no weekday header, so each cell labels itself
     // ("Mon 3"; month name on month start: "Aug 1"). Weekends get a subtle
     // tint for orientation.
@@ -1090,7 +1095,7 @@ function WeekRow({
           onPointerDown=${(e) => dragMoveOcc(occ, e)}
         />`)}
         ${hidden > 0 && html`<button
-          type="button" class="bc-more"
+          type="button" class=${'bc-more' + fold.cls} style=${fold.style}
           onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(k); }}
           onPointerDown=${(e) => e.stopPropagation()}
         >

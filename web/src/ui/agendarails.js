@@ -87,9 +87,10 @@ function normalizeLoaded(loaded) {
 function visibleDayRows(bucket, maxRowsPerDay) {
   const all = dayRows(bucket);
   if (!Number.isFinite(maxRowsPerDay) || all.length <= maxRowsPerDay) {
-    return { rows: all, overflow: 0 };
+    return { rows: all, overflow: 0, folded: [] };
   }
-  return { rows: all.slice(0, maxRowsPerDay), overflow: all.length - maxRowsPerDay };
+  // folded: the events behind "+N more", whose filter marks it wears.
+  return { rows: all.slice(0, maxRowsPerDay), overflow: all.length - maxRowsPerDay, folded: all.slice(maxRowsPerDay).map((r) => r.occ) };
 }
 
 function withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH, loaded, maxRowsPerDay }) {
@@ -212,13 +213,13 @@ export function buildAgendaGroups(occurrences, opts = {}) {
   });
   let offset = 0;
   return keys.map((k, i) => {
-    const { rows, overflow } = visibleDayRows(byDay.get(k), maxRowsPerDay);
+    const { rows, overflow, folded } = visibleDayRows(byDay.get(k), maxRowsPerDay);
     // A month separator is a real band inside the group that opens the month,
     // not an overlay: its height has to be in the layout or it draws on top
     // of the previous day's last row.
     const monthStart = i > 0 && keys[i - 1].slice(0, 7) !== k.slice(0, 7);
     const height = headH + (rows.length + (overflow ? 1 : 0)) * rowH + (monthStart ? sepH : 0);
-    const g = { dayKey: k, rows, overflow, top: offset, height, monthStart };
+    const g = { dayKey: k, rows, overflow, folded, top: offset, height, monthStart };
     offset += height;
     return g;
   });

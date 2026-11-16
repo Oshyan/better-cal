@@ -21,6 +21,7 @@ import {
 import { EventChip, HiddenMark, bandColor } from './EventChip.js';
 import { isBand } from '../lib/bands.js';
 import { ContextStrip, DayLabel } from './ContextStrip.js';
+import { foldedMarks } from '../lib/filtermarks.js';
 import { contextByDay, dayLabelsByDay, withoutContext, compactTime } from '../lib/context.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress } from './outside.js';
@@ -616,12 +617,12 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             ${occ.location && html`<${AgendaLocation} location=${occ.location} lat=${occ.locationLat} lng=${occ.locationLng} />`}
           </div>`;
           })}
-          ${visible && g.overflow > 0 && html`<button
+          ${visible && g.overflow > 0 && ((fold) => html`<button
             type="button"
-            class="bc-agenda-overflow"
-            style=${`height:${rowH}px`}
+            class=${'bc-agenda-overflow' + fold.cls}
+            style=${`height:${rowH}px` + (fold.style ? ';' + fold.style : '')}
             onClick=${() => onExpandDay && onExpandDay(g.dayKey)}
-          >+${g.overflow} more on this day</button>`}
+          >+${g.overflow} more on this day</button>`)(foldedMarks(g.folded))}
         </section>`;
       })}
     </div>

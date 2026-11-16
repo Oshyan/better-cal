@@ -20,6 +20,7 @@ export function layoutOverlaps(items, minSpan = 30, options = {}) {
     .sort((a, b) => a.startMin - b.startMin || b.visualEnd - a.visualEnd);
   const out = [];
   let overflow = 0;
+  const overflowItems = [];
   let cluster = [];
   let clusterEnd = -1; // running high-water mark of visual ends
   const flush = () => {
@@ -31,6 +32,7 @@ export function layoutOverlaps(items, minSpan = 30, options = {}) {
       if (col === -1 && colEnds.length < maxColumns) { col = colEnds.length; colEnds.push(0); }
       if (col === -1 || out.length + visibleInCluster >= maxItems) {
         overflow++;
+        overflowItems.push(e);
         continue;
       }
       colEnds[col] = e.visualEnd;
@@ -49,6 +51,7 @@ export function layoutOverlaps(items, minSpan = 30, options = {}) {
   }
   flush();
   out.overflow = overflow;
+  out.overflowItems = overflowItems;
   return out;
 }
 

@@ -2210,10 +2210,22 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-form-btnrow { display: flex; gap: 6px; }
 .bc-filter-hint { margin: 0; font-size: 12px; }
 /* Action and Which events on one line, read as a sentence ("Dim events |
-   that don't match"); the switch drops under the select only where the
-   line has no room for both. */
+   that don't match"). The select is as wide as its longest option and no
+   wider (width: auto, nothing setting a width or a minimum), and on a phone
+   the switch's buttons keep a small inset and the form a narrower padding,
+   so both fit on one line from 390 wide; below that the switch drops under
+   the select. */
 .bc-filter-action { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bc-filter-action select { width: auto; min-width: 0; }
 .bc-filter-action .bc-seg-btn { font-size: 13px; padding: 4px 9px; white-space: nowrap; }
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
+  .bc-mgmt-form { padding: 10px; }
+  /* The edit form under a card keeps the create form's width: its inset
+     background already ties it to the card above. */
+  .bc-card-item .bc-mgmt-form.is-inline { margin-left: 0; }
+  .bc-filter-action { gap: 4px; }
+  .bc-filter-action .bc-seg-btn { padding: 4px 6px; }
+}
 .bc-filter-fields { display: inline-flex; gap: 10px; padding: 5px 0; }
 
 /* List rows as cards: badges + body type, not raw metadata dumps. */

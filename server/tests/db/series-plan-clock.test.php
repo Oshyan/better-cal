@@ -38,6 +38,10 @@ return static function (Db $db): void {
     };
     // The preview (and its preselected options), then the clock moved on by $seconds, then the commit: [error code or
     // null, the commit's own time]. The clock is put back after.
+    // The commit's second is whichever second the clock showed while the commit ran: read before it and after it, a
+    // stamp anywhere in between is the commit's own. A stamp read once before the commit made the test fail whenever
+    // the clock ticked between that read and the write, which a loaded machine does.
+    $inCommit = static fn(mixed $stamp, string $from, string $to): mixed => is_string($stamp) && $stamp >= $from && $stamp <= $to ? $from : $stamp;
     $previewThenCommit = static function (object $t, array $in, int $seconds, ?callable $between = null): array {
         $plan = $t->events->previewPatch($t->u, $t->id, $in + ['plan' => ['choices' => []]]);
         $choices = [];
@@ -53,9 +57,9 @@ return static function (Db $db): void {
             try {
                 $t->events->patch($t->u, $t->id, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices]]);
                 $t->events->throwDeferred();
-                return [null, $at];
+                return [null, $at, Time::nowDb()];
             } catch (HttpError $e) {
-                return [$e->errorCode, $at];
+                return [$e->errorCode, $at, Time::nowDb()];
             }
         } finally {
             Time::$testOffsetSeconds -= $seconds;
@@ -72,9 +76,9 @@ return static function (Db $db): void {
     ];
     foreach (['a calendar here' => false, 'a Google calendar' => true] as $where => $google) {
         foreach ($changes as $name => $in) {
-            scenario("plan clock, $where, $name: previewed, committed a second later, goes through with the stamp of its commit", function () use ($series, $done, $previewThenCommit, $place, $db, $where, $name, $in): void {
+            scenario("plan clock, $where, $name: previewed, committed a second later, goes through with the stamp of its commit", function () use ($series, $done, $previewThenCommit, $inCommit, $place, $db, $where, $name, $in): void {
                 $t = $series(str_contains($where, 'Google'));
-                [$code, $at] = $previewThenCommit($t, $in, 1);
+                [$code, $at, $to] = $previewThenCommit($t, $in, 1);
                 // A split's new part carries the coordinates; the whole series' change, the series' own row.
                 $row = $in['scope'] === 'following'
                     ? $db->one('SELECT id FROM events WHERE id <> ? AND user_id = ? AND recurrence_parent_id IS NULL AND rrule IS NOT NULL AND deleted_at IS NULL ORDER BY id DESC LIMIT 1', [$t->id, $t->u])
@@ -82,23 +86,23 @@ return static function (Db $db): void {
                 $stamp = $db->scalar('SELECT location_placed_at FROM events WHERE id = ?', [(int) ($row['id'] ?? 0)]);
                 checkEq("plan clock, $where, $name: no stale refusal; the coordinates written, stamped with the commit's second",
                     [null, ['37.5', '-122.2', 'picked'], $at],
-                    [$code, array_map('strval', array_values($db->one('SELECT ROUND(location_lat, 5) AS lat, ROUND(location_lng, 5) AS lng, location_source FROM events WHERE id = ?', [(int) ($row['id'] ?? 0)]) ?? [])), $stamp]);
+                    [$code, array_map('strval', array_values($db->one('SELECT ROUND(location_lat, 5) AS lat, ROUND(location_lng, 5) AS lng, location_source FROM events WHERE id = ?', [(int) ($row['id'] ?? 0)]) ?? [])), $inCommit($stamp, $at, $to)]);
                 $done($t);
             });
         }
 
         // The check is not blind: another change to the series between the preview and the commit is still refused as
         // stale, nothing written; a new preview then, committed a second later again, goes through.
-        scenario("plan clock, $where: a change made between preview and commit is still stale, and the new plan goes through a second later", function () use ($series, $done, $previewThenCommit, $place, $where, $changes): void {
+        scenario("plan clock, $where: a change made between preview and commit is still stale, and the new plan goes through a second later", function () use ($series, $done, $previewThenCommit, $inCommit, $place, $where, $changes): void {
             $t = $series(str_contains($where, 'Google'));
             $in = $changes['a new place with its coordinates and an hour later, all events'];
             $before = $place($t);
             [$stale] = $previewThenCommit($t, $in, 1, fn() => planned($t->events, $t->u, $t->id, ['scope' => 'all', 'instanceStart' => '2027-07-19T21:00:00-04:00', 'title' => 'Sample renamed']));
             $kept = $place($t);
-            [$again, $at] = $previewThenCommit($t, $in, 2);
+            [$again, $at, $to] = $previewThenCommit($t, $in, 2);
             checkEq("plan clock, $where: stale after another change, nothing of it written; the new plan then goes through, stamped with its commit's second",
                 ['series_plan_changed', $before, null, ['Sample Annex', '37.5', '-122.2', 'picked', $at]],
-                [$stale, $kept, $again, array_map('strval', $place($t))]);
+                [$stale, $kept, $again, (static function (array $p) use ($inCommit, $at, $to): array { $p[count($p) - 1] = $inCommit($p[count($p) - 1], $at, $to); return $p; })(array_map('strval', $place($t)))]);
             $done($t);
         });
     }

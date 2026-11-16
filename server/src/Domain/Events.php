@@ -1395,7 +1395,7 @@ final class Events
                 }
                 $disposition = Filters::strongest(
                     Filters::disposition($row, $activeFilters),
-                    Filters::promptDisposition($row, $promptCtx['filters'], $promptCtx['failed'])
+                    Filters::promptDisposition($row, $promptCtx['filters'], $promptCtx['applies'])
                 );
                 // includeHidden=1 also bypasses filter hiding: reminders fire
                 // regardless of filters, and the notification deep link must
@@ -1406,7 +1406,7 @@ final class Events
                 if ($disposition === 'dim' || $disposition === 'highlight') {
                     // Which filter, and where it matched: the app's hover
                     // card says why an event is underlined or dimmed.
-                    $occ['filterReason'] = Filters::reasonFor($row, $activeFilters, $promptCtx['filters'], $promptCtx['failed'], $disposition);
+                    $occ['filterReason'] = Filters::reasonFor($row, $activeFilters, $promptCtx['filters'], $promptCtx['applies'], $disposition);
                 }
                 if ($disposition === 'dim') {
                     $occ['dimmed'] = true;
@@ -1415,7 +1415,7 @@ final class Events
                     // Which filter won decides the glow colour; keyword and
                     // regex filters answer first, then prompt filters.
                     $occ['highlightColor'] = Filters::highlightColorFor($row, $activeFilters)
-                        ?? Filters::promptHighlightColorFor($row, $promptCtx['filters'], $promptCtx['failed']);
+                        ?? Filters::promptHighlightColorFor($row, $promptCtx['filters'], $promptCtx['applies']);
                 }
                 $kept[] = $occ;
             }

@@ -9,7 +9,9 @@
 //   description cut at DESCRIPTION_EXCERPT_CHARS, the location and the start),
 //   and PromptEval::pendingEvents judges only events that came in from
 //   outside (source 'feed': subscribed calendars and Google calendars).
-//   A verdict of fail takes the filter's action; no verdict yet takes none.
+//   Filters::promptActionApplies reads the verdict: hide takes the events
+//   judged not to fit the description, dim and highlight the ones judged to
+//   fit; no verdict yet takes no action.
 
 /** Saved filters without a field list match these (server: Filters::DEFAULT_FIELDS). */
 export const DEFAULT_FIELDS = ['title', 'description', 'location'];
@@ -48,6 +50,20 @@ export function filterFields(filter) {
 }
 
 /**
+ * Whether an AI prompt filter's action takes the events that fit its
+ * description (dim, highlight) or the ones that do not (hide, which keeps
+ * what fits). Server: Filters::promptActionApplies.
+ */
+export function promptTakesFitting(action) {
+  return action !== 'hide';
+}
+
+/** The label over an AI prompt filter's description, by its action. */
+export function promptLabel(action) {
+  return action === 'hide' ? 'Keep events that match' : action === 'dim' ? 'Dim events that match' : 'Highlight events that match';
+}
+
+/**
  * One sentence, or two for an AI prompt, saying what the filter looks at and
  * what it does with it.
  * @param {{type:string, action:string, config:object}} filter
@@ -59,7 +75,7 @@ export function filterMatchText(filter) {
     const seen = PROMPT_FIELDS.map((f) => PROMPT_NOUNS[f]);
     return [
       `Looks at ${andList(seen)}, and nothing else. Only events on subscribed and Google calendars are judged.`,
-      `Events judged not to fit are ${done}; events not judged yet stay as they are.`,
+      `Events judged ${promptTakesFitting(filter.action) ? 'to fit' : 'not to fit'} the description are ${done}; events not judged yet stay as they are.`,
     ];
   }
   // "their title, description or location"; a tag matches by its name.

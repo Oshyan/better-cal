@@ -69,7 +69,7 @@ final class SearchController
                 }
                 $disposition = Filters::strongest(
                     Filters::disposition($candidate, $activeFilters),
-                    Filters::promptDisposition($candidate, $promptCtx['filters'], $promptCtx['failed'])
+                    Filters::promptDisposition($candidate, $promptCtx['filters'], $promptCtx['applies'])
                 );
                 if ($disposition === 'hide') {
                     continue;

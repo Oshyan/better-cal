@@ -19,7 +19,9 @@ use BetterCal\Support\Limits;
  * PCRE, evaluated case-insensitively. Prompt filters are never evaluated in
  * the request path: a background worker scores feed events against the prompt
  * (see PromptEval) and the cached verdicts in `filter_evals` are joined here;
- * verdict `fail` applies the filter's action, a missing verdict is a pass.
+ * promptActionApplies() is the one reading of a verdict (hide takes events
+ * judged not to fit, dim and highlight events judged to fit), and an event
+ * with no verdict yet takes no prompt filter's action.
  */
 final class Filters
 {
@@ -234,15 +236,16 @@ final class Filters
      * @param list<int> $eventIds
      * @return array{
      *   filters: list<array{id:int,action:string,calendarIds:?array<int,true>}>,
-     *   failed: array<int,array<int,true>>,
+     *   applies: array<int,array<int,true>>,
      *   evaluated: array<int,array<int,true>>
-     * } failed is filterId => set of event ids whose verdict is fail;
+     * } applies is filterId => set of event ids the filter's action applies
+     *   to, by promptActionApplies();
      *   evaluated is filterId => set of event ids with ANY cached verdict
      *   (so callers can spot coverage gaps and queue background evaluation).
      */
     public function promptFilterContext(int $userId, array $eventIds): array
     {
-        $empty = ['filters' => [], 'failed' => [], 'evaluated' => []];
+        $empty = ['filters' => [], 'applies' => [], 'evaluated' => []];
         if ($eventIds === []) {
             return $empty;
         }
@@ -265,7 +268,8 @@ final class Filters
         }
         [$fIn, $fParams] = Db::in(array_column($filters, 'id'));
         [$eIn, $eParams] = Db::in(array_values(array_unique(array_map('intval', $eventIds))));
-        $failed = [];
+        $actions = array_column($filters, 'action', 'id');
+        $applies = [];
         $evaluated = [];
         $evals = $this->db->all(
             "SELECT filter_id, event_id, verdict FROM filter_evals
@@ -276,11 +280,25 @@ final class Filters
             $filterId = (int) $eval['filter_id'];
             $eventId = (int) $eval['event_id'];
             $evaluated[$filterId][$eventId] = true;
-            if ((string) $eval['verdict'] === 'fail') {
-                $failed[$filterId][$eventId] = true;
+            if (self::promptActionApplies((string) ($actions[$filterId] ?? ''), (string) $eval['verdict'])) {
+                $applies[$filterId][$eventId] = true;
             }
         }
-        return ['filters' => $filters, 'failed' => $failed, 'evaluated' => $evaluated];
+        return ['filters' => $filters, 'applies' => $applies, 'evaluated' => $evaluated];
+    }
+
+    /**
+     * Whether a prompt filter's action applies to an event, from the model's
+     * stored verdict on it (pass: the event fits the filter's description;
+     * fail: it does not). Dim and highlight take the events that fit ("dim
+     * the webinars", "highlight outdoor things"); hide takes the ones that
+     * do not, as the form's "Keep events that match" says. The one place a
+     * verdict is read: the window, search and the reasons all go through
+     * promptFilterContext's set built here.
+     */
+    public static function promptActionApplies(string $action, string $verdict): bool
+    {
+        return $action === 'hide' ? $verdict === 'fail' : $verdict === 'pass';
     }
 
     /** @return ?array<int,true> calendar ids the filter row applies to; null = all */
@@ -395,10 +413,10 @@ final class Filters
      * filter, with its prompt when it has one. Null when none applies.
      *
      * @param list<array{id:int,action:string,calendarIds:?array<int,true>}> $promptFilters
-     * @param array<int,array<int,true>> $failed
+     * @param array<int,array<int,true>> $applies filterId => events its action applies to
      * @return ?array{type:string,pattern?:string,field?:string}
      */
-    public static function reasonFor(array $row, array $filters, array $promptFilters, array $failed, string $action): ?array
+    public static function reasonFor(array $row, array $filters, array $promptFilters, array $applies, string $action): ?array
     {
         foreach ($filters as $filter) {
             if (($filter['action'] ?? '') !== $action) {
@@ -418,7 +436,7 @@ final class Filters
         }
         $eventId = (int) ($row['id'] ?? 0);
         foreach ($promptFilters as $filter) {
-            if (($filter['action'] ?? '') === $action && isset($failed[$filter['id']][$eventId])
+            if (($filter['action'] ?? '') === $action && isset($applies[$filter['id']][$eventId])
                 && ($filter['calendarIds'] === null || isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)]))) {
                 // Its words, so the app can say which one: "one of your
                 // plain-language filters" left people hunting.
@@ -564,13 +582,13 @@ final class Filters
     }
 
     /**
-     * Same, for prompt filters: their verdicts are pre-fetched, so matching
-     * means "this event is in the filter's failed set".
+     * Same, for prompt filters: their verdicts are pre-read, so matching
+     * means "this event is in the set the filter's action applies to".
      *
      * @param list<array{id:int,action:string,color?:?string,calendarIds:?array<int,true>}> $promptFilters
-     * @param array<int,array<int,true>> $failed filterId => set of failing event ids
+     * @param array<int,array<int,true>> $applies filterId => events its action applies to
      */
-    public static function promptHighlightColorFor(array $row, array $promptFilters, array $failed): ?string
+    public static function promptHighlightColorFor(array $row, array $promptFilters, array $applies): ?string
     {
         $eventId = (int) ($row['id'] ?? 0);
         foreach ($promptFilters as $filter) {
@@ -580,7 +598,7 @@ final class Filters
             if ($filter['calendarIds'] !== null && !isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)])) {
                 continue;
             }
-            if (isset($failed[$filter['id']][$eventId])) {
+            if (isset($applies[$filter['id']][$eventId])) {
                 return (string) $filter['color'];
             }
         }
@@ -590,13 +608,13 @@ final class Filters
     /**
      * Pure prompt-filter disposition for one event row given pre-fetched
      * verdicts (see promptFilterContext). Same precedence as disposition():
-     * hide wins outright, then dim, then highlight; null when every filter
-     * passes, is out of scope, or has no cached verdict yet.
+     * hide wins outright, then dim, then highlight; null when no filter's
+     * action applies, it is out of scope, or there is no cached verdict yet.
      *
      * @param list<array{id:int,action:string,calendarIds:?array<int,true>}> $promptFilters
-     * @param array<int,array<int,true>> $failed filterId => set of failing event ids
+     * @param array<int,array<int,true>> $applies filterId => events its action applies to
      */
-    public static function promptDisposition(array $row, array $promptFilters, array $failed): ?string
+    public static function promptDisposition(array $row, array $promptFilters, array $applies): ?string
     {
         $eventId = (int) ($row['id'] ?? 0);
         $result = null;
@@ -604,7 +622,7 @@ final class Filters
             if ($filter['calendarIds'] !== null && !isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)])) {
                 continue;
             }
-            if (!isset($failed[$filter['id']][$eventId])) {
+            if (!isset($applies[$filter['id']][$eventId])) {
                 continue;
             }
             if ($filter['action'] === 'hide') {

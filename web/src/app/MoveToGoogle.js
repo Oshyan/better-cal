@@ -19,7 +19,7 @@ import { usePasswordStepUp } from './PasswordStepUp.js';
 import { useBackClose } from './backclose.js';
 import { GOOGLE_RETURN_KEY } from './handoff.js';
 
-const MOVED_TOAST = 'Moved to Google. It stays on your calendar here; edits now go to Google.';
+const MOVED_TOAST = 'Moved to Google Calendar. It stays on your calendar here; edits here now go there too.';
 
 function useMoveStatus(calendarId, active) {
   const [move, setMove] = useState(undefined); // undefined: not loaded yet
@@ -63,16 +63,16 @@ export function MoveToGoogle({ cal }) {
   const open = () => set({ moveDialog: { calendarId: cal.id } });
   const accounts = google.accounts || [];
   let line = null;
-  if (running) line = `Moving to Google: ${move.done} of ${move.total} uploaded. It takes no edits until this finishes.`;
-  else if (move && move.status === 'failed' && !move.cancelled) line = 'The move to Google stopped part-way. This calendar is read-only until you continue or stop it.';
-  else if (move && move.status === 'failed' && move.cancelled) line = 'A move to Google was stopped; part of it may remain at Google.';
+  if (running) line = `Moving to Google Calendar: ${move.done} of ${move.total} uploaded. It takes no edits until this finishes.`;
+  else if (move && move.status === 'failed' && !move.cancelled) line = 'The move to Google Calendar stopped part way. This calendar is read-only until you continue or stop it.';
+  else if (move && move.status === 'failed' && move.cancelled) line = 'A move to Google Calendar was stopped; part of it may remain there.';
   return html`<div class="bc-calset-field bc-move">
-    <span class="bc-calset-label">Google</span>
+    <span class="bc-calset-label">Google Calendar</span>
     ${line && html`<span class=${'bc-calset-value' + (move && move.status === 'failed' && !move.cancelled ? ' bc-move-error' : '')}>${line}</span>`}
     ${accounts.length === 0
       ? html`<span class="bc-calset-value">To share this calendar with people who use Google Calendar, connect a Google account first (Settings, Connections).</span>`
       : html`<button type="button" class="bc-btn" onClick=${open}>
-          <${Icon} name="google" size=${14} /> ${running || (move && move.status === 'failed' && !move.cancelled) ? 'Move details…' : 'Move to Google…'}
+          <${Icon} name="google" size=${14} /> ${running || (move && move.status === 'failed' && !move.cancelled) ? 'Move details…' : 'Move to Google Calendar…'}
         </button>`}
   </div>`;
 }
@@ -143,7 +143,7 @@ function MoveDialogBody({ calendarId, cal, close }) {
         window.location.href = d.url;
       }
     } catch (e) {
-      toast(e.message || 'Could not reach Google', { error: true });
+      toast(e.message || 'Could not reach Google Calendar', { error: true });
     } finally {
       setBusy(false);
     }
@@ -155,7 +155,7 @@ function MoveDialogBody({ calendarId, cal, close }) {
       const selectedAccountId = failed ? move.googleAccountId : accountId;
       const selectedTarget = failed ? (move.createdNew ? null : move.googleCalendarId) : (target === 'new' ? null : target);
       const before = move;
-      const d = await stepUp.run('move this calendar to Google', () => {
+      const d = await stepUp.run('move this calendar to Google Calendar', () => {
         // Starting uploads for up to 12 seconds before it answers (a small
         // calendar finishes in that one request), so show the move at once
         // and follow its real progress while the request is still running.
@@ -207,7 +207,7 @@ function MoveDialogBody({ calendarId, cal, close }) {
     const movedTo = (accounts.find((a) => a.id === move.googleAccountId) || {}).email;
     body = html`<div class="bc-move-done">
       <p><strong>Done.</strong> "${name}" now lives in your Google account${movedTo ? ` (${movedTo})` : ''}, and it's still on your calendar here.</p>
-      <p class="bc-move-note">It works like your other Google calendars: changes you make here go to Google, and changes made in Google Calendar show up here.</p>
+      <p class="bc-move-note">It works like your other Google calendars: changes you make here go to Google Calendar, and changes made there show up here.</p>
       <p class="bc-move-note">To let other people see it or add to it, share it from Google Calendar: open the calendar's settings there and choose "Share with specific people".</p>
     </div>`;
   } else if (failed) {
@@ -223,10 +223,10 @@ function MoveDialogBody({ calendarId, cal, close }) {
     const stopped = move && move.status === 'failed' && move.cancelled;
     body = html`<div class="bc-move-form">
       ${stopped && html`<p class="bc-move-note bc-move-warn">${move.stoppedByOwner
-        ? `You stopped the last move. ${move.done} of ${move.total} events may remain at Google; remove that partial copy there if you don't want it.`
+        ? `You stopped the last move. ${move.done} of ${move.total} events may remain in Google Calendar; remove that partial copy there if you don't want it.`
         : move.stoppedByUpgrade
-          ? 'An unfinished move from an older version was stopped safely during a security upgrade. Some events may remain at Google; review that copy first.'
-          : `The last move was stopped by the account security reset. ${move.done} of ${move.total} events may already be at Google; it won't resume by itself.`}</p>`}
+          ? 'An unfinished move from an older version was stopped safely during a security upgrade. Some events may remain in Google Calendar; review that copy first.'
+          : `The last move was stopped by the account security reset. ${move.done} of ${move.total} events may already be in Google Calendar; it won't resume by itself.`}</p>`}
       <p class="bc-move-note">Moves "${name}" into your Google account, so people who use Google Calendar can see it live, and add to it if you share it with them that way. It stays here too, edited in place like your other Google calendars, with its tags, people, reminders and trips. What changes: each change is sent to Google and read back, so it shows what Google stores, as for any Google calendar. "Adopt as local calendar" brings it back.</p>
       ${accounts.length > 1 && html`<label class="bc-move-field"><span>Google account</span>
         <select value=${String(accountId)} onChange=${(e) => { setAccountId(Number(e.target.value)); setTarget('new'); }}>
@@ -236,7 +236,7 @@ function MoveDialogBody({ calendarId, cal, close }) {
       <label class="bc-move-field"><span>Into</span>
         <select value=${target} onChange=${(e) => setTarget(e.target.value)}>
           <option value="new">A new Google calendar named "${name}"</option>
-          ${usable.length > 0 && html`<optgroup label="Or one you already have in Google">
+          ${usable.length > 0 && html`<optgroup label="Or one you already have in Google Calendar">
             ${usable.map((c) => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}
           </optgroup>`}
         </select>
@@ -255,15 +255,15 @@ function MoveDialogBody({ calendarId, cal, close }) {
 
   const ready = google && accounts.length > 0 && !running && !failed && !(move && move.status === 'done');
   return html`<div class="bc-overlay bc-move-overlay" data-layer="" onClick=${(e) => { if (e.target === e.currentTarget) close(); }}>
-    <div class="bc-move-dialog" ref=${panelRef} role="dialog" aria-modal="true" aria-label=${'Move ' + name + ' to Google'} tabindex="-1">
+    <div class="bc-move-dialog" ref=${panelRef} role="dialog" aria-modal="true" aria-label=${'Move ' + name + ' to Google Calendar'} tabindex="-1">
       <div class="bc-move-head">
-        <h2><${Icon} name="google" size=${16} /> Move to Google</h2>
+        <h2><${Icon} name="google" size=${16} /> Move to Google Calendar</h2>
         <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}><${Icon} name="close" size=${15} /></button>
       </div>
       ${body}
       <div class="bc-move-actions bc-move-foot">
         ${ready && html`<button type="button" class="bc-btn bc-btn-primary" disabled=${busy || needsPermission || needsReconnect} onClick=${start}
-          title=${needsPermission || needsReconnect ? 'Allow it on Google first' : ''}>Move to Google</button>`}
+          title=${needsPermission || needsReconnect ? 'Allow it on Google first' : ''}>Move to Google Calendar</button>`}
         <button type="button" class="bc-btn" onClick=${close}>${running || (move && move.status === 'done') ? 'Close' : 'Cancel'}</button>
       </div>
       ${stepUp.prompt}

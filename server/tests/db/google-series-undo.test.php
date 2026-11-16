@@ -362,7 +362,7 @@ return static function (Db $db): void {
             $caught = $e->status . ' ' . $e->errorCode . ': ' . $e->getMessage();
         }
         checkEq('refused as the conflict; rows, Activity and the stand-in as they were; no pending row', [
-            '409 google_conflict: Newer changes exist for this item; undoing would overwrite them. This event changed at Google since you last saw it.',
+            '409 google_conflict: Newer changes exist for this item; undoing would overwrite them. This event changed in Google Calendar since you last saw it.',
             $before, 'Sample weekly, theirs', [], 0,
         ], [$caught, $state(), $s->fake->events['smpl2weekly']['summary'], $pending($s), $undone((int) $entry['id'])]);
     });
@@ -383,7 +383,7 @@ return static function (Db $db): void {
         $p = $pending($s);
         checkEq('the undo fails naming the half-done state; the pending row is half done; the entry is not undone; the rows show what Google has', [
             '409 google_conflict', true, 1, 'half', 0, true,
-        ], [$caught === null ? null : $caught->status . ' ' . $caught->errorCode, $caught !== null && str_contains($caught->getMessage(), 'half done at Google'),
+        ], [$caught === null ? null : $caught->status . ' ' . $caught->errorCode, $caught !== null && str_contains($caught->getMessage(), 'half done there'),
             count($p), $p[0]['status'] ?? null, $undone((int) $entry['id']), $held($s, 'smpl2weekly') === $stored($s, 'smpl2weekly')]);
         // Review's Finish carries the rest to Google, as for a change half done.
         $s->t->staleAt = null;
@@ -557,7 +557,7 @@ return static function (Db $db): void {
             if ($how === 'finish') {
                 checkEq('Finish: the change is undone and the undo\'s own entry recorded, saying so', [
                     1, (int) $entry['id'], true, 'Sample weekly', [],
-                ], [$undone((int) $entry['id']), (int) ($g['undoes'] ?? 0), str_contains((string) $after['summary'], 'Undid: ') && str_contains((string) $after['summary'], 'Finished at Google from Review'),
+                ], [$undone((int) $entry['id']), (int) ($g['undoes'] ?? 0), str_contains((string) $after['summary'], 'Undid: ') && str_contains((string) $after['summary'], 'Finished in Google Calendar from Review'),
                     $s->fake->events['smpl2weekly']['summary'], $pending($s)]);
                 $s->undo->undoById($s->u, (int) $after['id']);
                 checkEq('Finish: the undo is redone like any', ['Sample renamed', 1], [$s->fake->events['smpl2weekly']['summary'], $undone((int) $after['id'])]);
@@ -581,7 +581,7 @@ return static function (Db $db): void {
         $after = $last($s);
         checkEq('the undo keeps it too, and its entry names it', [
             'Sample remote series', 1, true,
-        ], [$s->fake->events['smpl2weekly']['summary'], $undone((int) $entry['id']), substr_count((string) $after['summary'], 'Google kept something else') === 1 && str_contains((string) $after['summary'], "The series' title changed at Google since this change; left as Google has it.")]);
+        ], [$s->fake->events['smpl2weekly']['summary'], $undone((int) $entry['id']), substr_count((string) $after['summary'], 'Google Calendar kept something else') === 1 && str_contains((string) $after['summary'], "The series' title changed in Google Calendar since this change; left as it is there.")]);
 
         $s = $setup();
         planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed'], ['ownTitle' => 'give']);
@@ -658,7 +658,7 @@ return static function (Db $db): void {
         $after = $last($s);
         checkEq('forced: the before title at Google and here, undone, the overwrite named', ['Sample weekly', 'Sample weekly', 1, true],
             [$s->fake->events['smpl2weekly']['summary'], $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), $undone((int) $entry['id']),
-                str_contains((string) $after['summary'], 'Put back over a change made at Google since, as forced:') && !str_contains((string) $after['summary'], 'Google kept something else')]);
+                str_contains((string) $after['summary'], 'Put back over a change made in Google Calendar since, as forced:') && !str_contains((string) $after['summary'], 'Google Calendar kept something else')]);
     });
 
     scenario('google series undo: Finish of a half-done undo whose entry is gone completes from what the pending row kept (R4)', function () use ($setup, $masterId, $last, $iso, $pending, $db): void {
@@ -791,7 +791,7 @@ return static function (Db $db): void {
         $s->events->googleFinish($s->u, (int) $db->scalar('SELECT id FROM google_pending WHERE user_id = ?', [$s->u]));
         $s->events->throwDeferred();
         $finished = (string) $last($s)['summary'];
-        check('Finish: "on Google calendar" then the note, one full stop each, no ". on"', str_contains($finished, "on Google calendar 'Sample crew'. Finished at Google from Review.") && !str_contains($finished, '. on '));
+        check('Finish: "on Google calendar" then the note, one full stop each, no ". on"', str_contains($finished, "on Google calendar 'Sample crew'. Finished in Google Calendar from Review.") && !str_contains($finished, '. on '));
 
         $s = $setup();
         planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed']);
@@ -800,7 +800,7 @@ return static function (Db $db): void {
         $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
         $s->undo->undoById($s->u, (int) $entry['id'], true);
         $forced = (string) $last($s)['summary'];
-        check('forced: its own heading, nothing said kept', str_contains($forced, 'Put back over a change made at Google since, as forced:') && !str_contains($forced, 'Google kept something else'));
+        check('forced: its own heading, nothing said kept', str_contains($forced, 'Put back over a change made in Google Calendar since, as forced:') && !str_contains($forced, 'Google Calendar kept something else'));
 
         $legacy = "Changed Sample weekly (all events): title from 'Sample weekly' to 'Sample renamed'. on Google calendar 'Sample crew' Google kept something else: a day changed at Google.";
         checkEq('a line written before actions were kept: its action alone, the calendar not repeated', [
@@ -951,7 +951,7 @@ return static function (Db $db): void {
         $line = (string) $last($s)['summary'];
         checkEq('the pending plan keeps the bare action and no composed line; the Put back line names the calendar once', [
             false, false, 1, true,
-        ], [array_key_exists('summary', $plan), str_contains((string) ($plan['action'] ?? ''), 'on Google calendar'), substr_count($line, 'on Google calendar'), str_starts_with($line, 'Put back at Google: a redo')]);
+        ], [array_key_exists('summary', $plan), str_contains((string) ($plan['action'] ?? ''), 'on Google calendar'), substr_count($line, 'on Google calendar'), str_starts_with($line, 'Put back in Google Calendar: a redo')]);
     });
 
     // The sixth adversarial read: the days a change added are its planner's record (f4), and a row brought back where a

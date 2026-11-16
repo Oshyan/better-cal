@@ -62,7 +62,7 @@ return static function (Db $db): void {
         $sent = array_values(array_filter(PA::sent($s->fake, $from), static fn(string $r): bool => true));
         checkEq('changed at Google between read and write: refused as changed at Google, the row as it was; the small list asked once, after the refused write', ['google_conflict', $before, 1, 'Sample single, renamed at Google'],
             [PA::code($e), $state($s)['rows'], count(array_filter($sent, static fn(string $r): bool => $r === 'GET small')), $s->fake->events[$s->gid]['summary'] ?? null]);
-        check('its sentence says it changed at Google', str_contains((string) $e?->getMessage(), 'changed at Google'), (string) $e?->getMessage());
+        check('its sentence says it changed at Google', str_contains((string) $e?->getMessage(), 'changed in Google Calendar'), (string) $e?->getMessage());
 
         // Deleted at Google between the read and the write of an edit: refused as deleted.
         $s = $make($single);

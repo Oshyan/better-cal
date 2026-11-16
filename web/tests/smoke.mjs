@@ -3496,7 +3496,7 @@ console.log('--- chronological ordering across timezone offsets ---');
     g.querySelectorAll('.bc-cal-src').length, g.childNodes.filter((n) => n.nodeType === 1).map((n) => n.localName + (n.classes[0] ? '.' + n.classes[0] : '')),
   ], [1, 1, true, 0, ['input', 'span.bc-cal-dot', 'span.bc-cal-name']]);
   eq("a Google row: the disc carries the account and where edits go, as its name and tooltip", [gDisc.getAttribute('role'), gDisc.getAttribute('aria-label'), gDisc.getAttribute('title')],
-    ['img', 'From Google Calendar (sam@example.test); edits here go to Google', 'From Google Calendar (sam@example.test); edits here go to Google']);
+    ['img', 'From Google Calendar (sam@example.test); edits here go there too', 'From Google Calendar (sam@example.test); edits here go there too']);
   const plainDisc = rowOf(32).querySelector('.bc-cal-dot');
   eq('a plain row: an empty disc with no name of its own', [plainDisc.querySelectorAll('svg').length, plainDisc.getAttribute('role'), plainDisc.getAttribute('aria-label')], [0, null, null]);
   render(null, bar);
@@ -5648,7 +5648,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: a refused change says why by its code, and can\'t be confirmed', [gRefused.refused, gRefused.canConfirm, gRefused.change],
     ['This would leave the series with no events. Delete it instead?', false, '']);
   const gNote = planView({ ...choir, notes: [{ kind: 'google', words: 'Server note' }] }, ctx());
-  eq('series panel: the Google note says the change is sent to Google and read back, nothing about undo', gNote.notes, ['This change is sent to Google and read back from it: the calendar shows what Google stores.']);
+  eq('series panel: the Google note says the change is sent to Google and read back, nothing about undo', gNote.notes, ['This change is sent to Google Calendar and read back from it: the calendar here shows what is stored there.']);
   const gap = planView({ ...choir, notes: [{ kind: 'gap', date: '2027-03-14', clock: '02:30', at: '2027-03-14T03:30:00-07:00', tz: LA, words: 'Server note' }] }, ctx());
   eq('series panel: a note in the user\'s format', gap.notes, ['There is no 2:30 AM on Sun, Mar 14 in Los Angeles, so that one is at 3:30 AM.']);
 
@@ -6986,10 +6986,10 @@ console.log('--- the scopes an occurrence has, one rule for every chooser (1.5.1
     // A switch Google would hide days with: the client's words are the server's (GoogleSeries::hiddenWords), from the data.
     const hidden = { code: 'googleHidden', days: ['2027-01-11', '2027-01-18'], deleted: ['2027-01-18'], toAllDay: true, clock: null };
     const w = planRefusal({ scope: 'all', refusals: [hidden] });
-    assert('hidden switch: the refusal says it is Google Calendar\'s fault and names the day nobody deleted', w.startsWith('Google Calendar has a fault here: if this event became all-day at its current time, Google would stop showing one of its days (')
+    assert('hidden switch: the refusal says it is Google Calendar\'s fault and names the day nobody deleted', w.startsWith('Google Calendar has a fault here: if this event became all-day at its current time, one of its days (')
       && !w.includes('18') && w.endsWith('though nothing deleted it. Move the event to another time first, then make it all-day.'));
     const gone = refusalWords('googleHidden', 'all', { days: ['2027-01-18'], deleted: ['2027-01-18'], toAllDay: false, clock: '09:00' });
-    assert('hidden switch: only deleted days met, to timed: named as days Better-Cal could no longer read back, the time named', gone.includes('Google would lose track of a day deleted from it (')
+    assert('hidden switch: only deleted days met, to timed: named as days Better-Cal could no longer read back, the time named', gone.includes('the record of a day deleted from it (')
       && gone.includes('so Better-Cal could no longer tell it was deleted. Make it timed at another time first, then change the time to '));
   }
   const { state: st, set: put } = await import('../src/app/store.js');
@@ -7027,7 +7027,7 @@ console.log('--- the scopes an occurrence has, one rule for every chooser (1.5.1
   const chip = (occ, o) => scopeDropChoice({ x: 10, y: 20 }, occ, () => {}, o);
   eq('drop chip: local, three scopes and Cancel, no note', [chip(local).options.map((x) => x.value), chip(local).note], [['this', 'following', 'all', null], null]);
   eq('drop chip: Google, three scopes too, no note, the title says the change goes to Google and nothing about undo', [chip(google).options.map((x) => x.value), chip(google).note, chip(google).title],
-    [['this', 'following', 'all', null], null, 'Repeating event (goes to Google)']);
+    [['this', 'following', 'all', null], null, 'Repeating event (goes to Google Calendar)']);
   eq('drop chip: the all label the caller gives', chip(local, { allLabel: 'All events…' }).options.map((x) => x.label), ['This event', 'This + following', 'All events…', 'Cancel']);
 
   // The delete, answer and new-time row.

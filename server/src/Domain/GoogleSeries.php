@@ -115,7 +115,7 @@ final class GoogleSeries
      */
     private const SYNCED = ['user_id', 'calendar_id', 'uid', 'source', 'title', 'description', 'location', 'url', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule',
         'exdates_json', 'status', 'show_as', 'recurrence_instance_utc', 'recurrence_parent_id', 'google_event_id', 'google_etag', 'invite_json', 'override_fields', 'deleted_at'];
-    public const HALF_WORDS = 'Part of this change reached Google. Review lists it as half done at Google, with Finish and Put back.';
+    public const HALF_WORDS = 'Part of this change reached Google Calendar. Review lists it as half done there, with Finish and Put back.';
     /** Read-backs of a write not yet showing it, with backoff (seconds); never a wait for correctness. */
     private const READBACK_TRIES = 4;
     private const BACKOFF = [0.3, 0.6, 1.2];
@@ -1166,7 +1166,7 @@ final class GoogleSeries
             // pending row: its caller rolls its transaction back whole.
             if ($made && $this->stepsDone($pendingId) === 0) {
                 $this->unmade($pendingId);
-                throw $e instanceof HttpError || !$e instanceof \RuntimeException ? $e : new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
+                throw $e instanceof HttpError || !$e instanceof \RuntimeException ? $e : new HttpError('google_write_failed', 'Google Calendar could not be reached: ' . $e->getMessage(), 502);
             }
             // Half done, in the journal before anything else is tried: a
             // failure of any kind, whatever the transaction here does next.
@@ -1201,7 +1201,7 @@ final class GoogleSeries
             $this->endUnlessTx($pendingId, true);
             $code = $e instanceof HttpError ? $e->errorCode : 'google_write_failed';
             $status = $e instanceof HttpError ? $e->status : 502;
-            $message = $e instanceof HttpError ? $said : 'Google could not be reached: ' . $e->getMessage();
+            $message = $e instanceof HttpError ? $said : 'Google Calendar could not be reached: ' . $e->getMessage();
             throw new HttpError($code, rtrim($message, '.') . '. ' . self::HALF_WORDS, $status, ['pending' => $pendingId]);
         }
         return ['pending' => $pendingId, 'readbacks' => $readbacks, 'differences' => $differences, 'inserted' => $inserted, 'targets' => $targets];
@@ -1921,6 +1921,64 @@ final class GoogleSeries
     }
 
     /**
+     * The days Google holds a record for, read from the rows here: every
+     * deleted day, and every edited day holding a field Google holds. The one
+     * reading of them for the planner (Model) and for Review (finishHidden).
+     *
+     * @param list<string> $exdates the series' deleted days (keys)
+     * @param list<array> $rows its edited days' rows
+     * @return list<string>
+     */
+    public static function recordKeysByRows(array $exdates, array $rows): array
+    {
+        $keys = $exdates;
+        foreach ($rows as $row) {
+            if (!empty($row['recurrence_instance_utc']) && OwnFields::googleHeld(OwnFields::stored($row)) !== []) {
+                $keys[] = (string) $row['recurrence_instance_utc'];
+            }
+        }
+        return $keys;
+    }
+
+    /**
+     * Finish's refusal of a half-done change for days Google would hide, said
+     * before Finish is pressed (#271): a switch between timed and all-day left
+     * half done before 1.5.6 refused it, its series' own write not yet sent.
+     * Judged as the planner judges a new change, by the rows here, which keep
+     * the series as it was until Finish saves the change; a series whose own
+     * write was sent may hold the new form at Google already, and is left to
+     * Finish. The sentence Finish gives, or null.
+     *
+     * @param list<array> $targets the pending row's targets
+     * @param list<array> $steps its steps so far
+     */
+    public static function finishHidden(Db $db, int $calendarId, array $targets, array $steps, int $thisYear): ?string
+    {
+        foreach ($targets as $i => $t) {
+            if (!empty($t['insert']) || !empty($t['remove']) || empty($t['uid']) || !is_array($t['master'] ?? null)) {
+                continue;
+            }
+            $own = array_filter($steps, static fn(array $s): bool => (int) ($s['series'] ?? -1) === $i && in_array($s['kind'] ?? '', ['master', 'insert', 'remove'], true));
+            $master = $own !== [] ? null
+                : $db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [$calendarId, (string) $t['uid']]);
+            if ($master === null) {
+                continue;
+            }
+            try {
+                $exdates = Recurrence::decodeExdates($master['exdates_json'] ?? null);
+            } catch (\InvalidArgumentException) {
+                continue; // a skip list over its limit: the planner reads no such series either
+            }
+            $rows = $db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [(int) $master['id']]);
+            $hidden = self::hiddenRefusal($master, $t['master'] + $master, self::recordKeysByRows($exdates, $rows), $exdates, $thisYear, 'finish');
+            if ($hidden !== null) {
+                return $hidden['words'];
+            }
+        }
+        return null;
+    }
+
+    /**
      * The refusal of such a switch, or null when it hides no day: `days`, the
      * days it would hide, as they would show after it (dates, Y-m-d), with
      * `deleted` those of them the person deleted (a deleted day of the same
@@ -1987,8 +2045,8 @@ final class GoogleSeries
         $gone = array_values(array_intersect($days, $deleted));
         $when = $toAllDay ? 'if this event became all-day at its current time' : "if this event became timed at $clock";
         $what = $live !== []
-            ? 'Google would stop showing ' . (count($live) === 1 ? 'one of its days' : 'some of its days') . ' (' . $named($live) . '), though nothing deleted ' . (count($live) === 1 ? 'it' : 'them')
-            : 'Google would lose track of ' . (count($gone) === 1 ? 'a day' : 'days') . ' deleted from it (' . $named($gone) . '), so Better-Cal could no longer tell ' . (count($gone) === 1 ? 'it was' : 'they were') . ' deleted';
+            ? (count($live) === 1 ? 'one of its days' : 'some of its days') . ' (' . $named($live) . ') would stop showing there, though nothing deleted ' . (count($live) === 1 ? 'it' : 'them')
+            : (count($gone) === 1 ? 'the record of a day' : 'the records of days') . ' deleted from it (' . $named($gone) . ') would be lost there, so Better-Cal could no longer tell ' . (count($gone) === 1 ? 'it was' : 'they were') . ' deleted';
         $way = $toAllDay ? 'Move the event to another time first, then make it all-day.' : "Make it timed at another time first, then change the time to $clock.";
         // The advice is something the person can do where they are (the second independent read, F5): a half-done change
         // takes no other change until it is finished or put back, so from Finish or Put back the way goes through the
@@ -2779,7 +2837,7 @@ final class GoogleSeries
         if ($left !== []) {
             $what = self::listed($left);
             $were = self::were($left);
-            $words[] = "The event's $what $were changed in Google Calendar $since; Google's $what $were kept.";
+            $words[] = "The event's $what $were changed in Google Calendar $since; the $what there $were kept.";
         }
         if ($landed || self::keying($before['master']) !== self::keying($now['master'])) {
             return [self::planOver($target, $master), $words, $conflicts, $landed];
@@ -2861,7 +2919,7 @@ final class GoogleSeries
                     $conflicts[] = [$key, 'day'];
                     $words[] = $c === 'skip'
                         ? $dayWords($key) . " was deleted in Google Calendar $since; it stays deleted."
-                        : $dayWords($key) . " was changed in Google Calendar $since; Google's version of that day was kept.";
+                        : $dayWords($key) . " was changed in Google Calendar $since; that day stays as it is there.";
                 }
             } elseif ($follows) {
                 $result = $want;
@@ -2886,7 +2944,7 @@ final class GoogleSeries
                 if ($left !== []) {
                     $what = self::listed($left);
                     $were = self::were($left);
-                    $words[] = "The $what of '" . trim((string) ($nowRow['title'] ?? '')) . "' on " . $dayWords($key) . " $were changed in Google Calendar $since; Google's $what $were kept.";
+                    $words[] = "The $what of '" . trim((string) ($nowRow['title'] ?? '')) . "' on " . $dayWords($key) . " $were changed in Google Calendar $since; the $what there $were kept.";
                 }
             }
             if ($result === 'skip') {
@@ -2951,8 +3009,8 @@ final class GoogleSeries
             }
         }
         return [$set,
-            $kept === [] ? [] : ["The series' " . implode(', ', $kept) . " changed at Google since this change; left as Google has it."],
-            $over === [] ? [] : ["The series' " . implode(', ', $over) . " (changed at Google since this change)."]];
+            $kept === [] ? [] : ["The series' " . implode(', ', $kept) . " changed in Google Calendar since this change; left as it is there."],
+            $over === [] ? [] : ["The series' " . implode(', ', $over) . " (changed in Google Calendar since this change)."]];
     }
 
     /**
@@ -3025,10 +3083,10 @@ final class GoogleSeries
                     return true;
                 }
                 if ($force) {
-                    $over[] = "$at's $what (changed at Google since this change).";
+                    $over[] = "$at's $what (changed in Google Calendar since this change).";
                     return true;
                 }
-                $kept[] = "$at's $what changed at Google since this change; left as Google has it.";
+                $kept[] = "$at's $what changed in Google Calendar since this change; left as it is there.";
                 return false;
             };
             $x = $target['exceptions'][$kt] ?? null;
@@ -3296,6 +3354,8 @@ final class GoogleSeries
                     $finishRefused = $e->getMessage();
                 }
             }
+            // A switch Finish would refuse for days Google would hide (#271): said up front, Put back offered alone.
+            $finishRefused ??= self::finishHidden($db, (int) $row['calendar_id'], json_decode((string) $row['targets_json'], true) ?: [], $steps, (int) Time::nowUtc()->format('Y'));
             $out[] = [
                 'id' => (int) $row['id'],
                 'calendarId' => (int) $row['calendar_id'],
@@ -3439,7 +3499,7 @@ final class GoogleSeries
     private static function pendingRefusal(array $which): HttpError
     {
         return new HttpError('google_pending',
-            "A change to '" . $which['title'] . "' is not yet complete at Google. Finish it or put it back in Review, then try this again.", 409, ['pending' => $which['id']]);
+            "A change to '" . $which['title'] . "' is not yet complete in Google Calendar. Finish it or put it back in Review, then try this again.", 409, ['pending' => $which['id']]);
     }
 
     /**
@@ -3465,7 +3525,7 @@ final class GoogleSeries
     /** Why a half-done change was closed without finishing (closeNeverRunnable), said in its Activity line. */
     public const CLOSED_KEPT = 'this calendar is kept as a copy here now.';
     public const CLOSED_DELETED = 'its calendar was deleted here.';
-    public const CLOSED_NOT_GOOGLE = 'this calendar no longer writes to Google from here.';
+    public const CLOSED_NOT_GOOGLE = 'this calendar no longer writes to Google Calendar from here.';
 
     /**
      * Close every change half done at Google on this calendar, which can
@@ -3490,7 +3550,7 @@ final class GoogleSeries
         foreach ($rows as $row) {
             $db->run('DELETE FROM google_pending WHERE id = ?', [(int) $row['id']]);
             $undo->record($userId, 'calendar', $calendarId, 'update', null, null,
-                "A change to '" . (string) $row['title'] . "' that was half done at Google was closed without finishing: " . $why);
+                "A change to '" . (string) $row['title'] . "' that was half done in Google Calendar was closed without finishing: " . $why);
         }
         return count($rows);
     }
@@ -3528,7 +3588,7 @@ final class GoogleSeries
             return null;
         }
         if ($calendar === null || ($calendar['provider'] ?? '') !== 'google' || empty($calendar['google_calendar_id'])) {
-            return 'This calendar no longer writes to Google from here, so Finish and Put back can no longer run for this change.';
+            return 'This calendar no longer writes to Google Calendar from here, so Finish and Put back can no longer run for this change.';
         }
         if ($calendar['google_account_id'] === null) {
             return 'The Google account this calendar uses is disconnected. Connect it again in Settings, Connections and add this calendar there to re-attach it; then Finish and Put back are offered again.';
@@ -3540,9 +3600,9 @@ final class GoogleSeries
         // read-only; the change stays listed, and its event frozen, until access returns or the calendar goes.
         $name = "'" . (trim((string) ($calendar['name'] ?? '')) !== '' ? trim((string) $calendar['name']) : 'this calendar') . "'";
         return ($calendar['google_access_role'] === 'none'
-            ? "This change stopped part way, and Google no longer shows $name to this account, so it can't be finished or put back."
-            : "This change stopped part way, and your permissions for $name at Google are now read-only, so it can't be finished or put back.")
-            . ' It stays here, and the event takes no other change, until full editing is restored at Google or you remove the calendar.';
+            ? "This change stopped part way, and Google Calendar no longer shows $name to this account, so it can't be finished or put back."
+            : "This change stopped part way, and your permissions for $name in Google Calendar are now read-only, so it can't be finished or put back.")
+            . ' It stays here, and the event takes no other change, until full editing is restored there or you remove the calendar.';
     }
 
     /** A pending row of the account, as the journal holds it now, or null. */
@@ -3750,7 +3810,7 @@ final class GoogleSeries
         try {
             $this->db->tx($write);
         } catch (\Throwable $e) {
-            $words = 'Google has the change, but its part here (tags, people, reminders, flags) could not be saved: ' . rtrim($e->getMessage(), '.') . '.';
+            $words = 'Google Calendar has the change, but its part here (tags, people, reminders, flags) could not be saved: ' . rtrim($e->getMessage(), '.') . '.';
             $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($words, 0, 2000), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
             $this->keepAfterTx($calendar, $pendingId, function () use ($calendar, $local, $out, $pendingId): void {
                 $this->store($calendar, $out['readbacks'], $out['targets'], $pendingId);
@@ -4332,7 +4392,7 @@ final class GoogleSeries
                 // Where nothing is recorded of the series after the change's last write to it (no read was made then, or an
                 // older version stored none), nothing says it changed since: said as that, which is true of both.
                 $name = "'" . (string) ($b['master']['title'] ?? $row['title']) . "'";
-                $left[] = $unread ? "Better-Cal has no record of $name as Google Calendar held it after this change's last write, so it can't tell whether it changed there since." : "$name changed at Google since.";
+                $left[] = $unread ? "Better-Cal has no record of $name as Google Calendar held it after this change's last write, so it can't tell whether it changed there since." : "$name changed in Google Calendar since.";
                 continue;
             }
             $b['etag'] = $current;
@@ -4357,7 +4417,7 @@ final class GoogleSeries
                     // Rule B: every field of the resource as sent, and none it didn't send.
                     $parsed = self::parsed($found);
                     if ($parsed === null || self::fieldsOf($parsed, true) !== self::fieldsOf($sentSingles[$sid]['row'], true)) {
-                        $left[] = "'" . (string) $sentSingles[$sid]['row']['title'] . "' changed at Google since.";
+                        $left[] = "'" . (string) $sentSingles[$sid]['row']['title'] . "' changed in Google Calendar since.";
                         unset($b['singles'][$si]);
                         continue;
                     }
@@ -4381,7 +4441,7 @@ final class GoogleSeries
                     $neither = GoogleUndo::neitherWay(GoogleUndo::pendingRedo($this->db, $userId, $plan));
                 }
             }
-            $words = implode(' ', $left) . ' ' . ($neither ?? 'Nothing was put back; Finish completes the change from what Google has now.');
+            $words = implode(' ', $left) . ' ' . ($neither ?? 'Nothing was put back; Finish completes the change from what is there now.');
             $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($words, 0, 2000), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
             $this->endUnlessTx($pendingId, true);
             throw new HttpError('google_changed_since', $words, 409, ['pending' => $pendingId, 'left' => $left]);

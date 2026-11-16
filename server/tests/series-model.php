@@ -261,7 +261,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($book, [], $startTo($book, '2027-04-15 19:00'));
     checkEq('Book club (no end), start moved to 15 Apr: three days before the new start, counted, no rate; nothing else lost or gained', [[[
         'why' => 'start', 'count' => 3, 'dates' => ['2027-01-15', '2027-02-15', '2027-03-15'], 'words' => '15 Jan, 15 Feb and 15 Mar fall before the new start',
-    ]], [], '2027-04-15', 'Moved Book club (all events): starts 15 Apr (was 15 Jan), monthly on the 15th at 19:00, as before.'],
+    ]], [], '2027-04-15', 'Moved Book club (all events): starts 15 Apr (was 15 Jan).'],
         [$p['plan']['losses'], $p['plan']['gains'], substr($p['plan']['rule']['to']['start'], 0, 10), $p['plan']['summary']]);
     $p = smPlan($book, [], $startTo($book, '2027-09-15 19:00'));
     checkEq('Book club (no end), start moved to 15 Sep: eight before the new start, the first five listed and three more', [[
@@ -480,7 +480,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
             [['2027-01-04', 'dropped', 'outside', 'start'], ['2027-01-11', 'dropped', 'outside', 'start']], [], 0, ['count', 'end'], 'count', 8,
         ], [array_map(static fn(array $d): array => [$d['shows'], $d['outcome'], $d['why'], $d['side'] ?? null], $p['plan']['days']), $p['plan']['losses'],
             $p['plan']['counts']['skipped'], smOptions($p, 'bound'), smGroup($p, 'bound')['selected'] ?? null, $p['plan']['bound']['events']]);
-        checkEq('Acceptance 8: the start moved alone, said as a start', ['Moved Pottery class (all events): starts 18 Jan (was 4 Jan), weekly on Monday at 18:00, as before.', '2027-01-18'],
+        checkEq('Acceptance 8: the start moved alone, said as a start', ['Moved Pottery class (all events): starts 18 Jan (was 4 Jan).', '2027-01-18'],
             [$p['plan']['summary'], substr($p['plan']['rule']['to']['start'], 0, 10)]);
         // The same start reached by dragging the first session shown (a day
         // named) is a drag: that day moves, and the skips go with theirs.
@@ -2730,6 +2730,20 @@ foreach (['no rule' => $move, 'the rule sent back' => $move + ['rrule' => 'FREQ=
         smPlan($sm223, [], $sm223Berlin, ['zone' => 'moment'])['plan']['summary'],
         $sm223Split(['landed' => $sm223Berlin['landed']], ['zone' => 'moment']),
     ]);
+    // #281: what a zone change kept is read from the before and the after, never from the option's name. A clock typed
+    // in the new zone that is the old clock's instant (10:00 in Denver for 09:00 in Los Angeles) kept the moment, under
+    // either option's label; a time moved as well keeps neither, and the line says only the two rules.
+    checkEq('Activity entry: the clock typed in the new zone at the old instant says it kept the same moment', [
+        'Changed Sample choir (all events): weekly on Tuesday at 09:00 in Los Angeles, now weekly on Tuesday at 10:00 in Denver, keeping the same moment, from 5 Jan.',
+        'Changed Sample choir (all events): weekly on Tuesday at 09:00 in Los Angeles, now weekly on Tuesday at 11:00 in Denver, from 5 Jan.',
+    ], [
+        smPlan($sm223, [], ['acted' => $sm223Day, 'landed' => $sm223Land('2027-01-19 10:00', 'America/Denver')], ['zone' => 'clock'])['plan']['summary'],
+        smPlan($sm223, [], ['acted' => $sm223Day, 'landed' => $sm223Land('2027-01-19 10:00', 'America/Denver')], ['zone' => 'moment'])['plan']['summary'],
+    ]);
+    // #281: a drag of every event a week later, the rule and clock the same before and after, says the first day, old
+    // and new, and not the same rule twice.
+    checkEq('Activity entry: all events moved a week later says the first day, not the rule twice', 'Moved Sample choir (all events): starts 12 Jan (was 5 Jan).',
+        smPlan($sm223, [], ['acted' => smAt('2027-01-05 09:00'), 'landed' => $sm223Land('2027-01-12 09:00')])['plan']['summary']);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

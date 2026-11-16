@@ -330,6 +330,18 @@ final class Feeds
     public function pollFailed(array $calendar, \Throwable $e): void
     {
         $calendarId = (int) $calendar['id'];
+        // A Google calendar whose access dropped below reader was read all the same: the access line, the Review notice
+        // and the calendar's settings say what changed (#281). Not a failure of the feed, so no streak, no "started
+        // failing" or "recovered" line in Activity and no toast; the poll is recorded as one that reached Google.
+        if ($e instanceof AccessStateException) {
+            RequestAuthority::checkedTx($this->db, fn() => $this->db->update('calendars', [
+                'last_polled_at' => Time::nowDb(),
+                'last_poll_status' => 'ok',
+                'last_poll_error' => null,
+            ], 'id = ?', [$calendarId]));
+            (new SystemHealth($this->db))->recordOk('feed:' . $calendarId, 'feed', (int) $calendar['user_id'], 'Feed: ' . (string) $calendar['name']);
+            return;
+        }
         RequestAuthority::checkedTx($this->db, fn() => $this->db->update('calendars', [
             'last_polled_at' => Time::nowDb(),
             'last_poll_status' => 'error',
@@ -1153,6 +1165,7 @@ final class Feeds
     {
         $touches = [];
         $uids = [];
+        $removedUids = []; // the events removed rows belonged to: a series and its edited days are one
         $removed = 0;
         $changedIds = [];
         $droppedDays = [];
@@ -1266,6 +1279,7 @@ final class Feeds
             $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$row]), null));
             $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
             $uids[(string) $row['uid']] = true;
+            $removedUids[(string) $row['uid']] = true;
             $removed++;
         }
         foreach ($follow as $id => [$now, $after, $held]) {
@@ -1305,9 +1319,10 @@ final class Feeds
             $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
             $changedIds[$holderId] = true;
             $uids[(string) $now['uid']] = true;
+            $removedUids[(string) $now['uid']] = true;
             $removed++;
         }
-        return ['touches' => $touches, 'uids' => $uids, 'removed' => $removed, 'updated' => array_keys($changedIds), 'dropped' => $droppedDays];
+        return ['touches' => $touches, 'uids' => $uids, 'removed' => $removed, 'removedUids' => $removedUids, 'updated' => array_keys($changedIds), 'dropped' => $droppedDays];
     }
 
     /**
@@ -1358,6 +1373,7 @@ final class Feeds
         $updatedEventIds = [];
         $addedTitles = [];
         $removedCount = 0;
+        $removedEvents = [];
         $protected = array_fill_keys(array_filter(array_column($skipped, 'uid')), true);
         $unknownSkipped = count(array_filter($skipped, static fn(array $s): bool => empty($s['uid']))) > 0;
         // What it changes, for undo: a feed's poll isn't undoable (the next
@@ -1444,7 +1460,7 @@ final class Feeds
         unset($daysOf);
         self::assertSyncDeadline($deadline);
         $undo = new Undo($this->db);
-        $undo->write($userId, function () use ($parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, $strangers, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
+        $undo->write($userId, function () use ($parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, $strangers, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$removedEvents, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
             Events::parkInstanceKeys($this->db, $park);
             // A held day that is no instance of the series this list brings
             // lets go of its key too (keys are unique per calendar, uid and
@@ -1623,6 +1639,7 @@ final class Feeds
             $touches = array_merge($touches, $settled['touches']);
             $changedUids += $settled['uids'];
             $removedCount += $settled['removed'];
+            $removedEvents += $settled['removedUids'];
             foreach ($settled['updated'] as $id) {
                 if (!in_array($id, $updatedEventIds, true)) {
                     $updatedEventIds[] = $id;
@@ -1654,10 +1671,17 @@ final class Feeds
             // (log only; the next poll would redo an undo, so none is
             // offered). A write's own copy of Google's answer (journal
             // false) is the write's entry.
+            // Counted as events, as a person counts them: a repeating event and its edited days are one (#281), by
+            // the uid every row of a series shares; "1 removed" for a series that went with its edited day.
+            $updatedEvents = 0;
+            foreach (array_chunk($updatedEventIds, 500) as $chunk) {
+                [$in, $params] = Db::in($chunk);
+                $updatedEvents += (int) $this->db->scalar("SELECT COUNT(DISTINCT uid) FROM events WHERE id IN $in", $params);
+            }
             $parts = array_filter([
                 $addedTitles !== [] ? count($addedTitles) . ' added' : null,
-                $updatedEventIds !== [] ? count($updatedEventIds) . ' updated' : null,
-                $removedCount > 0 ? $removedCount . ' removed' . ($droppedDays !== [] ? ' (' . self::droppedWords($droppedDays) . ')' : '') : null,
+                $updatedEvents > 0 ? $updatedEvents . ' updated' : null,
+                $removedEvents !== [] ? count($removedEvents) . ' removed' . ($droppedDays !== [] ? ' (' . self::droppedWords($droppedDays) . ')' : '') : null,
             ]);
             // A Google calendar's poll is Google's change, and says so.
             $fromGoogle = ($calendar['provider'] ?? 'ics') === 'google';

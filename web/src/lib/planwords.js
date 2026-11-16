@@ -911,8 +911,8 @@ function hiddenWords(r) {
   const clock = r.toAllDay ? '' : fmtClock(r.clock);
   const when = r.toAllDay ? 'if this event became all-day at its current time' : 'if this event became timed at ' + clock;
   const what = live.length > 0
-    ? 'Google would stop showing ' + (live.length === 1 ? 'one of its days' : 'some of its days') + ' (' + named(live) + '), though nothing deleted ' + (live.length === 1 ? 'it' : 'them')
-    : 'Google would lose track of ' + (gone.length === 1 ? 'a day' : 'days') + ' deleted from it (' + named(gone) + '), so Better-Cal could no longer tell ' + (gone.length === 1 ? 'it was' : 'they were') + ' deleted';
+    ? (live.length === 1 ? 'one of its days' : 'some of its days') + ' (' + named(live) + ') would stop showing there, though nothing deleted ' + (live.length === 1 ? 'it' : 'them')
+    : (gone.length === 1 ? 'the record of a day' : 'the records of days') + ' deleted from it (' + named(gone) + ') would be lost there, so Better-Cal could no longer tell ' + (gone.length === 1 ? 'it was' : 'they were') + ' deleted';
   const way = r.toAllDay ? 'Move the event to another time first, then make it all-day.' : 'Make it timed at another time first, then change the time to ' + clock + '.';
   return 'Google Calendar has a fault here: ' + when + ', ' + what + '. ' + way;
 }
@@ -925,7 +925,7 @@ export const unofferedWords = (code) => UNOFFERED[code] || null;
 /** A note's sentence, by its kind and data. */
 export function noteWords(n, opts = {}) {
   if (!n) return '';
-  if (n.kind === 'google') return 'This change is sent to Google and read back from it: the calendar shows what Google stores.';
+  if (n.kind === 'google') return 'This change is sent to Google Calendar and read back from it: the calendar here shows what is stored there.';
   // A note's clocks are its point. Its subject is its clock when that can be
   // said, and "a clock time" with its time unavailable when its zone can't be
   // read (never the device's clock); a note with no instant says what it can.
@@ -1156,4 +1156,8 @@ export function keptWords(kept, { there = false, now = new Date() } = {}) {
 }
 
 /** A run of deletes stopped at a question the person cancelled, after some went: "Stopped. Already deleted: 'Sample hike' and 'Sample dinner'." */
+// Where a change went, on its toast, after what it did and which occurrences: one sent to Google Calendar happened
+// both here and there. Every toast of a change sent there says it this way (app/actions.js, app/serieschange.js), so
+// the kept line under it can say "there" (store.js toast).
+export const whereWords = (google) => (google ? ', here and in Google Calendar' : '');
 export const stoppedWords = (deleted) => 'Stopped. Already deleted: ' + andList(deleted.map((t) => quoted(t || 'Untitled event'))) + '.';

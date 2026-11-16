@@ -255,7 +255,7 @@ final class ReviewController
                     // In the history, dismissed while the change is still half done: the way to show it again, also
                     // where no event here carries the line (a whole-series delete whose answer was lost).
                     $items[] = ['key' => 'google_half:' . $half['id'], 'kind' => 'google_half', 'status' => 'dismissed', 'title' => $half['title'],
-                        'summary' => 'Half done at Google: ' . $half['summary'], 'createdAt' => $half['createdAt'], 'eventId' => $half['eventId'], 'detail' => $half,
+                        'summary' => 'Half done in Google Calendar: ' . $half['summary'], 'createdAt' => $half['createdAt'], 'eventId' => $half['eventId'], 'detail' => $half,
                         'actions' => $canDecide ? [self::action('reopen', 'Show again', "/review/notices/{$notice['row']}/reopen") + ['quiet' => true]] : []];
                 }
                 continue;
@@ -267,8 +267,10 @@ final class ReviewController
                 'title' => $half['title'],
                 // A pending undo whose entry is in an older format can't be finished
                 // (GoogleUndo::entryToFinish): said up front, and Put back offered alone.
-                'summary' => 'Half done at Google: ' . $half['summary'] . ' It stopped at step ' . ($half['stepsDone'] + 1) . ': ' . $half['error']
-                    . ' ' . ($half['unrecoverable'] ?? $half['finishRefused'] ?? 'Finish sends the rest from what Google has now; Put back reverses every step done, only while nothing changed at Google since.'),
+                // Why it stopped is a sentence of its own, ending with its full stop (#281); which step it was is
+                // in `detail` (stepsDone), not in the words, since a step's number means nothing to a person.
+                'summary' => 'Half done in Google Calendar: ' . $half['summary'] . ' ' . rtrim(trim($half['error']), '.') . '.'
+                    . ' ' . ($half['unrecoverable'] ?? $half['finishRefused'] ?? 'Finish sends the rest from what Google Calendar has now; Put back reverses every step done, only while nothing changed there since.'),
                 'createdAt' => $half['createdAt'],
                 'eventId' => $half['eventId'],
                 'detail' => $half,

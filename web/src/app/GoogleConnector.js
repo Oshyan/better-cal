@@ -92,8 +92,8 @@ export function GoogleConnector() {
       await loadCalendars();
       const n = cal.health && cal.health.eventCount;
       toast(cal.reattached
-        ? 'Re-attached "' + cal.name + '": its events and everything you added here stay, and it follows Google again.'
-        : 'Added "' + cal.name + '"' + (n != null ? ' (' + n + ' events)' : '') + '. It checks Google every ' + cal.pollIntervalMinutes + ' minutes.');
+        ? 'Re-attached "' + cal.name + '": its events and everything you added here stay, and it follows Google Calendar again.'
+        : 'Added "' + cal.name + '"' + (n != null ? ' (' + n + ' events)' : '') + '. It checks Google Calendar every ' + cal.pollIntervalMinutes + ' minutes.');
       await loadList(a.id);
     } catch (e) {
       toast('Could not add: ' + e.message, { error: true });
@@ -117,7 +117,7 @@ export function GoogleConnector() {
   return html`<section class="bc-set-section">
     <h2 class="bc-set-h">Google Calendar</h2>
     <${WorkerNote} what="Google calendars, to stay in sync," />
-    <p class="bc-set-lead">Connect a Google account, then choose which of its calendars to add here. Added calendars show alongside your own and stay in sync with Google. If the account can edit a calendar, you can edit it here too, and changes go straight to Google. This also reaches calendars people have shared with you privately, which a web address can't.</p>
+    <p class="bc-set-lead">Connect a Google account, then choose which of its calendars to add here. Added calendars show alongside your own and stay in sync with Google Calendar. If the account can edit a calendar, you can edit it here too, and changes go straight there. This also reaches calendars people have shared with you privately, which a web address can't.</p>
     ${status === null && html`<${Row} label="Account"><span class="bc-set-value">Loading…</span><//>`}
     ${status && !status.configured && html`<${Row} label="Account" hint="Reading calendars through a Google account needs an OAuth client of this server's own, from a free Google Cloud project: about ten minutes, once, by whoever runs the server. The two values go in the settings file, .env.php, as BETTERCAL_GOOGLE_CLIENT_ID and BETTERCAL_GOOGLE_CLIENT_SECRET.">
       <span class="bc-set-value">Not set up on this server. <a href=${GOOGLE_SETUP_URL} target="_blank" rel="noopener">How to set it up</a></span>
@@ -132,7 +132,7 @@ export function GoogleConnector() {
                   <button type="button" class="bc-link-btn" disabled=${busy === 'connect'} onClick=${connect}>Reconnect</button>`
               : a.status !== 'ok' && html`<span class="bc-google-err" title=${a.error || ''}>Connection problem</span>`}
             ${confirmDisconnect === a.id
-              ? html`<span class="bc-google-confirm">Disconnect? Its calendars stay, but stop updating.${(a.unfinishedMoves || []).map((m) => html` <strong>This also stops moving "${m.calendarName}" to Google${m.total ? ' (' + m.done + ' of ' + m.total + ' uploaded)' : ''}: it stays here as it was, and anything already uploaded stays in the Google calendar.</strong>`)}
+              ? html`<span class="bc-google-confirm">Disconnect? Its calendars stay, but stop updating.${(a.unfinishedMoves || []).map((m) => html` <strong>This also stops moving "${m.calendarName}" to Google Calendar${m.total ? ' (' + m.done + ' of ' + m.total + ' uploaded)' : ''}: it stays here as it was, and anything already uploaded stays in the Google calendar.</strong>`)}
                   <button type="button" class="bc-btn bc-btn-danger" disabled=${busy === 'disconnect:' + a.id} onClick=${() => disconnect(a)}>Disconnect</button>
                   <button type="button" class="bc-link-btn" onClick=${() => setConfirmDisconnect(null)}>Keep</button></span>`
               : html`<button type="button" class="bc-link-btn" onClick=${() => { setConfirmDisconnect(a.id); load(); }}>Disconnect</button>`}

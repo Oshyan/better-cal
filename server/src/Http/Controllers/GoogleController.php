@@ -39,7 +39,7 @@ final class GoogleController
      */
     public function moveToGoogle(Request $req, array $params): Response
     {
-        $req->requireRecentAuthentication('Moving a calendar to Google');
+        $req->requireRecentAuthentication('Moving a calendar to Google Calendar');
         $userId = (int) $req->user['id'];
         $accountId = (int) ($req->body['accountId'] ?? 0);
         $target = trim((string) ($req->str('googleCalendarId') ?? ''));

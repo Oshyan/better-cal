@@ -231,7 +231,7 @@ final class Auth
                     "UPDATE calendar_moves
                      SET status = 'failed', cancelled_at = ?, finished_at = ?, error = ?
                      WHERE user_id = ? AND status IN ('queued', 'running', 'failed') AND cancelled_at IS NULL",
-                    [$now, $now, 'Stopped by the account compromise reset. Events already uploaded to Google may remain there; start a new move after reconnecting.', $userId]
+                    [$now, $now, 'Stopped by the account compromise reset. Events already uploaded to Google Calendar may remain there; start a new move after reconnecting.', $userId]
                 )->rowCount();
                 // Keep cached events and account/calendar identities, but make
                 // the calendars visibly read-only until a successful poll after

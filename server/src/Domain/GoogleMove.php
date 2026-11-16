@@ -59,7 +59,7 @@ final class GoogleMove
             throw HttpError::notFound('No such calendar');
         }
         if ((string) $calendar['kind'] !== 'local') {
-            throw HttpError::badRequest('Only a calendar of your own here can be moved to Google');
+            throw HttpError::badRequest('Only a calendar of your own here can be moved to Google Calendar');
         }
         $account = $this->auth->account($userId, $accountId);
         $account = $this->auth->assertUsable($account);
@@ -91,7 +91,7 @@ final class GoogleMove
                 throw HttpError::notFound('No such calendar');
             }
             if ((string) $calendar['kind'] !== 'local') {
-                throw HttpError::badRequest('Only a calendar of your own here can be moved to Google');
+                throw HttpError::badRequest('Only a calendar of your own here can be moved to Google Calendar');
             }
             // Canonical durable-write order is user -> calendar -> account.
             // Google polling, write-through and compromise reset take the
@@ -327,7 +327,7 @@ final class GoogleMove
             });
             $count = (int) $this->db->scalar('SELECT done_count FROM calendar_moves WHERE id = ?', [$moveId]);
             $this->undo->write((int) $move['user_id'], fn() => $this->undo->record((int) $move['user_id'], 'calendar', $calendarId, 'update', null, null,
-                "Moved calendar '" . (string) $calendar['name'] . "' to Google (" . $count . ' event' . ($count === 1 ? '' : 's') . ')'));
+                "Moved calendar '" . (string) $calendar['name'] . "' to Google Calendar (" . $count . ' event' . ($count === 1 ? '' : 's') . ')'));
             try {
                 $this->feeds->poll($calendarId);
             } catch (\Throwable $e) {
@@ -382,7 +382,7 @@ final class GoogleMove
     private function uploaded(int $moveId, string $token, int $eventId, string $googleId, bool $trackedImport = false): void
     {
         if ($googleId === '') {
-            throw new \RuntimeException('Google accepted an event but returned no id for it');
+            throw new \RuntimeException('Google Calendar accepted an event but returned no id for it');
         }
         RequestAuthority::checkedTx($this->db, function () use ($moveId, $token, $eventId, $googleId, $trackedImport): void {
             $this->requireLease($moveId, $token);
@@ -450,7 +450,7 @@ final class GoogleMove
         if ($googleId === '') {
             // A missing result cannot prove that the earlier import did not
             // commit. Never reissue it and risk a duplicate remote event.
-            throw new \RuntimeException('The previous Google event import could not be confirmed; try again later or stop this move and review the partial Google copy.');
+            throw new \RuntimeException('The previous Google event import could not be confirmed; try again later or stop this move and review the partial copy in Google Calendar.');
         }
         $this->uploaded((int) $move['id'], $token, $eventId, $googleId, true);
     }

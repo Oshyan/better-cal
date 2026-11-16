@@ -35,8 +35,8 @@ return static function (Db $db): void {
     $lines = static fn(object $s): array => PA::lines($db, $s->u, $s->calendarId);
     $edit = static fn(object $s, string $title = 'Sample single, renamed'): ?string => PA::code(PA::caught(fn() => $s->events->patch($s->u, $s->id, ['title' => $title])));
     $name = "'" . PA::NAME . "'";
-    $readOnly = "Your permissions for $name at Google are now read-only. If you have access, restore full editing there. Until then $name works read-only here: changes, and undoing past changes, are unavailable.";
-    $notShown = "Google no longer shows $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and no longer update. If it is shared with you again, it updates again; otherwise remove it, or keep it as a calendar of your own.";
+    $readOnly = "Your permissions for $name in Google Calendar are now read-only. If you have access, restore full editing there. Until then $name works read-only here: changes, and undoing past changes, are unavailable.";
+    $notShown = "Google Calendar no longer shows $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and no longer update. If it is shared with you again, it updates again; otherwise remove it, or keep it as a calendar of your own.";
 
     scenario('access read, access in Review and Activity: one line per move between tiers and one item per calendar below writer, by polls and by attempts alike, with the model\'s sentences', function () use ($db, $make, $role, $items, $lines, $edit, $readOnly, $notShown): void {
         $s = $make();

@@ -420,7 +420,7 @@ return static function (Db $db): void {
         [$ok, $code, $words, $listedAfter] = $refused($s);
         checkEq('not ok, google_changed_since; the words name the series and Finish; the change is still in Review, its journal as it was',
             [false, 'google_changed_since', true, true, 1, $journal],
-            [$ok, $code, str_contains($words, "'Sample split' changed at Google since"), str_contains($words, 'Finish'), $listedAfter, $elsewhere($s)]);
+            [$ok, $code, str_contains($words, "'Sample split' changed in Google Calendar since"), str_contains($words, 'Finish'), $listedAfter, $elsewhere($s)]);
         checkEq("nothing sent; the old series keeps the change's end at Google and here; the new series stands as edited",
             [$writes, $old, $here, true, 'confirmed', 'Sample renamed elsewhere'],
             [$s->t->writes, $held($s, 'smpl3weekly'), $stored($s, 'smpl3weekly'), str_contains((string) $old['rule'], 'UNTIL='), $s->fake->events[$new]['status'] ?? 'confirmed', $s->fake->events[$new]['summary']]);
@@ -454,7 +454,7 @@ return static function (Db $db): void {
         $there = $held($s, 'smpl3weekly');
         [$ok, $code, $words, $listedAfter] = $refused($s);
         checkEq("an edited day's answer lost, the place changed since: refused, the series named; Google keeps both; still in Review",
-            [false, 'google_changed_since', true, $there, 1], [$ok, $code, str_contains($words, "'Sample weekly' changed at Google since"), $held($s, 'smpl3weekly'), $listedAfter]);
+            [false, 'google_changed_since', true, $there, 1], [$ok, $code, str_contains($words, "'Sample weekly' changed in Google Calendar since"), $held($s, 'smpl3weekly'), $listedAfter]);
 
         // The master's PATCH (a rename) lost, then a day edited elsewhere.
         $s = $setup();
@@ -780,7 +780,7 @@ return static function (Db $db): void {
             $writes = $s->t->writes;
             [$ok, $code, $words, $listedAfter] = $refused($s);
             checkEq("$what: not ok, google_changed_since, the series named; nothing sent; Google as it was; still in Review",
-                [false, 'google_changed_since', true, $writes, $there, 1], [$ok, $code, str_contains($words, "'Sample weekly' changed at Google since"), $s->t->writes, $held($s, 'smpl3weekly'), $listedAfter]);
+                [false, 'google_changed_since', true, $writes, $there, 1], [$ok, $code, str_contains($words, "'Sample weekly' changed in Google Calendar since"), $s->t->writes, $held($s, 'smpl3weekly'), $listedAfter]);
         }
     });
 
@@ -882,7 +882,7 @@ return static function (Db $db): void {
         $s->events->throwDeferred();
         $summary = (string) $db->scalar('SELECT summary FROM mutations WHERE user_id = ? ORDER BY id DESC LIMIT 1', [$s->u]);
         checkEq('the writes are the master and the day with its own title; Activity names no difference', [['PATCH smpl3weekly', 'PATCH smpl3weekly_20270329T170000Z'], false],
-            [$writesOf($s), str_contains($summary, 'Google kept')]);
+            [$writesOf($s), str_contains($summary, 'Google Calendar kept')]);
     });
 
     scenario('google recovery sweep F8: a day with only a tag is an ordinary day to Google: a rename sends it nothing and its undo keeps the tag', function () use ($setup, $masterId, $iso, $rowAt, $writesOf, $day, $db): void {
@@ -1083,7 +1083,7 @@ return static function (Db $db): void {
         $there = $held($s, 'smpl3weekly');
         [$ok, $code, $words, $listedAfter] = $refused($s);
         checkEq('an answered step, then the place changed at Google: Put back sends nothing, names the series, and keeps the change in Review',
-            [false, 'google_changed_since', true, $there, 1], [$ok, $code, str_contains($words, "'Sample weekly' changed at Google since"), $held($s, 'smpl3weekly'), $listedAfter]);
+            [false, 'google_changed_since', true, $there, 1], [$ok, $code, str_contains($words, "'Sample weekly' changed in Google Calendar since"), $held($s, 'smpl3weekly'), $listedAfter]);
     });
 
     // ---- Put back restores every row of the snapshot, a day holding only local data included ----------

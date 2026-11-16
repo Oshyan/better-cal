@@ -225,7 +225,7 @@ return static function (Db $db): void {
                 $caught[] = $e->status . ' ' . $e->errorCode . ': ' . $e->getMessage();
             }
         }
-        $words = '409 google_conflict: This event changed at Google since you last saw it. Refresh and try again.';
+        $words = '409 google_conflict: This event changed in Google Calendar since you last saw it. Refresh and try again.';
         checkEq('an edit, an occurrence edit and a delete each answer the conflict; rows, Activity and CalDAV untouched', [[$words, $words, $words], $before], [$caught, $state()]);
     });
 

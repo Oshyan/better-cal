@@ -142,7 +142,7 @@ function SystemSection() {
 // calendar use works without it), and what to do; then the schedule and a
 // button for the command, as control panels ask for them; then the note on
 // which PHP it uses, with the full crontab line for people with a terminal.
-const NEEDS_WORKER = 'Reminders, subscribed calendars and Google refreshing, email import, prompt filters, place pins and plugins';
+const NEEDS_WORKER = 'Reminders, subscribed calendars and Google Calendar refreshing, email import, prompt filters, place pins and plugins';
 function CronBlock({ cron, worker }) {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);

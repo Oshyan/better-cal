@@ -1825,6 +1825,8 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     checkEq('review diff: location from -> to', ['Example Cafe', 'Corner Bistro'], [$moved[2]['from'], $moved[2]['to']]);
     $desc = $rq::inviteDiff($stored, 'REQUEST', ['description' => '<p>Bring the   <i>budget</i> instead.</p>'] + $same);
     checkEq('review diff: description is compared and previewed as plain text', ['Bring the deck.', 'Bring the budget instead.'], [$desc[0]['from'], $desc[0]['to']]);
+    $paras = $rq::inviteDiff($stored, 'REQUEST', ['description' => '<p>Bring the deck.</p><p>Doors open at <b>noon</b>.</p><ul><li>Sample snacks</li><li>Sample chairs</li></ul>'] + $same);
+    checkEq('review diff: a preview keeps each paragraph and list item on its own line (#313)', "Bring the deck.\nDoors open at noon.\nSample snacks\nSample chairs", $paras[0]['to'] ?? null);
     checkEq('review diff: markup-only description edits are not a change', [], $rq::inviteDiff($stored, 'REQUEST', ['description' => '<div>Bring the deck.</div>'] + $same));
     checkEq('review diff: a cancellation is one line', [['field' => 'status', 'label' => 'Status', 'from' => 'confirmed', 'to' => 'cancelled']], $rq::inviteDiff($stored, 'CANCEL', []));
     checkEq('review diff: cancelling what is already cancelled is nothing', [], $rq::inviteDiff(['status' => 'cancelled'] + $stored, 'CANCEL', []));
@@ -8800,8 +8802,10 @@ checkEq('plugin timed: a time with no offset is the owner\'s local time',
     check('alert: a feed failing 6h is not due (a day)', !SystemHealth::shouldAlert($row(['kind' => 'feed', 'first_failed_at' => '2026-09-13 06:00:00']), $now));
     check('alert: a feed failing 25h is due', SystemHealth::shouldAlert($row(['kind' => 'feed', 'first_failed_at' => '2026-09-12 11:00:00']), $now));
     check('alert: a device failing 7h is due regardless of count', SystemHealth::shouldAlert($row(['kind' => 'push', 'first_failed_at' => '2026-09-13 05:00:00', 'consecutive_failures' => 1]), $now));
-    checkEq('streak words: hours and minutes', '5 failures over 2h 0m', SystemHealth::describeStreak($row(), '2026-09-13 12:00:00'));
-    checkEq('streak words: days', '30 failures over 1d 6h', SystemHealth::describeStreak($row(['consecutive_failures' => 30, 'first_failed_at' => '2026-09-12 06:00:00']), '2026-09-13 12:00:00'));
+    checkEq('streak words: hours, in words, no zero minutes', '5 failed attempts over 2 hours', SystemHealth::describeStreak($row(), '2026-09-13 12:00:00'));
+    checkEq('streak words: days and hours, in words', '30 failed attempts over 1 day and 6 hours', SystemHealth::describeStreak($row(['consecutive_failures' => 30, 'first_failed_at' => '2026-09-12 06:00:00']), '2026-09-13 12:00:00'));
+    checkEq('streak words: under a minute names no time (#281: never "over 0m")', '2 failed attempts', SystemHealth::describeStreak($row(['consecutive_failures' => 2, 'first_failed_at' => '2026-09-13 11:59:30']), '2026-09-13 12:00:00'));
+    checkEq('streak words: minutes alone', '1 failed attempt over 12 minutes', SystemHealth::describeStreak($row(['consecutive_failures' => 1, 'first_failed_at' => '2026-09-13 11:48:00']), '2026-09-13 12:00:00'));
     $mail = SystemHealth::buildFailureEmail([$row()], $now, new DateTimeZone('America/Los_Angeles'), 'https://cal.example');
     checkEq('failure email: subject names the one thing', 'Better-Cal: Prompt filter evaluation has been failing', $mail['subject']);
     check('failure email: times read as a person would say them, in their zone', str_contains($mail['text'], 'Sun, Sep 13, 2026 at 3:00 AM PDT'), $mail['text']);
@@ -9744,7 +9748,7 @@ require __DIR__ . '/plugins.php';
     checkEq('health: a third failure adds nothing', 1, count($entries()));
     checkEq('health: streak counted', 3, (int) $hdb->scalar('SELECT consecutive_failures FROM system_health WHERE subject = ?', ['feed:9']));
     $health->recordOk('feed:9', 'feed', 1, 'Feed: Hangs');
-    check('health: recovery after a real streak is journaled', str_starts_with($entries()[1] ?? '', 'Feed: Hangs recovered after 3 failures'));
+    check('health: recovery after a real streak is journaled', str_starts_with($entries()[1] ?? '', 'Feed: Hangs recovered after 3 failed attempts'));
     $health->recordFailure('feed:10', 'feed', 1, 'Feed: New', 'timeout');
     checkEq('health: a brand-new subject failing once is not journaled', 2, count($entries()));
 }

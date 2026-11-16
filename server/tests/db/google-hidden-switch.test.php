@@ -32,7 +32,7 @@ return static function (Db $db): void {
             [$days, $toAll, $clock, $words, $deleted] = $refusalOf($t, $toAllDay);
             checkEq('the deleted day among them is named as deleted', ['2027-01-18'], $deleted);
             checkEq('the plan is refused with the two days as they show here, to all-day', [['2027-01-11', '2027-01-18'], true, null], [$days, $toAll, $clock]);
-            check('the sentence says it is Google\'s fault, names the day nobody deleted, and says what works', str_contains($words, 'Google Calendar has a fault here: if this event became all-day at its current time, Google would stop showing one of its days (Mon 11 Jan') && str_contains($words, 'though nothing deleted it. Move the event to another time first, then make it all-day.'), $words);
+            check('the sentence says it is Google\'s fault, names the day nobody deleted, and says what works', str_contains($words, 'Google Calendar has a fault here: if this event became all-day at its current time, one of its days (Mon 11 Jan') && str_contains($words, 'would stop showing there') && str_contains($words, 'though nothing deleted it. Move the event to another time first, then make it all-day.'), $words);
             $before = count($t->s->fake->requests);
             [, $error] = H::tryChange($t, $toAllDay);
             checkEq('the change is refused and Google is sent nothing', [true, []], [$error !== null, H::writes($t, $before)]);
@@ -62,7 +62,7 @@ return static function (Db $db): void {
             }
             [$days, , , $words] = $refusalOf($t, ['scope' => 'all', 'instanceStart' => '2027-01-04T16:00:00-08:00', 'start' => '2027-01-04', 'end' => '2027-01-05', 'allDay' => true]);
             checkEq('the five days after the renamed ones would be hidden', ['2027-01-06', '2027-01-07', '2027-01-08', '2027-01-09', '2027-01-10'], $days);
-            check('three named, two counted', str_contains($words, 'Google would stop showing some of its days (Wed 6 Jan') && str_contains($words, 'Fri 8 Jan') && str_contains($words, 'and 2 more), though nothing deleted them.'), $words);
+            check('three named, two counted', str_contains($words, 'some of its days (Wed 6 Jan') && str_contains($words, 'Fri 8 Jan') && str_contains($words, 'and 2 more) would stop showing there, though nothing deleted them.'), $words);
         } finally {
             H::done($t);
         }

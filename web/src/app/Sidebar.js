@@ -100,7 +100,7 @@ function healthBadge(cal, onOpen) {
 function calSourceLabel(cal) {
   if (cal.kind !== 'subscribed' || cal.pluginId || cal.provider !== 'google') return undefined;
   return cal.googleAccountEmail
-    ? `From Google Calendar (${cal.googleAccountEmail})${cal.editable ? '; edits here go to Google' : '; view only'}`
+    ? `From Google Calendar (${cal.googleAccountEmail})${cal.editable ? '; edits here go there too' : '; view only'}`
     : 'From Google Calendar; its account was disconnected, so it no longer updates';
 }
 

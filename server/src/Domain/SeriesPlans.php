@@ -1382,7 +1382,7 @@ trait SeriesPlans
                 $recovered[] = (string) ($resource['iCalUID'] ?? $googleId);
             }
             $recovered = array_values(array_unique($recovered));
-            $what = ($how === 'finish' ? "Finished '" . (string) $row['title'] . "' at Google" : "Put '" . (string) $row['title'] . "' back at Google")
+            $what = ($how === 'finish' ? "Finished '" . (string) $row['title'] . "' in Google Calendar" : "Put '" . (string) $row['title'] . "' back in Google Calendar")
                 . ($left !== [] ? ' ' . implode(' ', $left) : '');
             $this->googleAfter($userId, $calendar, $row['event_id'] !== null ? (int) $row['event_id'] : null, (string) $row['title'], $what, $out['differences'],
                 details: isset($out['removedDays']) ? ['removedDays' => $out['removedDays']] : null,
@@ -1425,8 +1425,8 @@ trait SeriesPlans
             // The action the undo kept with its pending row, never one cut from a line.
             $what = $summary;
             $this->undo->record($userId, 'event', (int) ($row['event_id'] ?? 0), 'update', null, null,
-                GoogleUndo::line(($redo ? 'Put back at Google: a redo that stopped part way is taken back, so this stays undone: ' . $what
-                    : 'Put back at Google: an undo that stopped part way is taken back, so this stands: ' . GoogleUndo::undoSummary($what)), (string) $calendar['name']));
+                GoogleUndo::line(($redo ? 'Put back in Google Calendar: a redo that stopped part way is taken back, so this stays undone: ' . $what
+                    : 'Put back in Google Calendar: an undo that stopped part way is taken back, so this stands: ' . GoogleUndo::undoSummary($what)), (string) $calendar['name']));
         }
         return ['ok' => true, 'differences' => $differences, 'left' => $out['left'] ?? []];
     }

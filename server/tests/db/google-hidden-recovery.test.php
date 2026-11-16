@@ -44,9 +44,9 @@ return static function (Db $db): void {
     });
 
     scenario('hidden at Finish: the words name Put back first, then the way that works', function (): void {
-        checkEq('to all-day, from Finish', 'Google Calendar has a fault here: if this event became all-day at its current time, Google would stop showing one of its days (Mon 12 Jul), though nothing deleted it. Put the change back instead; afterwards, move the event to another time first, then make it all-day.',
+        checkEq('to all-day, from Finish', 'Google Calendar has a fault here: if this event became all-day at its current time, one of its days (Mon 12 Jul) would stop showing there, though nothing deleted it. Put the change back instead; afterwards, move the event to another time first, then make it all-day.',
             GoogleSeries::hiddenWords(['2027-07-12'], [], true, null, 2027, 'finish'));
-        checkEq('a new change keeps its own way', 'Google Calendar has a fault here: if this event became timed at 20:00, Google would stop showing one of its days (Mon 12 Jul), though nothing deleted it. Make it timed at another time first, then change the time to 20:00.',
+        checkEq('a new change keeps its own way', 'Google Calendar has a fault here: if this event became timed at 20:00, one of its days (Mon 12 Jul) would stop showing there, though nothing deleted it. Make it timed at another time first, then change the time to 20:00.',
             GoogleSeries::hiddenWords(['2027-07-12'], [], false, '20:00', 2027));
     });
 };

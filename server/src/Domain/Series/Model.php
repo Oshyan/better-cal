@@ -71,7 +71,7 @@ final class Model
     /** The same for a split's part (this and following): the days before stay, so only the part would be left with none. */
     public const EMPTY_FROM_DAY = 'This would leave no events from this day on. Delete this and following instead?';
 
-    public const GOOGLE_NOTE = 'This change is sent to Google and read back from it: the calendar shows what Google stores. It can\'t be undone yet.';
+    public const GOOGLE_NOTE = 'This change is sent to Google Calendar and read back from it: the calendar here shows what is stored there. It can\'t be undone yet.';
 
     private Rule $r0;
     /** The rule as stored (r0 drops the stored day of an anchored start). */
@@ -1312,12 +1312,7 @@ final class Model
         // changes form: a split's part is inserted at Google under a new id, holding no record of the old series, so
         // nothing of it can be hidden (the second independent read, F3).
         if ($this->google && !isset($this->opts['splitDay']) && $out['writes'] !== null) {
-            $keys = $this->exdates;
-            foreach ($this->rows as $row) {
-                if (!empty($row['recurrence_instance_utc']) && OwnFields::googleHeld(OwnFields::stored($row)) !== []) {
-                    $keys[] = (string) $row['recurrence_instance_utc'];
-                }
-            }
+            $keys = \BetterCal\Domain\GoogleSeries::recordKeysByRows($this->exdates, $this->rows);
             $hidden = \BetterCal\Domain\GoogleSeries::hiddenRefusal($this->master, $out['writes']['master'] + $this->master, $keys, $this->exdates, $this->thisYear);
             if ($hidden !== null) {
                 return $this->refused('googleHidden', $hidden['words'], array_diff_key($hidden, ['words' => true]));
@@ -2946,7 +2941,6 @@ final class Model
         $verb = match ($kind) {
             'drag', 'start' => 'Moved', 'newrule', 'norule' => 'Changed how ' . $title . ' repeats', default => 'Changed',
         };
-        $startAlone = $kind === 'start' && $words === $wordsBefore;
         // The Activity entry: what was changed, its reach (every event, or
         // the part from the day a split starts on, which Split passes), then
         // the rule where it changes and each field changed. A zone changed
@@ -2957,10 +2951,20 @@ final class Model
         $ruleFrom = $zoneMoved ? Words::rule($this->r0, $this->clock0, self::zoneName($this->tz0)) : $wordsBefore;
         $ruleTo = $zoneMoved && $this->ruleDelta !== 'none' ? Words::rule($r1p, $clock1, self::zoneName($this->tz1)) : $words;
         $zoneGroup = array_values(array_filter($this->groups, static fn(array $g): bool => $g['id'] === 'zone'))[0] ?? null;
-        $kept = $zoneGroup === null ? '' : ($zoneGroup['selected'] === 'moment' ? ', keeping the same moment' : ', keeping the clock time');
+        // What a zone change kept, where the choice was offered, said from the before and the after, never from the
+        // option's name (#281): the clock time where the clock is the same, the same moment where the new clock in the
+        // new zone is the old clock's instant, and neither where neither holds (a time moved as well).
+        $kept = '';
+        if ($zoneGroup !== null) {
+            $kept = $clock1 === $this->clock0 ? ', keeping the clock time'
+                : (self::clockOf(Calc::at($newStart, $clock1, $this->tz1)->setTimezone(Time::zone($this->tz0))) === $this->clock0 ? ', keeping the same moment' : '');
+        }
+        // The rule said on both sides only where it changes; a move whose rule and clock read the same before and after
+        // says the first day, old and new, and nothing else of the rule (#281).
+        $sameRule = $ruleTo === $ruleFrom;
         $ruleClause = match (true) {
-            $startAlone => 'starts ' . Words::dayMonth($newStart, $this->thisYear) . ' (was ' . Words::dayMonth($this->old->startDn, $this->thisYear) . '), ' . Words::lower($words) . ', as before',
-            in_array($kind, ['drag', 'start', 'newrule', 'norule'], true) || $ruleTo !== $ruleFrom => Words::lower($ruleFrom) . ', now ' . Words::lower($ruleTo) . $kept . ', from ' . Words::dayMonth($newStart, $this->thisYear),
+            $sameRule && in_array($kind, ['drag', 'start'], true) && $newStart !== $this->old->startDn => 'starts ' . Words::dayMonth($newStart, $this->thisYear) . ' (was ' . Words::dayMonth($this->old->startDn, $this->thisYear) . ')',
+            !$sameRule || in_array($kind, ['newrule', 'norule'], true) => Words::lower($ruleFrom) . ', now ' . Words::lower($ruleTo) . $kept . ', from ' . Words::dayMonth($newStart, $this->thisYear),
             default => null,
         };
         $clauses = $ruleClause === null ? [] : [$ruleClause];

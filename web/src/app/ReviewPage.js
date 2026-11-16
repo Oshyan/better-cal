@@ -40,7 +40,7 @@ import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/
 import { askConfirm } from './ConfirmDialog.js';
 import { accessCheckWords } from './CalendarSettings.js';
 
-const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused', plugin: 'Plugin turned off', google_half: 'Half done at Google', google_differs: 'Google kept something else', google_empty: 'Google listed nothing', google_read_only: 'Read-only at Google', google_not_shown: 'No longer shown by Google' };
+const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused', plugin: 'Plugin turned off', google_half: 'Half done in Google Calendar', google_differs: 'Google Calendar kept something else', google_empty: 'Google Calendar listed nothing', google_read_only: 'Read-only in Google Calendar', google_not_shown: 'No longer shown by Google Calendar' };
 const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar', plugin: 'warning', google_half: 'warning', google_differs: 'calendar', google_empty: 'warning', google_read_only: 'warning', google_not_shown: 'warning' };
 
 // Which reader made a held emailed event, so an AI reading can be checked
@@ -137,7 +137,7 @@ function ReviewCard({ item, onChanged }) {
       } else if (item.kind === 'model_limit') {
         toast('AI notice dismissed');
       } else if (item.kind === 'google_differs') {
-        toast('Notice dismissed. The calendar shows what Google stores.');
+        toast('Notice dismissed. The calendar here shows what Google Calendar stores.');
       } else if (item.kind === 'google_empty') {
         toast('Notice dismissed. Nothing was removed.');
       } else if ((item.kind === 'google_read_only' || item.kind === 'google_not_shown') && action.name === 'check') {
@@ -147,14 +147,14 @@ function ReviewCard({ item, onChanged }) {
         loadReviewCount();
       } else if (item.kind === 'google_read_only' || item.kind === 'google_not_shown') {
         // Dismissed, not resolved: the calendar stays read-only until Google says otherwise.
-        toast('Notice dismissed. The calendar stays read-only here until Google allows changes again.');
+        toast('Notice dismissed. The calendar stays read-only here until Google Calendar allows changes again.');
       } else if (item.kind === 'google_half' && action.name === 'dismiss') {
         // Acknowledged, not decided: the change stays half done, and the event's own details say so.
         toast('Notice dismissed. The change stays half done; the event says so and leads back here.');
       } else if (item.kind === 'google_half') {
         // Put back is all or nothing: a series changed at Google since
         // refuses it whole (409), and its words arrive through the catch.
-        toast(action.name === 'finish' ? 'Finished at Google' : 'Put back at Google', { error: false });
+        toast(action.name === 'finish' ? 'Finished in Google Calendar' : 'Put back in Google Calendar', { error: false });
         await loadCalendars().catch(() => {});
       } else if (item.kind === 'invite_new') {
         if (!accepted) {

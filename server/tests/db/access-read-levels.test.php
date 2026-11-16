@@ -103,7 +103,7 @@ return static function (Db $db): void {
     ];
     $name = "'Sample Google calendar'";
     $sentence = static fn(string $level, bool $undo): string => ($undo ? "This can't be undone while $name is read-only: " : "$name is read-only: ")
-        . 'your permissions for it at Google no longer allow changes. If you have access, restore full editing there.';
+        . 'your permissions for it in Google Calendar no longer allow changes. If you have access, restore full editing there.';
     $state = static fn(object $t): array => PA::state($db, $t->u, $t->s->calendarId, $t->s->fake);
     $role = static fn(object $t): ?string => PA::storedRole($db, $t->s->calendarId);
     $items = static fn(object $t, string $status = 'open'): array => PA::items($db, $t->u, $t->s->calendarId, $status);
@@ -131,7 +131,7 @@ return static function (Db $db): void {
                         checkEq("$level, $what: the model's sentence, word for word", $sentence($level, $kind === 'undo'), $e?->getMessage());
                     } else {
                         check("$level, $what: the sentence says Google no longer shows the calendar" . ($kind === 'undo' ? ', as an undo\'s refusal' : ''),
-                            str_contains((string) $e?->getMessage(), 'Google no longer shows') && ($kind !== 'undo' || str_starts_with((string) $e?->getMessage(), "This can't be undone while")), (string) $e?->getMessage());
+                            str_contains((string) $e?->getMessage(), 'Google Calendar no longer shows') && ($kind !== 'undo' || str_starts_with((string) $e?->getMessage(), "This can't be undone while")), (string) $e?->getMessage());
                     }
                     checkEq("$level, $what: the stored level is the one the stand-in's last list gave; one Review item open; one Activity line", [$level, [$code], 1],
                         [$role($t), $items($t), count($lines($t))]);
@@ -193,12 +193,12 @@ return static function (Db $db): void {
                     // one small list, then refused with the half-done change's sentence.
                     checkEq("still read-only, $what: refused after exactly one small list", [true, ['GET small']], [$e !== null, PA::sent($t->s->fake, $from)]);
                     check("still read-only, $what: the model's sentence for a half-done change", str_contains((string) $e?->getMessage(),
-                        "This change stopped part way, and your permissions for 'Sample Google calendar' at Google are now read-only, so it can't be finished or put back. It stays here, and the event takes no other change, until full editing is restored at Google or you remove the calendar."), (string) $e?->getMessage());
+                        "This change stopped part way, and your permissions for 'Sample Google calendar' in Google Calendar are now read-only, so it can't be finished or put back. It stays here, and the event takes no other change, until full editing is restored there or you remove the calendar."), (string) $e?->getMessage());
                 } else {
                     checkEq("still read-only, $what: refused as read-only after exactly one small list", ['google_read_only', ['GET small']], [PA::code($e), PA::sent($t->s->fake, $from)]);
                     // Rule D(2) of the read: stored view only before the refusal, so it says what the calendar is, no "no longer".
                     checkEq("still read-only, $what: the sentence for a calendar already view only, word for word",
-                        $kind === 'undo' ? "This can't be undone: 'Sample Google calendar' is view only at Google." : "'Sample Google calendar' is view only at Google, so it can't be changed here.", $e?->getMessage());
+                        $kind === 'undo' ? "This can't be undone: 'Sample Google calendar' is view only in Google Calendar." : "'Sample Google calendar' is view only in Google Calendar, so it can't be changed here.", $e?->getMessage());
                 }
                 checkEq("still read-only, $what: nothing held here or at Google differs", $before, $state($t));
                 checkEq("still read-only, $what: stored reader, the one item still open, no second Activity line", ['reader', ['google_read_only'], 1], [$role($t), $items($t), count($lines($t))]);

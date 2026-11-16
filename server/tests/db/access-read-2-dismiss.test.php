@@ -100,14 +100,14 @@ return static function (Db $db): void {
         $s = $make('freeBusyReader');
         $dismissOpen($s);
         checkEq('busy times only, its notice dismissed, then its polls fail for another reason: not acknowledged', false,
-            $held($s, 'Google could not be reached: connection timed out'));
+            $held($s, 'Google Calendar could not be reached: connection timed out'));
 
         // The state ended (editable again) and the calendar then fails: nothing is acknowledged.
         $s = $make('reader');
         $dismissOpen($s);
         $s->fake->role = 'writer';
         ($s->poll)();
-        checkEq('view only dismissed, editable again, then its polls fail: not acknowledged', false, $held($s, 'Google could not be reached: connection timed out'));
+        checkEq('view only dismissed, editable again, then its polls fail: not acknowledged', false, $held($s, 'Google Calendar could not be reached: connection timed out'));
     });
 
     // ---- A half-done change, dismissed ---------------------------------------------------------------------------------

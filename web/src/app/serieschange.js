@@ -15,7 +15,7 @@
 import { state, set, toast, patchOccurrence, restoreOccurrence, localSaved, invalidateRecords } from './store.js';
 import { api, entriesOf, refreshWindow } from './api.js';
 import { commitPlan, chosen, planRefusal } from '../lib/seriesplan.js';
-import { ruleWords } from '../lib/planwords.js';
+import { ruleWords, whereWords } from '../lib/planwords.js';
 
 let seq = 0;      // the newest request; an older answer is dropped
 let dialogs = 0;  // each dialog's id, so an answer for a closed one is dropped
@@ -189,7 +189,7 @@ export async function confirmSeriesChange() {
     const rule = plan.rule || {};
     const wasRule = ruleWords(rule.from), nowRule = ruleWords(rule.to);
     const now = nowRule && nowRule !== wasRule ? ', now ' + nowRule : '';
-    toast(verb + (sc.google ? ' at Google' : '') + now, {
+    toast(verb + whereWords(sc.google) + now, {
       title: sc.body.title || sc.title,
       undo: entriesOf(res),
       note: NO_UNDO,

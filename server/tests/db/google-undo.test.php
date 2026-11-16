@@ -241,7 +241,7 @@ return static function (Db $db): void {
             $caught = $e->status . ' ' . $e->errorCode . ': ' . $e->getMessage();
         }
         checkEq('the read before the PATCH shows the change, so nothing is sent: refused, rows and Activity as they were', [
-            '409 google_conflict: Newer changes exist for this item; undoing would overwrite them. This event changed at Google since you last saw it.',
+            '409 google_conflict: Newer changes exist for this item; undoing would overwrite them. This event changed in Google Calendar since you last saw it.',
             [['GET', 'probe9z8y7x@google.com', null]], $before,
         ], [$caught, $calls($t), $state()]);
     });

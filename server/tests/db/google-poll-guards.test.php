@@ -206,7 +206,7 @@ return static function (Db $db): void {
             $error = $e;
         }
         checkEq('three tries, two pauses growing, google_busy 503, the title as it was', [[1.0, 2.0], 'google_busy', 503, true, 'Pizza night'],
-            [$s->t->slept, $error?->errorCode, $error?->status, str_contains((string) $error?->getMessage(), 'Google is busy'), $db->scalar('SELECT title FROM events WHERE id = ?', [$s->pizzaId])]);
+            [$s->t->slept, $error?->errorCode, $error?->status, str_contains((string) $error?->getMessage(), 'Google Calendar is busy'), $db->scalar('SELECT title FROM events WHERE id = ?', [$s->pizzaId])]);
     });
 
     scenario('google refusals: a 404 on the event is "deleted at Google"; a permission 403 keeps its words; neither is retried', function () use ($setup): void {
@@ -224,7 +224,7 @@ return static function (Db $db): void {
         // The write's own list said writer just before (the access rule), so a 403 on the write is Google refusing that
         // change, as the probe saw for a few seconds after edit access was given back (row 6e): the model's words for it.
         checkEq('a permission 403 after a list that said writer: Google refused this change, 403, no pause', ['google_write_failed', 403, true, []],
-            [$error?->errorCode, $error?->status, str_starts_with((string) $error?->getMessage(), 'Google refused this change; nothing was changed.'), $s->t->slept]);
+            [$error?->errorCode, $error?->status, str_starts_with((string) $error?->getMessage(), 'Google Calendar refused this change; nothing was changed.'), $s->t->slept]);
     });
 
     scenario('google refusals: the read before a write is a list: a 404 on it is the calendar no longer shown, a 410 (never seen there) a failure, never "deleted at Google", and nothing is sent; a busy read is retried and the write lands', function () use ($setup, $busy, $db): void {
@@ -280,15 +280,15 @@ return static function (Db $db): void {
 
     // ---- A removal of something already gone at Google completes ------------
 
-    scenario('google refusals: deleting an event, one day or an edited day that Google had already removed completes here, and the Activity line says Google had already removed it', function () use ($setup, $atGoogle, $db): void {
+    scenario('google refusals: deleting an event, one day or an edited day that Google had already removed completes here, and the Activity line says Google Calendar had already removed it', function () use ($setup, $atGoogle, $db): void {
         $line = static fn(object $s): string => (string) $db->scalar('SELECT summary FROM mutations WHERE user_id = ? ORDER BY id DESC LIMIT 1', [$s->u]);
         $s = $setup();
         $atGoogle($s, 'DELETE', 'smpl7pizza');
         $s->t->sent = [];
         $s->events->deleteEvent($s->u, $s->pizzaId, null, null);
-        checkEq('the event: its row gone here, no DELETE sent, the line says Google had already removed it', [null, [], true],
+        checkEq('the event: its row gone here, no DELETE sent, the line says Google Calendar had already removed it', [null, [], true],
             [$db->scalar('SELECT id FROM events WHERE id = ? AND deleted_at IS NULL', [$s->pizzaId]), array_values(array_filter($s->t->sent, static fn(string $m): bool => $m !== 'GET')),
-                str_contains($line($s), "Deleted 'Pizza night' on Google calendar 'Sample club'. Google had already removed it.")]);
+                str_contains($line($s), "Deleted 'Pizza night' on Google calendar 'Sample club'. Google Calendar had already removed it.")]);
 
         $s = $setup();
         $atGoogle($s, 'DELETE', 'smpl7weekly');
@@ -297,12 +297,12 @@ return static function (Db $db): void {
         $skips = Recurrence::decodeExdates($db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$s->masterId]));
         checkEq('an ordinary day of a series Google had removed: skipped here, no DELETE sent, the line says so', [['2027-03-15 17:00:00'], [], true],
             [$skips, array_values(array_filter($s->t->sent, static fn(string $m): bool => $m !== 'GET')),
-                str_contains($line($s), "Deleted one occurrence of 'Sample practice' on Google calendar 'Sample club'. Google had already removed it.")]);
+                str_contains($line($s), "Deleted one occurrence of 'Sample practice' on Google calendar 'Sample club'. Google Calendar had already removed it.")]);
         $s->events->deleteEvent($s->u, $s->dayId, 'this', '2027-03-08T18:00:00+00:00');
         checkEq('its tagged 8 March: its row gone and the day skipped here, the line says so', [null, true, true],
             [$db->scalar('SELECT id FROM events WHERE id = ? AND deleted_at IS NULL', [$s->dayId]),
                 in_array('2027-03-08 18:00:00', Recurrence::decodeExdates($db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$s->masterId])), true),
-                str_contains($line($s), 'Google had already removed it.')]);
+                str_contains($line($s), 'Google Calendar had already removed it.')]);
 
         $s = $setup();
         $atGoogle($s, 'DELETE', 'smpl7pizza');

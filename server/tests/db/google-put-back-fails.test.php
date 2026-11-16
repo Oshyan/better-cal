@@ -97,7 +97,7 @@ return static function (Db $db): void {
                 [, $error] = H::recover($t, $how);
                 if ($how === 'putback') {
                     check("$name: Put back is refused, since the event did change at Google since, and the change stays half done",
-                        $error !== null && str_contains($error, "'Sample series' changed at Google since.") && count(H::halfDone($t)) === 1, (string) $error);
+                        $error !== null && str_contains($error, "'Sample series' changed in Google Calendar since.") && count(H::halfDone($t)) === 1, (string) $error);
                     checkEq("$name: the journaled plan is still as it was journaled", $journaled, $plan());
                     return;
                 }
@@ -164,7 +164,7 @@ return static function (Db $db): void {
     // anything journaled with the write, since the series has no row here to expect from. So the next Put back has only
     // the fall-back, "is Google as it was before the change", and Google is not (the series is back, its days not yet
     // put right): it is refused, and says that it has no record of the series after its last write, never that it
-    // changed at Google since. Finish completes the delete, after that refusal and without it.
+    // changed in Google Calendar since. Finish completes the delete, after that refusal and without it.
     $unread = "Better-Cal has no record of 'Sample series' as Google Calendar held it after this change's last write, so it can't tell whether it changed there since.";
     foreach (['putback' => 'Put back again, refused for want of a read, then Finish', 'finish' => 'Finish'] as $how => $word) {
         scenario("the whole repeating event deleted, stopped; a Put back whose series write is taken and then nothing is read; then $word", function () use ($build, $reviewLines, $la, $how, $word, $unread): void {
@@ -192,7 +192,7 @@ return static function (Db $db): void {
                 if ($how === 'putback') {
                     [, $refused] = H::recover($t, 'putback');
                     check("$name: Put back is refused, saying it has no record of the series after its last write, and not that it changed at Google since",
-                        $refused !== null && str_contains($refused, $unread) && !str_contains($refused, 'changed at Google since') && count(H::halfDone($t)) === 1, (string) $refused);
+                        $refused !== null && str_contains($refused, $unread) && !str_contains($refused, 'changed in Google Calendar since') && count(H::halfDone($t)) === 1, (string) $refused);
                 }
                 [, $error] = H::recover($t, 'finish');
                 $live = array_keys(array_filter($fake->events, static fn(array $e): bool => ($e['status'] ?? '') !== 'cancelled' && (($e['id'] ?? '') === $t->gid || ($e['recurringEventId'] ?? '') === $t->gid)));

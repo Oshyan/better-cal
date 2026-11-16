@@ -26,7 +26,7 @@ use BetterCal\Support\Time;
 final class GoogleSync
 {
     /** What a poll says when a whole read listed nothing for a calendar holding rows (the failure its google_empty notice reports). */
-    public const EMPTY_MESSAGE = 'Google listed no events for this calendar while it has events here; nothing was removed, and the next poll reads it again.';
+    public const EMPTY_MESSAGE = 'Google Calendar listed no events for this calendar while it has events here; nothing was removed, and the next check reads it again.';
 
     private const EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/%s/events';
     private const PAGE_SIZE = 2500;
@@ -118,7 +118,7 @@ final class GoogleSync
             // probe, stage unshared). The level is stored as for any list answer, the rows and the
             // sync position stay as they are, and every such poll says so.
             $this->storeAccess($calendar, $account, 'none');
-            throw new \RuntimeException(GoogleWriter::accessWords($calendar, 'none'));
+            throw new AccessStateException(GoogleWriter::accessWords($calendar, 'none'));
         }
 
         // A delta with no items: nothing changed at Google since the stored
@@ -225,7 +225,7 @@ final class GoogleSync
             return $count;
         });
         if ($busyOnly) {
-            throw new \RuntimeException(GoogleWriter::accessWords($calendar, (string) $role));
+            throw new AccessStateException(GoogleWriter::accessWords($calendar, (string) $role));
         }
         if ($emptyRefused) {
             $message = self::EMPTY_MESSAGE;
@@ -1112,5 +1112,13 @@ final class NotShownException extends \RuntimeException
 }
 
 final class GoneException extends \RuntimeException
+{
+}
+
+/**
+ * A poll that read the calendar and found its access below reader: shown only busy times, or not shown at all. Its
+ * words are the access line's; the feed did not fail, so Feeds::pollFailed counts no failure for it (#281).
+ */
+final class AccessStateException extends \RuntimeException
 {
 }

@@ -3664,8 +3664,8 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-review-diffrow { display: flex; align-items: baseline; gap: 10px; }
 .bc-review-diffrow dt { flex: none; width: 84px; color: var(--fg-muted); }
 .bc-review-diffrow dd { margin: 0; min-width: 0; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.bc-review-from { color: var(--fg-muted); text-decoration: line-through; }
-.bc-review-to { font-weight: 600; }
+.bc-review-from { color: var(--fg-muted); text-decoration: line-through; white-space: pre-line; }
+.bc-review-to { font-weight: 600; white-space: pre-line; }
 
 .bc-proposal { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 10px; }
 .bc-proposal.is-accepted { opacity: 0.8; border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); }

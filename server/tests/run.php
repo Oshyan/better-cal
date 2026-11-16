@@ -1825,6 +1825,8 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     checkEq('review diff: location from -> to', ['Example Cafe', 'Corner Bistro'], [$moved[2]['from'], $moved[2]['to']]);
     $desc = $rq::inviteDiff($stored, 'REQUEST', ['description' => '<p>Bring the   <i>budget</i> instead.</p>'] + $same);
     checkEq('review diff: description is compared and previewed as plain text', ['Bring the deck.', 'Bring the budget instead.'], [$desc[0]['from'], $desc[0]['to']]);
+    $paras = $rq::inviteDiff($stored, 'REQUEST', ['description' => '<p>Bring the deck.</p><p>Doors open at <b>noon</b>.</p><ul><li>Sample snacks</li><li>Sample chairs</li></ul>'] + $same);
+    checkEq('review diff: a preview keeps each paragraph and list item on its own line (#313)', "Bring the deck.\nDoors open at noon.\nSample snacks\nSample chairs", $paras[0]['to'] ?? null);
     checkEq('review diff: markup-only description edits are not a change', [], $rq::inviteDiff($stored, 'REQUEST', ['description' => '<div>Bring the deck.</div>'] + $same));
     checkEq('review diff: a cancellation is one line', [['field' => 'status', 'label' => 'Status', 'from' => 'confirmed', 'to' => 'cancelled']], $rq::inviteDiff($stored, 'CANCEL', []));
     checkEq('review diff: cancelling what is already cancelled is nothing', [], $rq::inviteDiff(['status' => 'cancelled'] + $stored, 'CANCEL', []));

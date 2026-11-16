@@ -113,10 +113,13 @@ final class ReviewQueue
             }
         }
         // Descriptions are long and often HTML: say that it changed and show a
-        // plain-text preview of the new one, not two walls of markup.
+        // plain-text preview of the new one, not two walls of markup. The text
+        // is Sanitize::toText's, as everywhere a description is read as plain
+        // text, so a paragraph or a list item keeps its line; within a line a
+        // run of spaces is one, as the page shows it.
         $plain = static fn(mixed $v): ?string => $text($v) === null
             ? null
-            : mb_substr(trim((string) preg_replace('/\s+/', ' ', html_entity_decode(strip_tags((string) $v)))), 0, self::PREVIEW_CHARS);
+            : mb_substr(trim((string) preg_replace('/[^\S\n]+/', ' ', Sanitize::toText((string) $v))), 0, self::PREVIEW_CHARS);
         if ($plain($row['description'] ?? null) !== $plain($fields['description'] ?? null)) {
             $out[] = ['field' => 'description', 'label' => 'Description', 'from' => $plain($row['description'] ?? null), 'to' => $plain($fields['description'] ?? null)];
         }

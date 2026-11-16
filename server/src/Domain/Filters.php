@@ -12,22 +12,25 @@ use BetterCal\Support\Limits;
 /**
  * Keyword/regex/prompt filters at global, folder, or calendar scope. Enabled
  * filters are applied server-side to the events window and search: action
- * `hide` drops matching occurrences, action `dim` marks them `dimmed:true`,
- * action `highlight` marks them `highlighted:true` (additive occurrence
- * fields; precedence hide > dim > highlight when several filters match).
- * Keyword = case-insensitive substring; regex =
+ * `hide` drops occurrences, action `dim` marks them `dimmed:true`, action
+ * `highlight` marks them `highlighted:true` (additive occurrence fields;
+ * precedence hide > dim > highlight when several filters take one). Which
+ * occurrences a filter's action takes is its `applies_to`: the ones that
+ * match (`match`) or the ones in its scope that do not (`nonmatch`), decided
+ * in one place, takesAction(). Keyword = case-insensitive substring; regex =
  * PCRE, evaluated case-insensitively. Prompt filters are never evaluated in
  * the request path: a background worker scores feed events against the prompt
- * (see PromptEval) and the cached verdicts in `filter_evals` are joined here;
- * promptActionApplies() is the one reading of a verdict (hide takes events
- * judged not to fit, dim and highlight events judged to fit), and an event
- * with no verdict yet takes no prompt filter's action.
+ * (see PromptEval) and the cached verdicts in `filter_evals` are joined here
+ * (pass: the event fits the description). An event with no verdict yet, or a
+ * regex that gave up on it, takes neither side: no action.
  */
 final class Filters
 {
     private const SCOPES = ['global', 'folder', 'calendar'];
     private const TYPES = ['keyword', 'regex', 'prompt'];
     private const ACTIONS = ['hide', 'dim', 'highlight'];
+    /** Which events a filter's action takes: the ones that match, or the ones in its scope that do not. */
+    public const APPLIES_TO = ['match', 'nonmatch'];
     /** Disposition precedence: a stronger action beats a weaker one. */
     private const STRENGTH = ['hide' => 3, 'dim' => 2, 'highlight' => 1];
     /** Fields a keyword/regex filter may match against. */
@@ -101,6 +104,7 @@ final class Filters
             throw HttpError::badRequest('action must be hide|dim|highlight');
         }
         $config = self::validateConfig($type, is_array($in['config'] ?? null) ? $in['config'] : []);
+        $appliesTo = array_key_exists('appliesTo', $in) ? self::validAppliesTo($in['appliesTo']) : self::defaultAppliesTo($type);
 
         $id = $this->db->insert('filters', [
             'user_id' => $userId,
@@ -109,6 +113,7 @@ final class Filters
             'type' => $type,
             'config_json' => json_encode($config),
             'action' => $action,
+            'applies_to' => $appliesTo,
             'enabled' => filter_var($in['enabled'] ?? true, FILTER_VALIDATE_BOOL) ? 1 : 0,
         ]);
         $created = $this->get($userId, $id);
@@ -163,6 +168,9 @@ final class Filters
                 throw HttpError::badRequest('action must be hide|dim|highlight');
             }
             $fields['action'] = $action;
+        }
+        if (array_key_exists('appliesTo', $in)) {
+            $fields['applies_to'] = self::validAppliesTo($in['appliesTo']);
         }
         if (array_key_exists('enabled', $in)) {
             $fields['enabled'] = filter_var($in['enabled'], FILTER_VALIDATE_BOOL) ? 1 : 0;
@@ -222,6 +230,7 @@ final class Filters
                 'type' => (string) $row['type'],
                 'config' => $config,
                 'action' => (string) $row['action'],
+                'appliesTo' => (string) $row['applies_to'],
                 'calendarIds' => $this->scopeCalendarIds($row),
             ];
         }
@@ -239,7 +248,7 @@ final class Filters
      *   applies: array<int,array<int,true>>,
      *   evaluated: array<int,array<int,true>>
      * } applies is filterId => set of event ids the filter's action applies
-     *   to, by promptActionApplies();
+     *   to, by takesAction() from its side and the verdict (pass: it fits);
      *   evaluated is filterId => set of event ids with ANY cached verdict
      *   (so callers can spot coverage gaps and queue background evaluation).
      */
@@ -261,6 +270,7 @@ final class Filters
             $filters[] = [
                 'id' => (int) $row['id'],
                 'action' => (string) $row['action'],
+                'appliesTo' => (string) $row['applies_to'],
                 'color' => (json_decode((string) $row['config_json'], true)['color'] ?? null),
                 'prompt' => (string) (json_decode((string) $row['config_json'], true)['prompt'] ?? ''),
                 'calendarIds' => $this->scopeCalendarIds($row),
@@ -268,7 +278,7 @@ final class Filters
         }
         [$fIn, $fParams] = Db::in(array_column($filters, 'id'));
         [$eIn, $eParams] = Db::in(array_values(array_unique(array_map('intval', $eventIds))));
-        $actions = array_column($filters, 'action', 'id');
+        $sides = array_column($filters, 'appliesTo', 'id');
         $applies = [];
         $evaluated = [];
         $evals = $this->db->all(
@@ -280,7 +290,7 @@ final class Filters
             $filterId = (int) $eval['filter_id'];
             $eventId = (int) $eval['event_id'];
             $evaluated[$filterId][$eventId] = true;
-            if (self::promptActionApplies((string) ($actions[$filterId] ?? ''), (string) $eval['verdict'])) {
+            if (self::takesAction((string) ($sides[$filterId] ?? 'match'), (string) $eval['verdict'] === 'pass')) {
                 $applies[$filterId][$eventId] = true;
             }
         }
@@ -288,17 +298,42 @@ final class Filters
     }
 
     /**
-     * Whether a prompt filter's action applies to an event, from the model's
-     * stored verdict on it (pass: the event fits the filter's description;
-     * fail: it does not). Dim and highlight take the events that fit ("dim
-     * the webinars", "highlight outdoor things"); hide takes the ones that
-     * do not, as the form's "Keep events that match" says. The one place a
-     * verdict is read: the window, search and the reasons all go through
-     * promptFilterContext's set built here.
+     * Whether a filter's action takes an event: the one place this is
+     * decided, for every kind. $matches is whether the event matches (a
+     * keyword or regex hit, a prompt verdict of pass), or null when that is
+     * not known (no verdict yet, a regex that gave up): then neither side
+     * takes it, so a filter on the unmatched never acts on an unknown.
      */
-    public static function promptActionApplies(string $action, string $verdict): bool
+    public static function takesAction(string $appliesTo, ?bool $matches): bool
     {
-        return $action === 'hide' ? $verdict === 'fail' : $verdict === 'pass';
+        if ($matches === null) {
+            return false;
+        }
+        return $appliesTo === 'nonmatch' ? !$matches : $matches;
+    }
+
+    /** Does a keyword or regex filter take this row: in its scope, and on its side of the match. */
+    private static function keywordTakes(array $row, array $filter): bool
+    {
+        if (($filter['calendarIds'] ?? null) !== null && !isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)])) {
+            return false;
+        }
+        return self::takesAction((string) ($filter['appliesTo'] ?? 'match'), self::matches($row, $filter));
+    }
+
+    /** A new filter's side when the request names none: an AI description says what to keep, a keyword what to act on. */
+    public static function defaultAppliesTo(string $type): string
+    {
+        return $type === 'prompt' ? 'nonmatch' : 'match';
+    }
+
+    private static function validAppliesTo(mixed $value): string
+    {
+        $v = is_string($value) ? $value : '';
+        if (!in_array($v, self::APPLIES_TO, true)) {
+            throw HttpError::badRequest('appliesTo must be match|nonmatch');
+        }
+        return $v;
     }
 
     /** @return ?array<int,true> calendar ids the filter row applies to; null = all */
@@ -372,6 +407,27 @@ final class Filters
     }
 
     /**
+     * Whether the pattern matches, or null when that is not known: no field
+     * matched and a regex gave up on one of them (a PCRE limit, the run's
+     * budget spent). Read by takesAction, so a filter on the unmatched does
+     * not act on a field it could not read.
+     */
+    public static function matches(array $occ, array $filter): ?bool
+    {
+        self::$regexUnknown = false;
+        if ((string) ($filter['config']['pattern'] ?? '') === '') {
+            return null; // nothing to match by: neither side
+        }
+        if (self::matchedField($occ, $filter) !== null) {
+            return true;
+        }
+        return self::$regexUnknown ? null : false;
+    }
+
+    /** Set by regexHits when it gives up; read by matches(). */
+    private static bool $regexUnknown = false;
+
+    /**
      * Which field a keyword or regex filter matched (title, description,
      * location or tags), or null. Same matching as evaluate(); it also lets
      * the app say why an event is highlighted or dimmed.
@@ -422,17 +478,16 @@ final class Filters
             if (($filter['action'] ?? '') !== $action) {
                 continue;
             }
-            if ($filter['calendarIds'] !== null && !isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)])) {
+            if (!self::keywordTakes($row, $filter)) {
                 continue;
             }
+            $reason = [
+                'type' => (string) ($filter['type'] ?? 'keyword'),
+                'pattern' => mb_substr((string) ($filter['config']['pattern'] ?? ''), 0, 80),
+            ];
+            // Where it matched, or that it did not.
             $field = self::matchedField($row, $filter);
-            if ($field !== null) {
-                return [
-                    'type' => (string) ($filter['type'] ?? 'keyword'),
-                    'pattern' => mb_substr((string) ($filter['config']['pattern'] ?? ''), 0, 80),
-                    'field' => $field,
-                ];
-            }
+            return $field !== null ? $reason + ['field' => $field] : $reason + ['appliesTo' => 'nonmatch'];
         }
         $eventId = (int) ($row['id'] ?? 0);
         foreach ($promptFilters as $filter) {
@@ -441,10 +496,11 @@ final class Filters
                 // Its words, so the app can say which one: "one of your
                 // plain-language filters" left people hunting.
                 $prompt = trim((string) ($filter['prompt'] ?? ''));
+                $side = ['appliesTo' => (string) ($filter['appliesTo'] ?? 'match')];
                 if ($prompt === '') {
-                    return ['type' => 'prompt'];
+                    return ['type' => 'prompt'] + $side;
                 }
-                return ['type' => 'prompt', 'pattern' => mb_strlen($prompt) > 80 ? rtrim(mb_substr($prompt, 0, 79)) . '…' : $prompt];
+                return ['type' => 'prompt', 'pattern' => mb_strlen($prompt) > 80 ? rtrim(mb_substr($prompt, 0, 79)) . '…' : $prompt] + $side;
             }
         }
         return null;
@@ -481,12 +537,15 @@ final class Filters
      * - per run: Limits::REGEX_EVALS evaluations in total; past that, regex
      *   filters stop matching for the rest of the request.
      *
-     * Giving up means "does not match", so a hide filter fails open (the event
-     * shows) rather than taking the calendar down. It is logged once.
+     * Giving up means "not known" (matches() returns null, and takesAction
+     * acts on neither side), so a hide filter fails open (the event shows)
+     * whichever side it takes, rather than taking the calendar down. It is
+     * logged once.
      */
     private static function regexHits(string $pattern, string $value): bool
     {
         if (isset(self::$regexGaveUp[$pattern])) {
+            self::$regexUnknown = true;
             return false;
         }
         if (++self::$regexEvals > Limits::get('REGEX_EVALS')) {
@@ -494,6 +553,7 @@ final class Filters
                 self::$regexBudgetLogged = true;
                 error_log('filters: regex evaluation budget (' . Limits::get('REGEX_EVALS') . ') spent; regex filters stop matching for this run');
             }
+            self::$regexUnknown = true;
             return false;
         }
         $prevLimit = ini_set('pcre.backtrack_limit', self::REGEX_BACKTRACK_LIMIT);
@@ -508,6 +568,7 @@ final class Filters
         if ($result === false) {
             self::$regexGaveUp[$pattern] = true;
             error_log('filters: pattern ' . json_encode(mb_substr($pattern, 0, 80)) . ' hit a PCRE limit (' . preg_last_error_msg() . ') and is skipped for this run');
+            self::$regexUnknown = true;
             return false;
         }
         return $result === 1;
@@ -544,10 +605,7 @@ final class Filters
     {
         $result = null;
         foreach ($filters as $filter) {
-            if ($filter['calendarIds'] !== null && !isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)])) {
-                continue;
-            }
-            if (!self::evaluate($row, $filter)) {
+            if (!self::keywordTakes($row, $filter)) {
                 continue;
             }
             if ($filter['action'] === 'hide') {
@@ -570,11 +628,8 @@ final class Filters
             if (($filter['action'] ?? '') !== 'highlight') {
                 continue;
             }
-            if ($filter['calendarIds'] !== null && !isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)])) {
-                continue;
-            }
             $color = $filter['config']['color'] ?? null;
-            if ($color !== null && self::evaluate($row, $filter)) {
+            if ($color !== null && self::keywordTakes($row, $filter)) {
                 return (string) $color;
             }
         }
@@ -775,6 +830,7 @@ final class Filters
             'type' => (string) $row['type'],
             'config' => is_array($config) ? $config : $fallback,
             'action' => (string) $row['action'],
+            'appliesTo' => (string) $row['applies_to'],
             'enabled' => (int) $row['enabled'] === 1,
         ];
     }

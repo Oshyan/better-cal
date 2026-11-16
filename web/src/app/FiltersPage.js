@@ -17,7 +17,7 @@ import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { PALETTE } from '../lib/color.js';
 import { fmtSince } from '../lib/since.js';
 import { Icon } from '../ui/icons.js';
-import { DEFAULT_FIELDS, filterMatchText, promptLabel } from '../lib/filterwords.js';
+import { DEFAULT_FIELDS, filterMatchText, defaultAppliesTo, appliesToOf, actionChip } from '../lib/filterwords.js';
 
 // An AI prompt filter on everything judges every event on every subscribed
 // calendar, including feeds added later, against one description. Fine when
@@ -30,15 +30,21 @@ const FIELD_OPTIONS = ['title', 'description', 'location', 'tags'];
 // filter starts on the title alone (server: Filters::NEW_FILTER_FIELDS).
 const NEW_FILTER_FIELDS = ['title'];
 const TYPE_LABELS = { keyword: 'Keyword', regex: 'Regex', prompt: 'AI prompt' };
-const ACTION_LABELS = { hide: 'Hides', dim: 'Dims', highlight: 'Highlights' };
+// Action and Which events read as one sentence: "Dim events | that don't match".
+const SIDES = [['match', 'that match'], ['nonmatch', "that don't match"]];
 
 // One form for both places: the create card at the top (no initial) and the
 // inline editor beneath a row (initial = the filter being edited).
-function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCancel }) {
+export function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCancel }) {
   const [scope, setScope] = useState(initial ? initial.scope : 'global');
   const [scopeId, setScopeId] = useState(initial && initial.scopeId ? String(initial.scopeId) : '');
   const [type, setType] = useState(initial ? initial.type : 'keyword');
   const [action, setAction] = useState(initial ? initial.action : 'hide');
+  // Which events the action takes. Untouched on a new filter, it follows
+  // the type's default (an AI description says what to keep); once chosen,
+  // or on an edit, it stays put whatever the type or action does.
+  const [chosenSide, setSide] = useState(initial ? appliesToOf(initial) : null);
+  const appliesTo = chosenSide || defaultAppliesTo(type);
   const [pattern, setPattern] = useState(initial && initial.type !== 'prompt' ? (initial.config.pattern || '') : '');
   const [fields, setFields] = useState(() => (initial && initial.type !== 'prompt'
     ? Object.fromEntries(FIELD_OPTIONS.map((x) => [x, (initial.config.fields || DEFAULT_FIELDS).includes(x)]))
@@ -58,7 +64,7 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
     // Only meaningful for highlight, but kept on the object whatever the
     // action is so flipping to Dim and back does not lose the choice.
     if (color) config.color = color;
-    const body = { scope, type, action, config };
+    const body = { scope, type, action, appliesTo, config };
     if (scope === 'calendar') body.scopeId = Number(scopeId || (calendars[0] && calendars[0].id));
     if (scope === 'folder') body.scopeId = Number(scopeId || (folders[0] && folders[0].id));
     onSave(body);
@@ -93,7 +99,7 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
     </div>
     ${isPrompt && html`<div class="bc-form-row">
       <label class="bc-field grow">
-        <span>${promptLabel(action)}</span>
+        <span>Describe the events</span>
         <textarea
           placeholder="e.g. outdoor events and family activities"
           value=${prompt} onInput=${(e) => setPrompt(e.target.value)} required rows="2"
@@ -129,14 +135,22 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
           ${calendars.map((c) => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}
         </select>
       </label>`}
-      <label class="bc-field">
-        <span>Action</span>
-        <select value=${action} onChange=${(e) => setAction(e.target.value)}>
-          <option value="hide">Hide matching events</option>
-          <option value="dim">Dim matching events</option>
-          <option value="highlight">Highlight matching events</option>
-        </select>
-      </label>
+      <div class="bc-field">
+        <span aria-hidden="true">Action</span>
+        <span class="bc-filter-action">
+          <select value=${action} aria-label="Action" onChange=${(e) => setAction(e.target.value)}>
+            <option value="hide">Hide events</option>
+            <option value="dim">Dim events</option>
+            <option value="highlight">Highlight events</option>
+          </select>
+          <span class="bc-seg" role="group" aria-label="Which events">
+            ${SIDES.map(([v, label]) => html`<button
+              key=${v} type="button" class=${'bc-seg-btn' + (appliesTo === v ? ' is-active' : '')}
+              aria-pressed=${appliesTo === v} onClick=${() => setSide(v)}
+            >${label}</button>`)}
+          </span>
+        </span>
+      </div>
       ${action === 'highlight' && html`<label class="bc-field bc-hlcolor-field">
         <span>Highlight colour</span>
         <div class="bc-hlcolor" role="radiogroup" aria-label="Highlight colour">
@@ -163,7 +177,7 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
         </div>
       </div>
     </div>
-    ${isPrompt && html`<p class="bc-page-note bc-filter-hint">Prompt filters run in the background: new and updated events are judged within a few minutes of arriving, so results appear shortly rather than instantly. ${filterMatchText({ type, action, config: {} }).join(' ')}</p>`}
+    ${isPrompt && html`<p class="bc-page-note bc-filter-hint">Prompt filters run in the background: new and updated events are judged within a few minutes of arriving, so results appear shortly rather than instantly. ${filterMatchText({ type, action, appliesTo, config: {} }).join(' ')}</p>`}
   </form>`;
 }
 
@@ -296,7 +310,7 @@ export function FiltersPage() {
           <div class="bc-card-main">
             <div class="bc-card-badges">
               <span class="bc-badge bc-badge-type">${TYPE_LABELS[f.type] || f.type}</span>
-              <span class="bc-badge bc-badge-action">${ACTION_LABELS[f.action] || f.action}</span>
+              <span class="bc-badge bc-badge-action">${actionChip(f)}</span>
               <span class="bc-badge">${scopeLabel(f)}</span>
             </div>
             <div class="bc-card-body">${f.type === 'prompt' ? f.config.prompt : f.config.pattern}</div>

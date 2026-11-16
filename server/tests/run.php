@@ -6317,8 +6317,8 @@ $fltFilters = [
 checkEq('flt matchedField names the field that matched', 'description', Filters::matchedField($fltRow, $fltFilters[2]));
 checkEq('flt reason for a highlight: the in-scope filter, its pattern and the field', ['type' => 'keyword', 'pattern' => 'dinner', 'field' => 'description'], Filters::reasonFor($fltRow, $fltFilters, [], [], 'highlight'));
 checkEq('flt reason for a dim', ['type' => 'keyword', 'pattern' => 'visit', 'field' => 'title'], Filters::reasonFor($fltRow, $fltFilters, [], [], 'dim'));
-checkEq('flt reason from a plain-language filter', ['type' => 'prompt'], Filters::reasonFor($fltRow, [], [['id' => 4, 'action' => 'highlight', 'calendarIds' => null]], [4 => [7 => true]], 'highlight'));
-checkEq('flt reason from a plain-language filter carries its prompt', ['type' => 'prompt', 'pattern' => 'Only the big public holidays'], Filters::reasonFor($fltRow, [], [['id' => 4, 'action' => 'dim', 'calendarIds' => null, 'prompt' => ' Only the big public holidays ']], [4 => [7 => true]], 'dim'));
+checkEq('flt reason from a plain-language filter', ['type' => 'prompt', 'appliesTo' => 'match'], Filters::reasonFor($fltRow, [], [['id' => 4, 'action' => 'highlight', 'calendarIds' => null]], [4 => [7 => true]], 'highlight'));
+checkEq('flt reason from a plain-language filter carries its prompt', ['type' => 'prompt', 'pattern' => 'Only the big public holidays', 'appliesTo' => 'match'], Filters::reasonFor($fltRow, [], [['id' => 4, 'action' => 'dim', 'calendarIds' => null, 'prompt' => ' Only the big public holidays ']], [4 => [7 => true]], 'dim'));
 checkEq('flt a long prompt is cut short', 80, mb_strlen(Filters::reasonFor($fltRow, [], [['id' => 4, 'action' => 'dim', 'calendarIds' => null, 'prompt' => str_repeat('word ', 40)]], [4 => [7 => true]], 'dim')['pattern']));
 checkEq('flt no reason when nothing applies', null, Filters::reasonFor($fltRow, [], [], [], 'highlight'));
 
@@ -6420,14 +6420,31 @@ check('llm response cap: exact limit succeeds', CurlLlmTransport::appendBounded(
 check('llm response cap: one byte over is refused', !CurlLlmTransport::appendBounded($bounded, '6', 5));
 checkEq('llm response cap: refused bytes are not retained', '12345', $bounded);
 
-// Which events a prompt filter's action takes, from the stored verdict:
-// dim and highlight the ones judged to fit, hide the ones judged not to.
-checkEq('pa hide takes a fail', true, Filters::promptActionApplies('hide', 'fail'));
-checkEq('pa hide leaves a pass', false, Filters::promptActionApplies('hide', 'pass'));
-checkEq('pa dim takes a pass', true, Filters::promptActionApplies('dim', 'pass'));
-checkEq('pa dim leaves a fail', false, Filters::promptActionApplies('dim', 'fail'));
-checkEq('pa highlight takes a pass', true, Filters::promptActionApplies('highlight', 'pass'));
-checkEq('pa highlight leaves a fail', false, Filters::promptActionApplies('highlight', 'fail'));
+// Which events a filter's action takes: the one function, from its side
+// (appliesTo) and whether the event matches; not known takes neither side.
+checkEq('ta match takes a match', true, Filters::takesAction('match', true));
+checkEq('ta match leaves a miss', false, Filters::takesAction('match', false));
+checkEq('ta nonmatch takes a miss', true, Filters::takesAction('nonmatch', false));
+checkEq('ta nonmatch leaves a match', false, Filters::takesAction('nonmatch', true));
+checkEq('ta match: not known, no action', false, Filters::takesAction('match', null));
+checkEq('ta nonmatch: not known, no action', false, Filters::takesAction('nonmatch', null));
+checkEq('ta new prompt filter takes the unmatched', 'nonmatch', Filters::defaultAppliesTo('prompt'));
+checkEq('ta new keyword filter takes the matched', 'match', Filters::defaultAppliesTo('keyword'));
+checkEq('ta new regex filter takes the matched', 'match', Filters::defaultAppliesTo('regex'));
+// A keyword filter on the unmatched: the events in its scope it does not match.
+$taRow = ['id' => 7, 'calendar_id' => 3, 'title' => 'Sample pottery class', 'description' => '', 'location' => ''];
+$taFilter = ['type' => 'keyword', 'config' => ['pattern' => 'concert', 'fields' => ['title']], 'action' => 'dim', 'appliesTo' => 'nonmatch', 'calendarIds' => null];
+checkEq('ta keyword nonmatch dims a miss', 'dim', Filters::disposition($taRow, [$taFilter]));
+checkEq('ta keyword nonmatch leaves a match', null, Filters::disposition(['title' => 'Sample concert'] + $taRow, [$taFilter]));
+checkEq('ta keyword nonmatch leaves an event out of its scope', null, Filters::disposition($taRow, [['calendarIds' => [9 => true]] + $taFilter]));
+checkEq('ta keyword nonmatch: the reason says no match', ['type' => 'keyword', 'pattern' => 'concert', 'appliesTo' => 'nonmatch'], Filters::reasonFor($taRow, [$taFilter], [], [], 'dim'));
+checkEq('ta keyword nonmatch: its colour', '#c95d5d', Filters::highlightColorFor($taRow, [['action' => 'highlight', 'config' => ['pattern' => 'concert', 'fields' => ['title'], 'color' => '#c95d5d']] + $taFilter]));
+checkEq('ta keyword nonmatch: no colour for a match', null, Filters::highlightColorFor(['title' => 'Sample concert'] + $taRow, [['action' => 'highlight', 'config' => ['pattern' => 'concert', 'fields' => ['title'], 'color' => '#c95d5d']] + $taFilter]));
+// A regex that gives up is not known: neither side acts on it.
+Filters::resetRegexBudget();
+$taEvil = ['type' => 'regex', 'config' => ['pattern' => '(a+)+$', 'fields' => ['title']], 'action' => 'hide', 'appliesTo' => 'nonmatch', 'calendarIds' => null];
+checkEq('ta regex that gave up: a nonmatch hide does not hide', null, Filters::disposition(['title' => str_repeat('a', 5000) . 'b'] + $taRow, [$taEvil]));
+Filters::resetRegexBudget();
 
 // Prompt dispositions from the set each filter's action applies to + precedence with keyword filters.
 $promptRow = ['id' => 101, 'calendar_id' => 3] + $occ;

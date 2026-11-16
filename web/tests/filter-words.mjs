@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const { filterMatchText, filterFields, DEFAULT_FIELDS, PROMPT_DESCRIPTION_CHARS, PROMPT_FIELDS } = await import('../src/lib/filterwords.js');
+const { filterMatchText, filterFields, promptTakesFitting, promptLabel, DEFAULT_FIELDS, PROMPT_DESCRIPTION_CHARS, PROMPT_FIELDS } = await import('../src/lib/filterwords.js');
 
 let checks = 0;
 const ok = (cond, msg) => { assert.ok(cond, msg); checks++; };
@@ -43,8 +43,17 @@ eq(words({ type: 'keyword', action: 'hide', config: { pattern: 'x' } }),
   'Events are hidden when this text appears in their title, description or location, ignoring case.', 'a saved filter with no field list');
 eq(filterMatchText({ type: 'prompt', action: 'highlight', config: { prompt: 'outdoor things' } }), [
   "Looks at each event's title, the first 300 characters of its description, its location and its start time, and nothing else. Only events on subscribed and Google calendars are judged.",
-  'Events judged not to fit are highlighted; events not judged yet stay as they are.',
+  'Events judged to fit the description are highlighted; events not judged yet stay as they are.',
 ], 'an AI prompt filter says what it looks at, and what it does');
+
+// Which events a prompt filter's action takes is the server's one reading of
+// a verdict (Filters::promptActionApplies), said the same way on each card.
+ok(/function promptActionApplies\(string \$action, string \$verdict\): bool\s*\{\s*return \$action === 'hide' \? \$verdict === 'fail' : \$verdict === 'pass';/.test(filtersPhp),
+  'the server: hide takes events judged not to fit, dim and highlight events judged to fit');
+eq(['hide', 'dim', 'highlight'].map(promptTakesFitting), [false, true, true], 'the cards read it the same way');
+eq(filterMatchText({ type: 'prompt', action: 'hide', config: {} })[1], 'Events judged not to fit the description are hidden; events not judged yet stay as they are.', 'a prompt hide filter');
+eq(filterMatchText({ type: 'prompt', action: 'dim', config: {} })[1], 'Events judged to fit the description are dimmed; events not judged yet stay as they are.', 'a prompt dim filter');
+eq(['hide', 'dim', 'highlight'].map(promptLabel), ['Keep events that match', 'Dim events that match', 'Highlight events that match'], 'the form says which way the description works');
 
 
 console.log('Filter words: ' + checks + ' checks (each card says what its filter matches, as the server matches it)');

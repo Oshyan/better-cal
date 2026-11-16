@@ -17,7 +17,7 @@ import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { PALETTE } from '../lib/color.js';
 import { fmtSince } from '../lib/since.js';
 import { Icon } from '../ui/icons.js';
-import { DEFAULT_FIELDS, filterMatchText } from '../lib/filterwords.js';
+import { DEFAULT_FIELDS, filterMatchText, promptLabel } from '../lib/filterwords.js';
 
 // An AI prompt filter on everything judges every event on every subscribed
 // calendar, including feeds added later, against one description. Fine when
@@ -93,7 +93,7 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
     </div>
     ${isPrompt && html`<div class="bc-form-row">
       <label class="bc-field grow">
-        <span>Keep events that match</span>
+        <span>${promptLabel(action)}</span>
         <textarea
           placeholder="e.g. outdoor events and family activities"
           value=${prompt} onInput=${(e) => setPrompt(e.target.value)} required rows="2"

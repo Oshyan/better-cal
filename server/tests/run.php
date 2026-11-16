@@ -6396,21 +6396,30 @@ check('llm response cap: exact limit succeeds', CurlLlmTransport::appendBounded(
 check('llm response cap: one byte over is refused', !CurlLlmTransport::appendBounded($bounded, '6', 5));
 checkEq('llm response cap: refused bytes are not retained', '12345', $bounded);
 
-// Prompt dispositions from cached verdicts + precedence with keyword filters.
+// Which events a prompt filter's action takes, from the stored verdict:
+// dim and highlight the ones judged to fit, hide the ones judged not to.
+checkEq('pa hide takes a fail', true, Filters::promptActionApplies('hide', 'fail'));
+checkEq('pa hide leaves a pass', false, Filters::promptActionApplies('hide', 'pass'));
+checkEq('pa dim takes a pass', true, Filters::promptActionApplies('dim', 'pass'));
+checkEq('pa dim leaves a fail', false, Filters::promptActionApplies('dim', 'fail'));
+checkEq('pa highlight takes a pass', true, Filters::promptActionApplies('highlight', 'pass'));
+checkEq('pa highlight leaves a fail', false, Filters::promptActionApplies('highlight', 'fail'));
+
+// Prompt dispositions from the set each filter's action applies to + precedence with keyword filters.
 $promptRow = ['id' => 101, 'calendar_id' => 3] + $occ;
 $pfHide = ['id' => 1, 'action' => 'hide', 'calendarIds' => null];
 $pfDim = ['id' => 2, 'action' => 'dim', 'calendarIds' => null];
 $pfCal9Hide = ['id' => 3, 'action' => 'hide', 'calendarIds' => [9 => true]];
 $failAll = [1 => [101 => true], 2 => [101 => true], 3 => [101 => true]];
-checkEq('pd fail -> hide', 'hide', Filters::promptDisposition($promptRow, [$pfHide], $failAll));
-checkEq('pd fail -> dim', 'dim', Filters::promptDisposition($promptRow, [$pfDim], $failAll));
-checkEq('pd no verdict treated as pass', null, Filters::promptDisposition($promptRow, [$pfHide, $pfDim], []));
+checkEq('pd applies -> hide', 'hide', Filters::promptDisposition($promptRow, [$pfHide], $failAll));
+checkEq('pd applies -> dim', 'dim', Filters::promptDisposition($promptRow, [$pfDim], $failAll));
+checkEq('pd no verdict: no action', null, Filters::promptDisposition($promptRow, [$pfHide, $pfDim], []));
 checkEq('pd out-of-scope calendar skipped', null, Filters::promptDisposition($promptRow, [$pfCal9Hide], $failAll));
 checkEq('pd scoped calendar applies', 'hide', Filters::promptDisposition(['calendar_id' => 9] + $promptRow, [$pfCal9Hide], $failAll));
 checkEq('pd hide beats dim', 'hide', Filters::promptDisposition($promptRow, [$pfDim, $pfHide], $failAll));
 $pfHl = ['id' => 4, 'action' => 'highlight', 'calendarIds' => null];
 $failAllHl = $failAll + [4 => [101 => true]];
-checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptRow, [$pfHl], $failAllHl));
+checkEq('pd applies -> highlight', 'highlight', Filters::promptDisposition($promptRow, [$pfHl], $failAllHl));
 
 // Non-mail model admission: persistent account/source windows, crash-safe
 // concurrency leases, and failed provider attempts that are not refunded.

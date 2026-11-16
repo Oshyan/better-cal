@@ -107,7 +107,7 @@ return static function (Db $db): void {
             $stop($t);
             $noteOn25($t);
             [, $first] = H::recover($t, 'putback');
-            check('Put back is refused, since 25 January did change at Google since', $first !== null && str_contains($first, 'changed at Google since') && count(H::halfDone($t)) === 1, (string) $first);
+            check('Put back is refused, since 25 January did change at Google since', $first !== null && str_contains($first, 'changed in Google Calendar since') && count(H::halfDone($t)) === 1, (string) $first);
             $googleBefore = H::googleView($t, $la);
             $before = $expects($t);
             $refused = $refusedAtFirstWrite($t, 'finish');
@@ -115,7 +115,7 @@ return static function (Db $db): void {
             checkEq('(R-refusal) the refused Finish wrote nothing at Google', $googleBefore, H::googleView($t, $la));
             checkEq('(R-refusal, R-read) and leaves the journal\'s expectations as they were', $before, $expects($t));
             [, $second] = H::recover($t, 'putback');
-            check('(R-putback) Put back is refused again: Google holds what it held when Put back was first refused', $second !== null && str_contains($second, 'changed at Google since') && count(H::halfDone($t)) === 1, 'answer: ' . json_encode($second) . ' half done: ' . count(H::halfDone($t)));
+            check('(R-putback) Put back is refused again: Google holds what it held when Put back was first refused', $second !== null && str_contains($second, 'changed in Google Calendar since') && count(H::halfDone($t)) === 1, 'answer: ' . json_encode($second) . ' half done: ' . count(H::halfDone($t)));
             check('(R-putback) and the note someone put on 25 January is still at Google', in_array('2027-01-25 10:00|Renamed series|Sample remote note|', H::googleView($t, $la), true), json_encode(H::googleView($t, $la)));
         } finally {
             H::done($t);
@@ -133,7 +133,7 @@ return static function (Db $db): void {
             $refused = $refusedAtFirstWrite($t, 'finish');
             check('the place lands, Finish is refused at its first write, the change stays half done', $status === 200 && $refused !== null && count(H::halfDone($t)) === 1, (string) $refused);
             [, $error] = H::recover($t, 'putback');
-            check('(R-putback) Put back is refused, since the event did change at Google since', $error !== null && str_contains($error, 'changed at Google since') && count(H::halfDone($t)) === 1, 'answer: ' . json_encode($error));
+            check('(R-putback) Put back is refused, since the event did change at Google since', $error !== null && str_contains($error, 'changed in Google Calendar since') && count(H::halfDone($t)) === 1, 'answer: ' . json_encode($error));
             check('(R-putback) the place someone set is still at Google', ($t->s->fake->events[$t->gid]['location'] ?? '') === 'Sample remote room', json_encode($t->s->fake->events[$t->gid]['location'] ?? null));
         } finally {
             H::done($t);

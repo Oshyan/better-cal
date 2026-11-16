@@ -316,7 +316,7 @@ return static function (Db $db): void {
             $caught = $e;
         }
         checkEq('the request fails as a conflict that names the half-done state, with the pending row', ['409 google_conflict', true, true],
-            [$caught === null ? null : $caught->status . ' ' . $caught->errorCode, $caught !== null && str_contains($caught->getMessage(), 'half done at Google'), isset($caught->extra['pending'])]);
+            [$caught === null ? null : $caught->status . ' ' . $caught->errorCode, $caught !== null && str_contains($caught->getMessage(), 'half done there'), isset($caught->extra['pending'])]);
         $p = $pending($s);
         checkEq('one pending row, half done, with the two steps done recorded', [1, 'half', ['master', 'exception']],
             [count($p), $p[0]['status'] ?? null, array_column(json_decode((string) ($p[0]['steps_json'] ?? '[]'), true) ?: [], 'kind')]);
@@ -325,7 +325,7 @@ return static function (Db $db): void {
         checkEq('the rows here hold what the stand-in holds', $h, $stored($s, 'smpl1weekly'));
         $listed = (new ReviewQueue($db, $s->events))->googleHalfDone($s->u);
         checkEq('Review lists it as half done at Google, with the error and the steps done', [1, 'Sample weekly', 2, true],
-            [count($listed), $listed[0]['title'] ?? null, $listed[0]['stepsDone'] ?? null, str_contains((string) ($listed[0]['error'] ?? ''), 'changed at Google')]);
+            [count($listed), $listed[0]['title'] ?? null, $listed[0]['stepsDone'] ?? null, str_contains((string) ($listed[0]['error'] ?? ''), 'changed in Google Calendar')]);
         $s->t->calls = [];
         $out = $s->events->googleFinish($s->u, (int) $listed[0]['id']);
         $s->events->throwDeferred();
@@ -385,7 +385,7 @@ return static function (Db $db): void {
             $error = $e;
         }
         checkEq('nothing is put back: the answer names the series and Finish; Google keeps the other edit; the change stays in Review', [false, 'google_changed_since', true, true, 'Sample weekly, theirs', $iso('2027-03-01 11:00'), 1],
-            [$out['ok'], $error?->errorCode, str_contains((string) $error?->getMessage(), "changed at Google since"), str_contains((string) $error?->getMessage(), 'Finish'),
+            [$out['ok'], $error?->errorCode, str_contains((string) $error?->getMessage(), "changed in Google Calendar since"), str_contains((string) $error?->getMessage(), 'Finish'),
                 $s->fake->events['smpl1weekly']['summary'], $held($s, 'smpl1weekly')['start'], count((new ReviewQueue($db, $s->events))->googleHalfDone($s->u))]);
     });
 
@@ -429,7 +429,7 @@ return static function (Db $db): void {
         $lines = json_decode((string) ($notice['payload_json'] ?? '{}'), true)['lines'] ?? [];
         $day = BetterCal\Domain\Series\Words::date(BetterCal\Domain\Series\Cal::dn(2027, 3, 29), (int) gmdate('Y'));
         checkEq('the Activity entry and the notice say what Google holds on the day and what the change asked for, with both values', [true, 'Sample weekly', ["On $day Google Calendar holds the title 'Sample weekly, renamed'; this change asked for the title 'Sample weekly, special'."]],
-            [str_contains((string) ($entry['summary'] ?? ''), 'Google kept something else'), $notice['title'] ?? null, $lines]);
+            [str_contains((string) ($entry['summary'] ?? ''), 'Google Calendar kept something else'), $notice['title'] ?? null, $lines]);
         // Google holds the day at the series' own values, so here it is an ordinary occurrence again: no row, not the plan's.
         checkEq('the rows here show what Google stores, not the plan: the day has no row of its own', null, $db->scalar('SELECT title FROM events WHERE calendar_id = ? AND google_event_id = ?', [$s->calendarId, 'smpl1weekly_20270329T170000Z']));
     });

@@ -26,7 +26,7 @@ use BetterCal\Support\Time;
 final class GoogleSync
 {
     /** What a poll says when a whole read listed nothing for a calendar holding rows (the failure its google_empty notice reports). */
-    public const EMPTY_MESSAGE = 'Google listed no events for this calendar while it has events here; nothing was removed, and the next poll reads it again.';
+    public const EMPTY_MESSAGE = 'Google Calendar listed no events for this calendar while it has events here; nothing was removed, and the next check reads it again.';
 
     private const EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/%s/events';
     private const PAGE_SIZE = 2500;

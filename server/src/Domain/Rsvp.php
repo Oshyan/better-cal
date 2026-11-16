@@ -425,7 +425,7 @@ final class Rsvp
             }
         }
         if ($was === null) {
-            throw new HttpError('google_write_failed', 'Google no longer lists this account as a guest of the event.', 409);
+            throw new HttpError('google_write_failed', 'Google Calendar no longer lists this account as a guest of the event.', 409);
         }
         // sendUpdates=none (GoogleWriter's default): Google passes a guest's
         // answer to the organizer by itself; nobody else gets mail.

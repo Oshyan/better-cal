@@ -67,7 +67,7 @@ return static function (Db $db): void {
                 $e = PA::caught(fn() => $attempt($s));
                 $s->hook = null;
                 checkEq("$level, $what, the small list unreadable: refused as a failure to reach Google (502), never as read-only, deleted or changed", ['google_write_failed', 502], [PA::code($e), $e?->status ?? null]);
-                check("$level, $what: its sentence says Google did not say, and that nothing was changed", str_contains((string) $e?->getMessage(), 'Google did not say') && str_contains((string) $e?->getMessage(), 'nothing was changed'), (string) $e?->getMessage());
+                check("$level, $what: its sentence says Google did not say, and that nothing was changed", str_contains((string) $e?->getMessage(), 'Google Calendar did not say') && str_contains((string) $e?->getMessage(), 'nothing was changed'), (string) $e?->getMessage());
                 checkEq("$level, $what: nothing held here or at Google differs; the level stored and Review as before", [$before, 'owner', []],
                     [$state($s), PA::storedRole($db, $s->calendarId), PA::items($db, $s->u, $s->calendarId)]);
                 $e = PA::caught(fn() => $attempt($s));
@@ -88,7 +88,7 @@ return static function (Db $db): void {
             $e = PA::caught(fn() => $s->events->patch($s->u, $s->id, ['title' => 'Sample single, renamed']));
             checkEq("attempt $try: refused as Google refusing that change (403), after its list, the write and one small list", ['google_write_failed', 403, ['GET list', 'PATCH id', 'GET small']],
                 [PA::code($e), $e?->status ?? null, PA::sent($s->fake, $from)]);
-            check("attempt $try: the sentence says Google refused this change", str_contains((string) $e?->getMessage(), 'Google refused this change'), (string) $e?->getMessage());
+            check("attempt $try: the sentence says Google refused this change", str_contains((string) $e?->getMessage(), 'Google Calendar refused this change'), (string) $e?->getMessage());
         }
         $s->hook = null;
         checkEq('after three attempts: nothing here differs, no access notice', [$before['rows'], []], [$state($s)['rows'], PA::items($db, $s->u, $s->calendarId)]);
@@ -180,7 +180,7 @@ return static function (Db $db): void {
             $id = (int) $db->scalar("SELECT id FROM review_items WHERE user_id = ? AND source_key = ? AND status = 'open' ORDER BY id DESC LIMIT 1", [$s->u, 'google-access:' . $s->calendarId]);
             (new ReviewQueue($db, $s->events))->dismissNotice($s->u, $id);
         };
-        $other = 'Google could not be reached: connection timed out';
+        $other = 'Google Calendar could not be reached: connection timed out';
         // Not shown, dismissed; then shown again; then not shown again.
         $s = $make($single);
         $s->fake->role = 'none';

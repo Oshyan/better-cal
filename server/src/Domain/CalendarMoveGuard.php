@@ -93,8 +93,8 @@ final class CalendarMoveGuard
             return;
         }
         $message = $status === 'failed'
-            ? 'This move to Google stopped before it finished. Retry it or stop the move before editing this calendar.'
-            : 'This calendar is being moved to Google; it takes edits again once the upload finishes.';
+            ? 'This move to Google Calendar stopped before it finished. Retry it or stop the move before editing this calendar.'
+            : 'This calendar is being moved to Google Calendar; it takes edits again once the upload finishes.';
         throw new HttpError('calendar_moving', $message, 409);
     }
 }

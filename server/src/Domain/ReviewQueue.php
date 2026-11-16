@@ -1382,7 +1382,7 @@ final class ReviewQueue
             return $this->db->insert('review_items', [
                 'user_id' => $userId, 'kind' => self::KIND_GOOGLE_DIFFERS, 'source_key' => 'google:' . ($eventId ?? 0) . ':' . bin2hex(random_bytes(4)), 'event_id' => $eventId,
                 'title' => mb_substr($title, 0, 300),
-                'summary' => mb_substr("Google kept something else than the change to '" . $title . "' on calendar '" . $calendarName . "' said. The calendar shows what Google stores.", 0, 1000),
+                'summary' => mb_substr("Google Calendar kept something other than what the change to '" . $title . "' on calendar '" . $calendarName . "' said, and what it kept is what shows here.", 0, 1000),
                 'payload_json' => json_encode(['lines' => array_values(array_map(static fn(string $l): string => mb_substr($l, 0, 500), $lines)), 'calendarName' => $calendarName], JSON_INVALID_UTF8_SUBSTITUTE),
             ]);
         });
@@ -1456,7 +1456,7 @@ final class ReviewQueue
             $db->insert('review_items', [
                 'user_id' => $userId, 'kind' => self::KIND_GOOGLE_DIFFERS, 'source_key' => 'google:' . ($eventId ?? 0) . ':' . bin2hex(random_bytes(4)), 'event_id' => $eventId,
                 'title' => mb_substr($title, 0, 300),
-                'summary' => mb_substr("Your answer to '" . $title . "' on calendar '" . $calendarName . "' was " . ($takenBack ? 'taken back' : 'saved') . '. Google Calendar holds some days of the event otherwise than before. The calendar shows what Google holds.', 0, 1000),
+                'summary' => mb_substr("Your answer to '" . $title . "' on calendar '" . $calendarName . "' was " . ($takenBack ? 'taken back' : 'saved') . '. Google Calendar holds some days of the event differently than before, and they show here as it holds them.', 0, 1000),
                 'payload_json' => json_encode(['lines' => array_values(array_map(static fn(string $l): string => mb_substr($l, 0, 500), $lines)), 'calendarName' => $calendarName], JSON_INVALID_UTF8_SUBSTITUTE),
             ]);
         });
@@ -1471,8 +1471,8 @@ final class ReviewQueue
     {
         self::holdState($db, $userId, self::KIND_GOOGLE_EMPTY, 'google-empty:' . (int) $calendar['id'], 'empty', [
             'title' => (string) $calendar['name'],
-            'summary' => "Google listed no events for '" . (string) $calendar['name'] . "', so nothing was removed here and each poll asks again."
-                . ' If the account lost access to it, check the calendar is still shared with it at Google; if you emptied it at Google on purpose, remove it here and add it again.',
+            'summary' => "Google Calendar listed no events for '" . (string) $calendar['name'] . "', so nothing was removed here and each check asks again."
+                . ' If the account lost access to it, check the calendar is still shared with that account there; if you emptied it there on purpose, remove it here and add it again.',
             'payload' => ['calendarId' => (int) $calendar['id'], 'calendarName' => (string) $calendar['name']],
         ]);
     }

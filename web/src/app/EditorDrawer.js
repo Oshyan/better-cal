@@ -1361,7 +1361,7 @@ export function EditorDrawer() {
         <button type="submit" class="bc-btn bc-btn-primary" disabled=${unsaveable || !!seriesAsk} title=${backwards ? 'The end is before the start' : intervalWrong ? intervalWrong : (occ ? 'Save' : 'Create') + ' (' + saveKeys + ')'}>${seriesAsk === 'asking' ? 'Working out the plan…' : occ ? 'Save' : 'Create'}</button>
         <button type="button" class="bc-btn" onClick=${requestClose}>Cancel</button>
         ${googleCalendar(Number(form.calendarId)) && (occ ? occ.recurring && scope !== 'this' : (form.rrule.custom || form.rrule.freq !== 'none'))
-          && html`<span class="bc-drawer-note" title="This calendar lives at Google: a change to the series is sent there and read back, and the calendar shows what Google stores.">${occ ? 'Saves' : 'Creates'} at Google</span>`}
+          && html`<span class="bc-drawer-note" title="This calendar lives in Google Calendar: a change to the series is sent there and read back, and the calendar here shows what is stored there.">${occ ? 'Saves' : 'Creates'} in Google Calendar</span>`}
         ${occ && html`<button type="button" class="bc-btn bc-btn-danger bc-ed-delete" onClick=${() => deleteEvent(occ, scope)}>Delete</button>`}
       </div>
       <${SeriesDialog} host="editor" />

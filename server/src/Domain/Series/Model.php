@@ -71,7 +71,7 @@ final class Model
     /** The same for a split's part (this and following): the days before stay, so only the part would be left with none. */
     public const EMPTY_FROM_DAY = 'This would leave no events from this day on. Delete this and following instead?';
 
-    public const GOOGLE_NOTE = 'This change is sent to Google and read back from it: the calendar shows what Google stores. It can\'t be undone yet.';
+    public const GOOGLE_NOTE = 'This change is sent to Google Calendar and read back from it: the calendar here shows what is stored there. It can\'t be undone yet.';
 
     private Rule $r0;
     /** The rule as stored (r0 drops the stored day of an anchored start). */

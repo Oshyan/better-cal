@@ -555,7 +555,7 @@ foreach ([
 // the plan changes the same thing (it renames the series, so every day's title), the day's title is kept and named;
 // where it does not (a new length), it is kept with nothing said.
 foreach ([
-    ['a rename of the series', ['title' => 'Sample weekly renamed'], ["The title of 'Renamed at Google' on " . $dateWords(25) . " was changed in Google Calendar while this change was waiting to be finished; Google's title was kept."]],
+    ['a rename of the series', ['title' => 'Sample weekly renamed'], ["The title of 'Renamed at Google' on " . $dateWords(25) . " was changed in Google Calendar while this change was waiting to be finished; the title there was kept."]],
     ['a new length (an hour to ninety minutes)', ['end_utc' => '2027-01-04 19:30:00'], []],
 ] as [$what, $change, $said]) {
     $target = $seriesOf($gm($change + $forms['10:00 Los Angeles, weekly'][0]), '2027-01-11 18:00:00', '2027-01-18 18:00:00');

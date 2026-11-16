@@ -148,6 +148,6 @@ final class PA
     public static function lines(Db $db, int $userId, int $calendarId): array
     {
         return array_values(array_filter(array_column($db->all("SELECT summary FROM mutations WHERE user_id = ? AND entity = 'calendar' AND entity_id = ? ORDER BY id",
-            [$userId, $calendarId]), 'summary'), static fn(?string $l): bool => preg_match("/^(Your permissions for|Google no longer shows|Google doesn't show|Google shows|Google now shows|'[^']*' is view only at Google)/", (string) $l) === 1));
+            [$userId, $calendarId]), 'summary'), static fn(?string $l): bool => preg_match("/^(Your permissions for|Google Calendar no longer shows|Google Calendar doesn't show|Google Calendar shows|Google Calendar now shows|'[^']*' is view only in Google Calendar)/", (string) $l) === 1));
     }
 }

@@ -37,15 +37,15 @@ final class GoogleWriter
     private const MOVE_RECOVERY_PROPERTY = 'betterCalMove';
     /** Pages refreshEtags reads for one series at most (2,500 rows each). */
     private const ETAG_PAGES = 4;
-    public const CONFLICT_MESSAGE = 'This event changed at Google since you last saw it. Refresh and try again.';
+    public const CONFLICT_MESSAGE = 'This event changed in Google Calendar since you last saw it. Refresh and try again.';
     /** The conflict's reason alone, for a change that had already sent part of itself. */
-    public const CONFLICT_SAID = 'This event changed at Google since this change read it.';
-    public const BUSY_MESSAGE = 'Google is busy and refused the change for now; nothing was changed. Try again in a minute.';
-    public const DELETED_MESSAGE = 'This event was deleted at Google; nothing was changed. Refresh to see the calendar as Google has it.';
-    public const REFUSED_MESSAGE = 'Google refused this change; nothing was changed. If you just got edit access back, try again in a moment.';
+    public const CONFLICT_SAID = 'This event changed in Google Calendar since this change read it.';
+    public const BUSY_MESSAGE = 'Google Calendar is busy and refused the change for now; nothing was changed. Try again in a minute.';
+    public const DELETED_MESSAGE = 'This event was deleted in Google Calendar; nothing was changed. Refresh to see the calendar as it is there.';
+    public const REFUSED_MESSAGE = 'Google Calendar refused this change; nothing was changed. If you just got edit access back, try again in a moment.';
 
     /** The note on the Activity line of a removal whose target Google had already removed (gone). */
-    public const ALREADY_GONE = 'Google had already removed it';
+    public const ALREADY_GONE = 'Google Calendar had already removed it';
     /**
      * Google's reasons for a refusal that says "too many requests, wait"
      * (a 403 or 429 of the usageLimits domain): the write changed nothing
@@ -178,14 +178,14 @@ final class GoogleWriter
         // of a calendar that could be changed here until now; one that couldn't is said as what it is.
         if (self::writes($calendar['google_access_role'] ?? null)) {
             $why = $role === 'none'
-                ? 'Google no longer shows it to this account. If it is shared with you again, changes work here again.'
-                : 'your permissions for it at Google no longer allow changes. If you have access, restore full editing there.';
+                ? 'Google Calendar no longer shows it to this account. If it is shared with you again, changes work here again.'
+                : 'your permissions for it in Google Calendar no longer allow changes. If you have access, restore full editing there.';
             return ($undo ? "This can't be undone while $name is read-only: " : "$name is read-only: ") . $why;
         }
         $state = match (self::tier($role)) {
-            'none' => "Google doesn't show $name to this account",
-            'busy' => "Google shows this account only busy times for $name",
-            default => "$name is view only at Google",
+            'none' => "Google Calendar doesn't show $name to this account",
+            'busy' => "Google Calendar shows this account only busy times for $name",
+            default => "$name is view only in Google Calendar",
         };
         return $undo ? "This can't be undone: $state." : "$state, so it can't be changed here.";
     }
@@ -227,8 +227,8 @@ final class GoogleWriter
      */
     public static function unconfirmed(): HttpError
     {
-        return new HttpError('google_write_failed', 'Google did not say what this account may do with this calendar, so nothing was changed. Try again in a minute.', 502,
-            ['refused' => true, 'said' => 'Google did not say what this account may do with this calendar.']);
+        return new HttpError('google_write_failed', 'Google Calendar did not say what this account may do with this calendar, so nothing was changed. Try again in a minute.', 502,
+            ['refused' => true, 'said' => 'Google Calendar did not say what this account may do with this calendar.']);
     }
 
     /** Whether a refusal is the access rule's (readOnly). Pure. */
@@ -326,7 +326,7 @@ final class GoogleWriter
         }
         $role = $this->accessNow($calendar, $beforeSend);
         if ($role === null) {
-            throw new HttpError('google_write_failed', 'Google could not be asked whether this calendar may be changed now, so nothing was changed. Try again in a minute.', 502);
+            throw new HttpError('google_write_failed', 'Google Calendar could not be asked whether this calendar may be changed now, so nothing was changed. Try again in a minute.', 502);
         }
         if (!self::writes($role)) {
             throw $this->refused($calendar, $role, $undo);
@@ -402,8 +402,8 @@ final class GoogleWriter
         $name = self::named($now);
         $words = self::accessWords($now, $role, $was);
         $undo->record((int) $now['user_id'], 'calendar', (int) $now['id'], 'update', null, null, match (self::tier($role)) {
-            'edit' => $was === null ? "Your permissions for $name at Google allow changes. Changes and undo work here." : "Your permissions for $name at Google allow changes now. Changes and undo work here.",
-            default => $was !== null && self::tier($was) === 'none' ? "Google shows $name to this account again. " . $words : $words,
+            'edit' => $was === null ? "Your permissions for $name in Google Calendar allow changes. Changes and undo work here." : "Your permissions for $name in Google Calendar allow changes now. Changes and undo work here.",
+            default => $was !== null && self::tier($was) === 'none' ? "Google Calendar shows $name to this account again. " . $words : $words,
         });
         // A level learned when none was stored closes any stale item, but opens one only below what the calendar was
         // last known to allow; nothing is known after the compromise reset (it clears the level), so then no item opens
@@ -424,14 +424,14 @@ final class GoogleWriter
         $editable = self::writes($was);
         return match (self::tier($role)) {
             'none' => $was !== null && $was !== 'none'
-                ? "Google no longer shows $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and no longer update. If it is shared with you again, it updates again; otherwise remove it, or keep it as a calendar of your own."
-                : "Google doesn't show $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and don't update. If it is shared with you, it updates; otherwise remove it, or keep it as a calendar of your own.",
+                ? "Google Calendar no longer shows $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and no longer update. If it is shared with you again, it updates again; otherwise remove it, or keep it as a calendar of your own."
+                : "Google Calendar doesn't show $name to this account: its owner stopped sharing it, or deleted it. Its events here are kept, read-only, and don't update. If it is shared with you, it updates; otherwise remove it, or keep it as a calendar of your own.",
             'busy' => $editable
-                ? "Google now shows this account only busy times for $name, so its events here stay as they were and don't update, and changes and undo are unavailable. If you have access, restore full details and editing at Google."
-                : "Google shows this account only busy times for $name, so its events here stay as they were and don't update, and it can't be changed here.",
+                ? "Google Calendar now shows this account only busy times for $name, so its events here stay as they were and don't update, and changes and undo are unavailable. If you have access, restore full details and editing there."
+                : "Google Calendar shows this account only busy times for $name, so its events here stay as they were and don't update, and it can't be changed here.",
             default => $editable
-                ? "Your permissions for $name at Google are now read-only. If you have access, restore full editing there. Until then $name works read-only here: changes, and undoing past changes, are unavailable."
-                : "$name is view only at Google, so it can't be changed here.",
+                ? "Your permissions for $name in Google Calendar are now read-only. If you have access, restore full editing there. Until then $name works read-only here: changes, and undoing past changes, are unavailable."
+                : "$name is view only in Google Calendar, so it can't be changed here.",
         };
     }
 
@@ -1009,7 +1009,7 @@ final class GoogleWriter
         $headers = [];
         if (($method === 'PATCH' || $method === 'DELETE') && !$dayStep) {
             if ($ifMatch === null || $ifMatch === '') {
-                throw new HttpError('google_write_failed', 'Nothing was sent to Google: no version of the event was read to write to.', 502);
+                throw new HttpError('google_write_failed', 'Nothing was sent to Google Calendar: no version of the event was read to write to.', 502);
             }
             $headers = ['If-Match: ' . $ifMatch];
         }
@@ -1026,7 +1026,7 @@ final class GoogleWriter
         try {
             $r = $send($access);
         } catch (\RuntimeException $e) {
-            throw new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
+            throw new HttpError('google_write_failed', 'Google Calendar could not be reached: ' . $e->getMessage(), 502);
         }
         // A held token Google no longer takes: once more with a fresh one,
         // and only once (a second 401 is reported below). A refresh Google
@@ -1038,7 +1038,7 @@ final class GoogleWriter
             try {
                 $r = $send($access);
             } catch (\RuntimeException $e) {
-                throw new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
+                throw new HttpError('google_write_failed', 'Google Calendar could not be reached: ' . $e->getMessage(), 502);
             }
         }
         // Google refused it as busy (a rate or quota limit): it changed
@@ -1050,7 +1050,7 @@ final class GoogleWriter
             try {
                 $r = $send($access);
             } catch (\RuntimeException $e) {
-                throw new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
+                throw new HttpError('google_write_failed', 'Google Calendar could not be reached: ' . $e->getMessage(), 502);
             }
         }
         // Every events.list answer states the level (the access probe, rows 3, 4, 4d): kept for the
@@ -1066,8 +1066,8 @@ final class GoogleWriter
             }
             // Any other refusal of a list says nothing of an event: never read as one deleted (gone).
             if ($role === null && (int) $r['status'] >= 400 && self::refusal((int) $r['status'], (string) $r['body']) === 'deleted') {
-                throw new HttpError('google_write_failed', 'Google gave an answer Better-Cal does not read for this calendar\'s list; nothing was changed. Try again in a minute.', 502,
-                    ['googleStatus' => 0, 'said' => 'Google gave an answer Better-Cal does not read for this calendar\'s list.']);
+                throw new HttpError('google_write_failed', 'Google Calendar gave an answer Better-Cal does not read for this calendar\'s list; nothing was changed. Try again in a minute.', 502,
+                    ['googleStatus' => 0, 'said' => 'Google Calendar gave an answer Better-Cal does not read for this calendar\'s list.']);
             }
         }
         // A write refused for what may be the account's access (a 403 not about a rate, a 404, a 410, a
@@ -1108,14 +1108,14 @@ final class GoogleWriter
             // Each refusal's message says nothing was changed, true of the one request; `said` is the same
             // reason without that claim, for a caller whose change had already sent part of itself
             // (GoogleSeries::run says what reached Google from what it sent).
-            $google = $why !== '' ? " Google said: \"$why\"." : '';
+            $google = $why !== '' ? " Its reason: \"$why\"." : '';
             throw match ($refusedAs) {
-                'busy' => new HttpError('google_busy', self::BUSY_MESSAGE, 503, $extra + ['said' => 'Google is busy and refused the change for now.']),
+                'busy' => new HttpError('google_busy', self::BUSY_MESSAGE, 503, $extra + ['said' => 'Google Calendar is busy and refused the change for now.']),
                 'deleted' => self::deleted((int) $r['status']),
                 // The level a small list gave just now was writer, so this is not the calendar read-only: the
                 // probe saw Google refuse a write for a few seconds after edit access was given back (row 6e).
-                'permission' => new HttpError('google_write_failed', self::REFUSED_MESSAGE . $google, 403, $extra + ['said' => 'Google refused this part of the change.' . $google]),
-                default => new HttpError('google_write_failed', 'Google rejected the change: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : ''), 502, $extra),
+                'permission' => new HttpError('google_write_failed', self::REFUSED_MESSAGE . $google, 403, $extra + ['said' => 'Google Calendar refused this part of the change.' . $google]),
+                default => new HttpError('google_write_failed', 'Google Calendar rejected the change: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : ''), 502, $extra),
             };
         }
         return $data;
@@ -1128,7 +1128,7 @@ final class GoogleWriter
      */
     public static function deleted(int $googleStatus = 404): HttpError
     {
-        return new HttpError('google_deleted', self::DELETED_MESSAGE, 409, ['googleStatus' => $googleStatus, 'said' => 'This event was deleted at Google.']);
+        return new HttpError('google_deleted', self::DELETED_MESSAGE, 409, ['googleStatus' => $googleStatus, 'said' => 'This event was deleted in Google Calendar.']);
     }
 
     /**

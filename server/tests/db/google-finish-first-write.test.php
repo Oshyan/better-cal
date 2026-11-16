@@ -165,7 +165,7 @@ return static function (Db $db): void {
                     // What the answer says is true: it names no day "the plan" never had, and never says "left as Google has it" of a value it did not leave.
                     $words = implode(' ', (array) ($out['differences'] ?? []));
                     check("$name: the answer does not call the change made at Google the plan's", !str_contains($words, "this change had 'Renamed at Google'") && !str_contains($words, 'this change deleted it, but Google Calendar kept it'), $words);
-                    if (str_contains($words, "Google's notes were kept")) {
+                    if (str_contains($words, "the notes there were kept")) {
                         check("$name: the answer says the notes were left as Google has them, and they were", in_array('2027-01-06 11:00|Sample series|Notes from Google|', $now, true), $words . ' / ' . json_encode(array_values(array_filter($now, static fn(string $l): bool => str_starts_with($l, '2027-01-06')))));
                     }
                 } finally {

@@ -84,11 +84,11 @@ final class GoogleUndo
 
     private const UNDID = 'Undid: ';
     /** Where an entry's words for what Google kept start (SeriesPlans::googleAfter's words, an undo's the same). */
-    public const KEPT = ' Google kept something else: ';
+    public const KEPT = ' Google Calendar kept something else: ';
     /** What an undo's entry says when Review's Finish completed it. */
-    public const FINISHED = 'Finished at Google from Review.';
+    public const FINISHED = 'Finished in Google Calendar from Review.';
     /** The heading of what a forced undo put back over. */
-    public const FORCED = ' Put back over a change made at Google since, as forced: ';
+    public const FORCED = ' Put back over a change made in Google Calendar since, as forced: ';
 
     public function __construct(
         private readonly Db $db,
@@ -455,7 +455,7 @@ final class GoogleUndo
     {
         $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
         if (!self::carries(is_array($details) ? $details : null)) {
-            throw HttpError::badRequest('This entry has nothing to send back to Google', 'not_undoable');
+            throw HttpError::badRequest('This entry has nothing to send back to Google Calendar', 'not_undoable');
         }
         $g = $details['google'];
         $userId = (int) $mutation['user_id'];
@@ -464,7 +464,7 @@ final class GoogleUndo
         }
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $g['calendarId'], $userId]);
         if ($calendar === null || !GoogleWriter::bound($calendar)) {
-            throw HttpError::badRequest("That calendar no longer writes to Google from here, so this change can't be undone", 'not_undoable');
+            throw HttpError::badRequest("That calendar no longer writes to Google Calendar from here, so this change can't be undone", 'not_undoable');
         }
         // Stored below writer: Google is asked first, and the undo goes on if it now says writer.
         $calendar = $this->writer()->recheck($calendar, $authority === null ? null : fn() => $authority->assertValid($this->db, false), true);
@@ -650,7 +650,7 @@ final class GoogleUndo
                     }
                 }
                 if ($was === null) {
-                    throw HttpError::badRequest('Google no longer lists this account as a guest of the event', 'not_undoable');
+                    throw HttpError::badRequest('Google Calendar no longer lists this account as a guest of the event', 'not_undoable');
                 }
                 // A write to the series when the answer was for all events: read back, and every day not as it was sent
                 // (GoogleSeries::writeBesideDays), as the answer itself is.
@@ -677,7 +677,7 @@ final class GoogleUndo
                 ReviewQueue::holdGoogleAnswerLines($this->db, $userId, (int) $row['id'], (string) $row['title'], (string) $calendar['name'], $sent['lines'], true);
                 return ['entity' => 'event', 'op' => 'update'];
         }
-        throw HttpError::badRequest('This entry has nothing to send back to Google', 'not_undoable');
+        throw HttpError::badRequest('This entry has nothing to send back to Google Calendar', 'not_undoable');
     }
 
     /**
@@ -722,7 +722,7 @@ final class GoogleUndo
         $userId = (int) $mutation['user_id'];
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $g['calendarId'], $userId]);
         if ($calendar === null || !GoogleWriter::bound($calendar)) {
-            throw HttpError::badRequest("That calendar no longer writes to Google from here, so this change can't be undone", 'not_undoable');
+            throw HttpError::badRequest("That calendar no longer writes to Google Calendar from here, so this change can't be undone", 'not_undoable');
         }
         // Stored below writer: Google is asked first, and the undo goes on if it now says writer.
         $calendar = $this->writer()->recheck($calendar, $authority === null ? null : fn() => $authority->assertValid($this->db, false), true);
@@ -840,8 +840,8 @@ final class GoogleUndo
     public static function finishRefused(bool $redo): string
     {
         return $redo
-            ? "The undo this redoes was recorded by an earlier version of Better-Cal and can't be redone after the upgrade, so Finish can't complete this redo. Put back returns the series to how it was before the redo began, unless it changed at Google since."
-            : "The change this undoes was recorded by an earlier version of Better-Cal and can't be undone after the upgrade, so Finish can't complete this undo. Put back returns the series to how it was before the undo began, unless it changed at Google since.";
+            ? "The undo this redoes was recorded by an earlier version of Better-Cal and can't be redone after the upgrade, so Finish can't complete this redo. Put back returns the series to how it was before the redo began, unless it changed in Google Calendar since."
+            : "The change this undoes was recorded by an earlier version of Better-Cal and can't be undone after the upgrade, so Finish can't complete this undo. Put back returns the series to how it was before the undo began, unless it changed in Google Calendar since.";
     }
 
     /** Put back's last words when it refuses (Google changed since) and Finish is refused too: nothing promised that would refuse. */
@@ -1133,11 +1133,11 @@ final class GoogleUndo
 
     /** Changed at Google since: the stale-undo words and the conflict's sentence. */
     /** Why an undo of one day is refused when its repeating event was deleted at Google. */
-    public const SERIES_DELETED = 'The repeating event this day belongs to was deleted in Google Calendar, so this change can\'t be undone here. Refresh to see the calendar as Google has it; if you want the event back, make it again or restore it in Google Calendar.';
+    public const SERIES_DELETED = 'The repeating event this day belongs to was deleted in Google Calendar, so this change can\'t be undone here. Refresh to see the calendar as it is there; if you want the event back, make it again or restore it in Google Calendar.';
 
     public static function conflict(): HttpError
     {
-        return new HttpError('google_conflict', 'Newer changes exist for this item; undoing would overwrite them. This event changed at Google since you last saw it.', 409);
+        return new HttpError('google_conflict', 'Newer changes exist for this item; undoing would overwrite them. This event changed in Google Calendar since you last saw it.', 409);
     }
 
     private static function refusingConflict(callable $send): mixed

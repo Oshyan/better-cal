@@ -19,7 +19,7 @@ import { VIEW_LABELS } from './commanddefs.js';
 import { timeChange, listWords } from '../lib/changeline.js';
 import { openSeriesChange, seriesPlans, planOfError } from './serieschange.js';
 import { sendEventChange, CANCELLED, keptOf, failWords } from './googlechange.js';
-import { stoppedWords } from '../lib/planwords.js';
+import { stoppedWords, whereWords } from '../lib/planwords.js';
 
 // Split sits last so the number keys of the older views stay where they were.
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda', 'split'];
@@ -352,7 +352,7 @@ export function pluginBacked(occ) {
 // At Google every change undoes like any other: one event or occurrence by
 // its inverse, a whole series by sending it back as it was. A scope chooser
 // for a Google series says where the change goes.
-export const GOOGLE_SERIES_NOTE = 'Goes to Google';
+export const GOOGLE_SERIES_NOTE = 'Goes to Google Calendar';
 export const NO_UNDO = "Can't be undone";
 
 // Undo toasts name the item on their first line and say what happened to it
@@ -362,11 +362,6 @@ function itemName(occ) { return (occ && occ.title) || 'Untitled event'; }
 function said(what, change) { return change ? what + ' · ' + change : what; }
 // Which occurrences of a series a change took, said only when it isn't the
 // one the action assumes (a drag takes this one; a calendar move, all).
-// Where a change went, on its toast, after what it did and which
-// occurrences: one sent to Google Calendar happened both here and there.
-// The one place a toast after a change of an event names Google Calendar,
-// so the kept line under it can say "there" (store.js toast).
-function whereWords(google) { return google ? ', here and in Google Calendar' : ''; }
 function seriesWords(occ, scope, usual) {
   if (!occ || !occ.recurring || !scope || scope === usual) return '';
   return scope === 'all' ? ' (all in series)' : scope === 'following' ? ' (this and following)' : ' (this occurrence)';
@@ -577,7 +572,7 @@ export async function createEvent(fields) {
       : '';
     if (occ) {
       const message = cal && !cal.visible ? `Created in ${cal.name}, which is hidden${repeats}`
-        : cal && cal.provider === 'google' ? 'Event created at Google' + repeats : 'Event created' + repeats;
+        : cal && cal.provider === 'google' ? 'Event created in Google Calendar' + repeats : 'Event created' + repeats;
       set({ lastCreated: { occ, message } });
     }
     if (state.quickAddWindow && occ) {
@@ -591,7 +586,7 @@ export async function createEvent(fields) {
     } else if (cal && cal.provider === 'google') {
       // Created at Google through the connector: undone by deleting it there,
       // a series as a whole.
-      toast('Created at Google' + repeats, { title: itemName(occ), undo: entriesOf(occ), note: NO_UNDO });
+      toast('Created in Google Calendar' + repeats, { title: itemName(occ), undo: entriesOf(occ), note: NO_UNDO });
     } else {
       toast((cal ? 'Created in ' + cal.name : 'Created') + repeats, { title: itemName(occ), undo: entriesOf(occ) });
     }
@@ -788,7 +783,7 @@ export async function copyEventTo(occ, calendarId, scope) {
     const body = { calendarId, scope: occ.recurring ? (scope || 'all') : 'all' };
     if (occ.recurring && body.scope === 'this') body.instanceStart = occ.start;
     const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
-    toast('Copied to ' + cal.name + (cal.provider === 'google' ? ' (and Google)' : ''), { title: created.title || itemName(occ), duration: 4000, undo: entriesOf(created), note: NO_UNDO });
+    toast('Copied to ' + cal.name + (cal.provider === 'google' ? ' in Google Calendar' : ''), { title: created.title || itemName(occ), duration: 4000, undo: entriesOf(created), note: NO_UNDO });
     refreshWindow();
     return true;
   } catch (e) {
@@ -827,7 +822,7 @@ export async function copyEventAt({ instanceId, newStart, newEnd }) {
     const body = { duplicate: true, scope: occ.recurring ? 'this' : 'all', start: newStart, end: newEnd };
     if (occ.recurring) body.instanceStart = occ.start;
     const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
-    toast(said('Copied' + (cal.provider === 'google' ? ' at Google' : ''), timeChange(occ, { start: newStart, end: newEnd, allDay: occ.allDay })), { title: created.title || itemName(occ), undo: entriesOf(created), note: NO_UNDO });
+    toast(said('Copied' + whereWords(cal.provider === 'google'), timeChange(occ, { start: newStart, end: newEnd, allDay: occ.allDay })), { title: created.title || itemName(occ), undo: entriesOf(created), note: NO_UNDO });
     refreshWindow();
     return true;
   } catch (e) {

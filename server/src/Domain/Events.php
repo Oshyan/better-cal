@@ -321,7 +321,7 @@ final class Events
         }
         $role = $this->google()->accessNow($calendar, $this->googleBeforeSend($authority));
         if ($role === null) {
-            throw new HttpError('google_write_failed', 'Google could not be asked just now. Try again in a minute.', 502);
+            throw new HttpError('google_write_failed', 'Google Calendar could not be asked just now. Try again in a minute.', 502);
         }
         return $role;
     }
@@ -399,7 +399,7 @@ final class Events
     {
         $id = (string) ($row['google_event_id'] ?? '');
         if ($id === '') {
-            throw new HttpError('google_unsynced', 'This event has not finished syncing from Google yet; refresh the calendar and try again.', 409);
+            throw new HttpError('google_unsynced', 'This event has not finished syncing from Google Calendar yet; refresh the calendar and try again.', 409);
         }
         return $id;
     }
@@ -528,7 +528,7 @@ final class Events
             return $id;
         });
         if ($id === null) {
-            throw new HttpError('google_write_failed', 'Google accepted the event but it did not come back on the calendar', 502);
+            throw new HttpError('google_write_failed', 'Google Calendar accepted the event but it did not come back here', 502);
         }
         if (empty($row['rrule'])) {
             $this->googleJournal($userId, "Created '" . (string) $row['title'] . "'", $calendar, $id,
@@ -768,7 +768,7 @@ final class Events
             return true;
         });
         if (!$found) {
-            throw new HttpError('google_write_failed', 'Google accepted the change but the occurrence did not come back', 502);
+            throw new HttpError('google_write_failed', 'Google Calendar accepted the change but the occurrence did not come back here', 502);
         }
         // The row and its links after: none for a day the edit made
         // ordinary again. With the row before, the entry says what the edit

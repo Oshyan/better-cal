@@ -359,14 +359,14 @@ for (const file of files) {
   check(['bc-es-half', 'bc-es-halfbtn'].every((c) => new RegExp('\\.' + c + '[\\s.{>]').test(css)) && sheet.includes('bc-es-half') && sheet.includes('bc-es-halfbtn'),
     "the half-done line's classes have their rules, and the rules their elements");
   check(review.includes("item.kind === 'google_half' && action.name === 'dismiss'"), 'dismissing a half-done change must say it stays half done');
-  check(review.includes('The calendar stays read-only here until Google allows changes again.'),
+  check(review.includes('The calendar stays read-only here until Google Calendar allows changes again.'),
     'dismissing an access notice must say the calendar stays read-only (a dismiss acknowledges, it changes nothing)');
   const settingsSrc = readFileSync(join(root, 'app', 'CalendarSettings.js'), 'utf8');
   const fn = (settingsSrc.match(/export function googleReadOnlyLine\(role\) \{[\s\S]*?\n\}/) || [''])[0];
   const line = fn ? vm.runInNewContext(fn.replace('export function', 'function') + '\ngoogleReadOnlyLine') : null;
   check(typeof line === 'function', 'CalendarSettings must compose the read-only line in googleReadOnlyLine(role)');
   if (typeof line === 'function') {
-    check(line('reader').startsWith('View only at Google') && line('freeBusyReader').includes('only busy times') && line('freeBusyReader').includes('don\'t update')
+    check(line('reader').startsWith('View only in Google Calendar') && line('freeBusyReader').includes('only busy times') && line('freeBusyReader').includes('don\'t update')
       && line('none').includes('no longer shows it to this account') && line('none').includes('keep it as a calendar of your own'),
       'the read-only line must name view only, busy times only (events not updating) and not shown apart');
     check(['reader', 'freeBusyReader', 'none'].every((r) => !/—/.test(line(r))), 'the read-only line has no em-dash');

@@ -39,7 +39,7 @@ return static function (Db $db): void {
         [$t->u, 'google-access:' . $t->s->calendarId, $status]), 'kind');
     // Activity's lines about the calendar's access (a poll's own entries stand on the calendar too).
     $lines = static fn(object $t): array => array_values(array_filter(array_column($db->all("SELECT summary FROM mutations WHERE user_id = ? AND entity = 'calendar' AND entity_id = ? ORDER BY id",
-        [$t->u, $t->s->calendarId]), 'summary'), static fn(?string $l): bool => preg_match("/^(Your permissions for|Google no longer shows|Google doesn't show|Google shows|Google now shows|'[^']*' is view only at Google)/", (string) $l) === 1));
+        [$t->u, $t->s->calendarId]), 'summary'), static fn(?string $l): bool => preg_match("/^(Your permissions for|Google Calendar no longer shows|Google Calendar doesn't show|Google Calendar shows|Google Calendar now shows|'[^']*' is view only in Google Calendar)/", (string) $l) === 1));
     $row = static fn(object $t): ?array => $db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$t->id]);
     $tags = static fn(object $t): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$t->id]), 'name');
     $caught = static function (callable $fn): ?HttpError {
@@ -55,9 +55,9 @@ return static function (Db $db): void {
 
     // ---- A change attempted minutes after access was lowered, before any poll ---------------------------------------
 
-    foreach (['reader' => ['google_read_only', 'reader', 'is read-only: your permissions for it at Google no longer allow changes'],
-        'freeBusyReader' => ['google_read_only', 'freeBusyReader', 'is read-only: your permissions for it at Google no longer allow changes'],
-        'none' => ['google_not_shown', 'none', 'is read-only: Google no longer shows it to this account']] as $level => [$code, $said, $words]) {
+    foreach (['reader' => ['google_read_only', 'reader', 'is read-only: your permissions for it in Google Calendar no longer allow changes'],
+        'freeBusyReader' => ['google_read_only', 'freeBusyReader', 'is read-only: your permissions for it in Google Calendar no longer allow changes'],
+        'none' => ['google_not_shown', 'none', 'is read-only: Google Calendar no longer shows it to this account']] as $level => [$code, $said, $words]) {
         scenario("google access, lowered to $level before any poll: an edit, a delete and an undo of a single event are refused on their own first read, nothing is sent, nothing held here is lost", function () use ($db, $single, $level, $code, $said, $words, $sent, $writes, $stored, $items, $lines, $row, $tags, $caught, $undo, $lastEntry): void {
             $t = H::make($db, $single);
             try {
@@ -76,7 +76,7 @@ return static function (Db $db): void {
                         [$e?->errorCode, $e?->status, $got[0] ?? null, $writes($got)]);
                     // The first attempt meets the calendar stored editable, so it says access was lowered; the later ones meet
                     // it stored at the level the first learned, so they say what it is (rule D(2) of the read).
-                    $plain = ['reader' => "is view only at Google", 'freeBusyReader' => 'only busy times', 'none' => "doesn't show"][$level];
+                    $plain = ['reader' => "is view only in Google Calendar", 'freeBusyReader' => 'only busy times', 'none' => "doesn't show"][$level];
                     check("$level, $what: the sentence says the calendar is read-only and why", $what === 'an edit'
                         ? str_contains((string) $e?->getMessage(), $words)
                         : str_contains((string) $e?->getMessage(), $plain) && ($what !== 'an undo' || str_starts_with((string) $e?->getMessage(), "This can't be undone")), (string) $e?->getMessage());
@@ -140,7 +140,7 @@ return static function (Db $db): void {
             checkEq('one small list (the recheck), then the change\'s own list and its PATCH; the change landed', [['GET list', 'GET list', 'PATCH id'], 'Sample single, back', 'Sample single, back'],
                 [$got, $row($t)['title'] ?? null, $t->s->fake->events[$t->gid]['summary'] ?? null]);
             checkEq('stored writer; no item open, the one there was closed; one line for the drop, one for the return', ['writer', [], ['google_read_only'], 2],
-                [$stored($t), $items($t), $items($t, 'gone'), count(array_filter($lines($t), static fn(string $l): bool => str_contains($l, 'at Google')))]);
+                [$stored($t), $items($t), $items($t, 'gone'), count(array_filter($lines($t), static fn(string $l): bool => str_contains($l, 'in Google Calendar')))]);
             // An undo, too, after access comes back: the entry of the change just made.
             $t->s->fake->role = 'reader';
             $t->s->poll();
@@ -459,7 +459,7 @@ return static function (Db $db): void {
             $id = (int) $db->scalar("SELECT id FROM review_items WHERE user_id = ? AND status = 'open' AND kind = 'google_not_shown'", [$t->u]);
             (new ReviewQueue($db, $t->e))->dismissNotice($t->u, $id);
             checkEq('open: alerts as before; dismissed: its own failure held, any other failure alerts', [false, true, false],
-                [$before, $health->acknowledged($row($failure)), $health->acknowledged($row('Google could not be reached: connection timed out'))]);
+                [$before, $health->acknowledged($row($failure)), $health->acknowledged($row('Google Calendar could not be reached: connection timed out'))]);
         } finally {
             H::done($t);
         }

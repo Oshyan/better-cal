@@ -60,8 +60,8 @@ return static function (Db $db): void {
 
     // The words, from the decisions entry (Journal entries carry their format), not from the code.
     $older = "Recorded by an earlier version of Better-Cal; it can't be undone after the upgrade.";
-    $finishUndo = "The change this undoes was recorded by an earlier version of Better-Cal and can't be undone after the upgrade, so Finish can't complete this undo. Put back returns the series to how it was before the undo began, unless it changed at Google since.";
-    $finishRedo = "The undo this redoes was recorded by an earlier version of Better-Cal and can't be redone after the upgrade, so Finish can't complete this redo. Put back returns the series to how it was before the redo began, unless it changed at Google since.";
+    $finishUndo = "The change this undoes was recorded by an earlier version of Better-Cal and can't be undone after the upgrade, so Finish can't complete this undo. Put back returns the series to how it was before the undo began, unless it changed in Google Calendar since.";
+    $finishRedo = "The undo this redoes was recorded by an earlier version of Better-Cal and can't be redone after the upgrade, so Finish can't complete this redo. Put back returns the series to how it was before the redo began, unless it changed in Google Calendar since.";
 
     $expand = static function (array $master): array {
         $allDay = isset($master['start']['date']);
@@ -429,7 +429,7 @@ return static function (Db $db): void {
         };
         $putBack = $caught(fn() => $s->events->googlePutBack($s->u, $f['pending']));
         checkEq('Put back refuses: Google changed since; its words never point to Finish', [409, 'google_changed_since',
-            "'Sample renamed' changed at Google since. Nothing was put back, and Finish can't complete this undo: the change it undoes was recorded by an earlier version of Better-Cal. The series takes no other change here while this is listed in Review."],
+            "'Sample renamed' changed in Google Calendar since. Nothing was put back, and Finish can't complete this undo: the change it undoes was recorded by an earlier version of Better-Cal. The series takes no other change here while this is listed in Review."],
             $putBack);
         $row = $pendingRow($s);
         $s->t->calls = [];
@@ -575,12 +575,12 @@ return static function (Db $db): void {
             return [$e->status, $e->errorCode, $e->getMessage()];
         }
     };
-    $pendingWords = static fn(string $title): string => "A change to '$title' is not yet complete at Google. Finish it or put it back in Review, then try this again.";
+    $pendingWords = static fn(string $title): string => "A change to '$title' is not yet complete in Google Calendar. Finish it or put it back in Review, then try this again.";
 
     $disconnected = 'The Google account this calendar uses is disconnected. Connect it again in Settings, Connections and add this calendar there to re-attach it; then Finish and Put back are offered again.';
     $paused = 'Google access for this calendar is paused. Reconnect the Google account in Settings, Connections; Finish and Put back are offered again after its next update.';
-    $keptAsCopy = 'This calendar no longer writes to Google from here, so Finish and Put back can no longer run for this change.';
-    $closedLine = static fn(string $title, string $why): string => "A change to '$title' that was half done at Google was closed without finishing: $why";
+    $keptAsCopy = 'This calendar no longer writes to Google Calendar from here, so Finish and Put back can no longer run for this change.';
+    $closedLine = static fn(string $title, string $why): string => "A change to '$title' that was half done in Google Calendar was closed without finishing: $why";
     // The closing, as Activity and the tables show it: the pending row gone, nothing sent, the newest entry the line, log only.
     $closed = static function (object $s) use ($db): array {
         $last = $db->one('SELECT summary, before_json, after_json FROM mutations WHERE user_id = ? ORDER BY id DESC LIMIT 1', [$s->u]);
@@ -628,7 +628,7 @@ return static function (Db $db): void {
     });
 
     scenario('journal gate: a calendar that no longer writes to Google for this account (disconnected, paused, a role that can\'t write) is listed with no action and the reason, and keeping it as a copy goes through and closes the change', function () use ($db, $setup, $halfChange, $reviewItem, $caught, $pendingRow, $closed, $closedLine, $disconnected, $paused): void {
-        foreach (['disconnected' => $disconnected, 'paused' => $paused, 'reader' => "This change stopped part way, and your permissions for 'Sample crew' at Google are now read-only, so it can't be finished or put back. It stays here, and the event takes no other change, until full editing is restored at Google or you remove the calendar."] as $how => $words) {
+        foreach (['disconnected' => $disconnected, 'paused' => $paused, 'reader' => "This change stopped part way, and your permissions for 'Sample crew' in Google Calendar are now read-only, so it can't be finished or put back. It stays here, and the event takes no other change, until full editing is restored there or you remove the calendar."] as $how => $words) {
             $s = $setup();
             $p = $halfChange($s);
             $title = (string) $pendingRow($s)['title'];
@@ -684,7 +684,7 @@ return static function (Db $db): void {
         $s->t->calls = [];
         $t->t->calls = [];
         $out = (new BetterCal\Domain\Activity($db))->prune();
-        checkEq('the pass closes both, nothing sent, each with its line', [true, [0, [], $closedLine($title, 'this calendar no longer writes to Google from here.'), null, null],
+        checkEq('the pass closes both, nothing sent, each with its line', [true, [0, [], $closedLine($title, 'this calendar no longer writes to Google Calendar from here.'), null, null],
             [0, [], $closedLine($titleT, 'its calendar was deleted here.'), null, null]], [($out['halfDoneClosed'] ?? 0) >= 2, $closed($s), $closed($t)]);
     });
 

@@ -264,6 +264,7 @@ export function ReviewPage() {
     ${items === null && html`<${Skeleton} rows=${4} />`}
     ${items !== null && items.length === 0 && html`<${EmptyState}
       text=${showDecided ? 'Nothing has needed a decision yet.' : 'Nothing is waiting on you.'}
+      actions=${[['Subscribe to a calendar', () => set({ createDrawer: { kind: 'subscribe' } })]]}
     />`}
     ${(items || []).map((item) => (item.kind === 'proposal'
       ? html`<${ProposalCard} key=${item.key} p=${item.detail} onChanged=${load} />`

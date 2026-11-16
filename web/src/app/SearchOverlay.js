@@ -20,6 +20,8 @@ import { isPendingLocation } from '../lib/maps.js';
 import { parseISO, dateOfDayKey, fmtDateFull, fmtDayMedium, fmtTime, occDayKey, todayKey } from '../lib/dates.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { collapseDuplicates } from '../ui/duplicates.js';
+import { EmptyState } from './PageShell.js';
+import { quickAddFallback } from './commands.js';
 import { occurrenceDaySpan, isOvernight } from '../ui/monthmath.js';
 
 // "Fri, Oct 9 · 3:00 AM"; the year only when it isn't this one (0.6.9).
@@ -141,6 +143,8 @@ export function SearchOverlay() {
       window.removeEventListener('popstate', onPop);
       if (!popped && history.state && history.state.bcSearch) {
         if (state.popover) history.replaceState({ bcSheet: 1 }, '');
+        // Quick add from an empty search takes the entry over (backclose.js).
+        else if (state.quickAddOpen) history.replaceState({ bcSheet: 1, bcHandoff: 1 }, '');
         else history.back();
       }
     };
@@ -271,7 +275,12 @@ export function SearchOverlay() {
         >#${t.name}</button>`)}
       </div>`}
       <div class="bc-search-results" ref=${listRef}>
-        ${results !== null && ordered.length === 0 && html`<div class="bc-empty">No ${scopeWord}matches for "${q}"</div>`}
+        ${results === null && !q.trim() && html`<${EmptyState} text="Finds events by the words in their title or description. Start with # for a tag, @ for a person." />`}
+        ${results !== null && ordered.length === 0 && html`<${EmptyState} text=${`No ${scopeWord}matches for "${q.trim()}".`} actions=${[
+          ...(when !== 'all' ? [['Search all', () => narrow({ when: 'all' })]] : []),
+          ...(calendar ? [['Every calendar', () => narrow({ calendar: '' })]] : []),
+          [`Quick add "${q.trim()}"`, () => quickAddFallback(q.trim())],
+        ]} />`}
         ${renderGroup('Upcoming', future, 0)}
         ${renderGroup('Past', past, future.length, true)}
         ${results !== null && when === 'upcoming' && pastCount > 0 && html`<button type="button" class="bc-search-more" onClick=${() => narrow({ when: 'all' })}>

@@ -1412,7 +1412,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 /* Touch has no hover: keep the cluster visible. */
 @media (pointer: coarse) { .bc-agenda-triage { opacity: 1; } }
 .bc-empty { color: var(--fg-muted); padding: 18px; text-align: center; }
-.bc-agenda-empty { margin-top: 32px; }
+.bc-agenda-empty { padding-top: 8px; }
 /* Lead-in note when the list opens on a later day than the one the user is
    anchored to: without it, an agenda that starts three days out reads as if
    the first days are missing rather than empty. */
@@ -2019,6 +2019,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-search-input:focus-visible { outline: none; }
 .bc-search-close { flex: none; }
 .bc-search-results { overflow-y: auto; overscroll-behavior: contain; }
+.bc-search-results .bc-emptystate { padding: 10px 14px; }
 .bc-search-group { padding-bottom: 6px; }
 .bc-search-group-label {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
@@ -2270,13 +2271,11 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-switch input:focus-visible + .bc-switch-track { outline: 2px solid var(--accent); outline-offset: 1px; }
 .bc-switch-label { font-size: 12px; color: var(--fg-muted); }
 
-/* Designed empty state: what this is + a way in. */
-.bc-emptystate {
-  border: 1px dashed var(--border-strong); border-radius: var(--radius);
-  padding: 28px 24px; text-align: center;
-  display: flex; flex-direction: column; align-items: center; gap: 12px;
-}
-.bc-emptystate p { margin: 0; color: var(--fg-muted); max-width: 420px; }
+/* An empty view: one line of what it is for, its starts inline after it. */
+.bc-emptystate { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 8px 0; }
+.bc-emptystate p { margin: 0; color: var(--fg-muted); }
+.bc-emptystate-acts { display: inline-flex; flex-wrap: wrap; gap: 0 6px; }
+.bc-emptystate-acts .bc-link-btn { padding: 2px 0; }
 
 /* Settings page sections and rows (inline label + control). */
 .bc-tabs {

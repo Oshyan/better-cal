@@ -32,10 +32,15 @@ export function Skeleton({ rows = 3, compact = false }) {
   </div>`;
 }
 
-// Designed empty state: one sentence of what this is plus an optional action.
-export function EmptyState({ text, actionLabel, onAction }) {
+// An empty view (#214): one line of what it is for, and the starts that
+// fill it as small inline links, never a box of its own. `actions` is a
+// list of [label, run]; `actionLabel` and `onAction` are one of them.
+export function EmptyState({ text, actions = [], actionLabel, onAction }) {
+  const all = actionLabel ? [...actions, [actionLabel, onAction]] : actions;
   return html`<div class="bc-emptystate">
     <p>${text}</p>
-    ${actionLabel && html`<button type="button" class="bc-btn bc-btn-primary" onClick=${onAction}>${actionLabel}</button>`}
+    ${all.length > 0 && html`<span class="bc-emptystate-acts">
+      ${all.map(([label, run]) => html`<button key=${label} type="button" class="bc-link-btn" onClick=${run}>${label}</button>`)}
+    </span>`}
   </div>`;
 }

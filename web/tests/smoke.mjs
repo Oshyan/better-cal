@@ -3709,6 +3709,71 @@ console.log('--- chronological ordering across timezone offsets ---');
     put({ plugins: [], settings: { ...st.settings, pluginHidden: {} } });
   }
 
+  // Empty views say what they are for and offer a start, in one line (#214).
+  {
+    const line = (root) => {
+      const e = root.querySelector('.bc-emptystate');
+      return e ? [e.querySelector('p').textContent, e.querySelectorAll('.bc-link-btn').map((b) => b.textContent)] : null;
+    };
+    const act = (root, label) => root.querySelector('.bc-emptystate').querySelectorAll('.bc-link-btn').find((b) => b.textContent === label);
+
+    // Search: what it finds before a word is typed; with no match, a way
+    // to widen it, and quick add for the words.
+    const { SearchOverlay } = await import('../src/app/SearchOverlay.js');
+    globalThis.fetch = async (url) => (new URL(String(url), 'http://app.test').pathname.endsWith('/search') ? json({ results: [] }) : json({}));
+    put({ calendars: [{ id: 41, name: 'Sample club', visible: true, folderIds: [] }], folders: [], tags: [], searchOpen: false, quickAddOpen: false, quickAddSeed: null });
+    const box = dom.doc.createElement('div');
+    dom.doc.body.appendChild(box);
+    render(html`<${SearchOverlay} />`, box);
+    put({ searchOpen: true });
+    await settle();
+    eq('empty search: says what search finds', line(box), ['Finds events by the words in their title or description. Start with # for a tag, @ for a person.', []]);
+    const input = box.querySelector('.bc-search-input');
+    input.value = 'sample kite';
+    input.dispatch('input');
+    await new Promise((r) => setTimeout(r, 300));
+    await settle();
+    eq('empty search: no match under All offers quick add for the words', line(box), ['No matches for "sample kite".', ['Quick add "sample kite"']]);
+    box.querySelectorAll('.bc-seg-btn').find((b) => b.textContent === 'Past').click();
+    await settle();
+    eq('empty search: narrowed, it offers to search all first', line(box), ['No past matches for "sample kite".', ['Search all', 'Quick add "sample kite"']]);
+    act(box, 'Search all').click();
+    await settle();
+    eq('empty search: Search all searches all', box.querySelector('.bc-seg-btn.is-active').textContent, 'All');
+    act(box, 'Quick add "sample kite"').click();
+    await settle();
+    eq('empty search: quick add opens on the words, search closed', [st.quickAddOpen, st.quickAddSeed, st.searchOpen], [true, 'sample kite', false]);
+    put({ quickAddOpen: false, quickAddSeed: null });
+    render(null, box);
+    await settle();
+
+    // Review with nothing waiting.
+    const { ReviewPage } = await import('../src/app/ReviewPage.js');
+    globalThis.fetch = async () => json({ items: [], nextBefore: null, count: 0 });
+    render(html`<${ReviewPage} />`, box);
+    for (let i = 0; i < 50 && !box.querySelector('.bc-emptystate'); i++) { await new Promise((r) => setTimeout(r, 2)); await settle(); }
+    eq('empty Review: nothing waiting, and a start', line(box), ['Nothing is waiting on you.', ['Subscribe to a calendar']]);
+    act(box, 'Subscribe to a calendar').click();
+    eq('empty Review: the start opens subscribing', st.createDrawer && st.createDrawer.kind, 'subscribe');
+    put({ createDrawer: null });
+    render(null, box);
+    await settle();
+
+    // The Agenda with nothing in it, and loading.
+    const { AgendaList } = await import('../src/ui/AgendaList.js');
+    const starts = [['Quick add', () => {}], ['Subscribe to a calendar', () => {}]];
+    render(html`<${AgendaList} occurrences=${[]} calendars=${{}} emptyLabel="Nothing coming up. The agenda lists your events day by day." emptyActions=${starts} />`, box);
+    await settle();
+    eq('empty Agenda: what it is for, and its starts on the same line', line(box), ['Nothing coming up. The agenda lists your events day by day.', ['Quick add', 'Subscribe to a calendar']]);
+    render(html`<${AgendaList} occurrences=${[]} calendars=${{}} emptyLabel="Loading…" />`, box);
+    await settle();
+    eq('empty Agenda: while loading, no starts', line(box), ['Loading…', []]);
+    render(null, box);
+    box.remove();
+    await settle();
+    globalThis.fetch = editorFetch;
+  }
+
   render(null, ed);
   put({ editor: null });
   await settle();

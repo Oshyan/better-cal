@@ -228,12 +228,12 @@ function toCalendar(fn) {
   };
 }
 
-// Free text the palette could not match to a command still has somewhere to
+// Free text the palette or search could not match still has somewhere to
 // go: quick add already parses events AND "NAME is away ..." statements, and
 // shows a preview before committing. Seeding it beats committing blind.
 export function quickAddFallback(text) {
   // quickAddSeed is the share-target path: QuickAdd picks it up on open and
   // runs the parse itself, so there is nothing to do here but hand it over.
   // QuickAdd only mounts on the calendar route.
-  set({ quickAddSeed: text, quickAddOpen: true, paletteOpen: false, route: 'calendar' });
+  set({ quickAddSeed: text, quickAddOpen: true, paletteOpen: false, searchOpen: false, route: 'calendar' });
 }

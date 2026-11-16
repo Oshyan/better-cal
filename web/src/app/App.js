@@ -26,6 +26,7 @@ import {
 } from '../lib/dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
 import { bandDays } from '../lib/bands.js';
+import { layerHidden } from '../lib/pluginlayers.js';
 import { MonthGrid } from '../ui/MonthGrid.js';
 import { TimeGrid } from '../ui/TimeGrid.js';
 import { AgendaList } from '../ui/AgendaList.js';
@@ -77,6 +78,12 @@ import { badgeSettingChanged, clearBadge } from './badge.js';
 import { reloadIfReady } from './drafts.js';
 import { scopeDropChoice } from './scopes.js';
 
+// An empty Agenda's starts (#214): the ways a calendar fills.
+const AGENDA_STARTS = [
+  ['Quick add', () => set({ quickAddOpen: true })],
+  ['Subscribe to a calendar', () => set({ createDrawer: { kind: 'subscribe' } })],
+  ['Import a file', () => set({ createDrawer: { kind: 'import' } })],
+];
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 
 function AppBanners() {
@@ -440,6 +447,7 @@ export function App() {
   const pluginRanges = useStore((st) => st.pluginRanges);
   const pluginSeq = useStore((st) => st.pluginSeq);
   const pluginHidden = useStore((st) => st.settings.pluginHidden);
+  const pluginList = useStore((st) => st.plugins);
   const calendarsForRanges = useStore((st) => st.calendars);
   const plugRangeKeyRef = useRef(null);
   useEffect(() => {
@@ -471,7 +479,7 @@ export function App() {
     const out = [];
     const calById = new Map((calendarsForRanges || []).map((c) => [c.id, c]));
     for (const [pid, entry] of Object.entries(pluginRanges)) {
-      if (pluginHidden && pluginHidden[pid]) continue;
+      if (layerHidden(pluginList, pluginHidden, pid)) continue;
       for (const r of entry.ranges || []) {
         if (!isWindow(r)) continue;
         const cal = calById.get(r.calendarId);
@@ -480,7 +488,7 @@ export function App() {
       }
     }
     return out;
-  }, [pluginRanges, pluginHidden, calendarsForRanges]); // eslint-disable-line
+  }, [pluginRanges, pluginHidden, pluginList, calendarsForRanges]); // eslint-disable-line
 
   const pluginOccs = useMemo(() => {
     const out = [];
@@ -489,7 +497,7 @@ export function App() {
     // A band that belongs to one of a plugin's calendars hides with it.
     const calById = new Map((calendarsForRanges || []).map((c) => [c.id, c]));
     for (const [pid, entry] of Object.entries(pluginRanges)) {
-      if (pluginHidden && pluginHidden[pid]) continue;
+      if (layerHidden(pluginList, pluginHidden, pid)) continue;
       for (const r of entry.ranges || []) {
         if (r.calendarId != null && (calById.get(r.calendarId) || {}).visible !== true) continue;
         if (isWindow(r)) continue;
@@ -518,7 +526,7 @@ export function App() {
       }
     }
     return out;
-  }, [pluginRanges, pluginHidden, calendarsForRanges]); // eslint-disable-line
+  }, [pluginRanges, pluginHidden, pluginList, calendarsForRanges]); // eslint-disable-line
 
   const occurrencesWithAvail = useMemo(
     () => {
@@ -1098,7 +1106,8 @@ export function App() {
         onSetAttendance=${(occ, v) => setRelationship(occ, occ.relationship === v ? 'available' : v)}
         onFeedback=${sendFeedback}
         onCreateDay=${(k) => onCreateRange(dayRangeDraft(k, k))}
-        emptyLabel=${!held ? 'Loading…' : s.agendaShowPast ? 'No events' : 'No upcoming events'}
+        emptyLabel=${!held ? 'Loading…' : (s.agendaShowPast ? 'No events yet.' : 'Nothing coming up.') + ' The agenda lists your events day by day.'}
+        emptyActions=${held ? AGENDA_STARTS : null}
         gapFrom=${s.agendaShowPast ? null : dayKeyOf(new Date(agendaCutoff))}
         onNearEnd=${held && s.agendaSort !== 'match' ? () => onAgendaNearEnd(held.end) : null}
         endNote=${!held ? null : agendaMore ? 'Loading later events…' : 'Through ' + fmtDateShort(new Date(held.end - 1))}

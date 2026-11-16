@@ -73,6 +73,19 @@ export function onOutsidePress(isInside, onOutside) {
   return () => window.removeEventListener('pointerdown', handler, true);
 }
 
+// Does this press open an event? One question for every surface that lets
+// such a press through instead of only closing (#305). Anything that opens
+// an event when pressed carries data-opens-event; the press counts when the
+// nearest pressable thing under it is that element, so a control inside it
+// (a resize handle is not one; a button is) takes the press for itself.
+// A list of selectors here missed a holiday once (#183) and search results
+// later (#305).
+const PRESSABLE = '[data-opens-event], button, a[href], input, select, textarea, [role="button"]';
+export function opensEvent(target) {
+  const hit = target && target.closest ? target.closest(PRESSABLE) : null;
+  return !!hit && hit.hasAttribute('data-opens-event');
+}
+
 // The common case: inside means within any of these elements.
 export function insideAny(...refs) {
   return (target) => refs.some((r) => r && r.current && r.current.contains(target));

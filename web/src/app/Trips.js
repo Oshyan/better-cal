@@ -238,7 +238,7 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
           // calendar: a 4-night stay read as one day (#184).
           const mState = (m.status === 'cancelled' ? ' is-cancelled' : '') + (m.end && timeState(m, Date.now()) === 'past' ? ' is-past' : '');
           return html`<div key=${m.eventId} class=${'bc-tr-row' + (asking ? ' is-asking' : '') + mState}>
-            <button type="button" class="bc-tr-main" onClick=${() => openMember(m)} title=${'Open ' + (m.title || 'event')}>
+            <button type="button" class="bc-tr-main" data-opens-event="" onClick=${() => openMember(m)} title=${'Open ' + (m.title || 'event')}>
               <span class="bc-tr-when">${fmtWhen(m)}</span>
               <span class="bc-tr-what">
                 <span class="bc-tr-title"><${CalDot} cal=${mcal} color=${(mcal && mcal.color) || '#888'} />${m.title || '(untitled)'}${m.end ? html`<${DurationSuffix} occ=${m} />` : ''}</span>
@@ -348,7 +348,7 @@ export function TripRow({ occ: occProp }) {
     <div class="bc-trip-rowline">
       <span class="bc-trip-rowlabel">Part of</span>
       ${current && html`<button
-        type="button" class="bc-partof" title="Open this trip"
+        type="button" class="bc-partof" title="Open this trip" data-opens-event=""
         onClick=${() => {
           const cur = all.find((o) => o.isContainer && o.eventId === current.eventId);
           if (cur) openDetail(cur.instanceId);

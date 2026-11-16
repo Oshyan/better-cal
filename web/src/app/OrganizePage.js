@@ -21,6 +21,7 @@ import { api, entriesOf, loadCalendars, refreshWindow } from './api.js';
 import { useOwnList, superseded } from './lists.js';
 import { CalendarSettings } from './CalendarSettings.js';
 import { feedProblem } from '../lib/feedproblem.js';
+import { hasLayerRow } from '../lib/pluginlayers.js';
 import { Icon, CalDot } from '../ui/icons.js';
 
 function folderNameOf(folders, id) {
@@ -385,7 +386,7 @@ export function OrganizePage() {
     (s) => ({
       calendars: s.calendars, folders: s.folders, sidebarOrder: s.settings.sidebarOrder,
       hasPeople: (s.people || []).length > 0,
-      hasLayers: (s.plugins || []).some((pl) => pl.enabled && (pl.permissions || []).includes('ranges')),
+      hasLayers: (s.plugins || []).some(hasLayerRow),
     }),
     shallowEq,
   );

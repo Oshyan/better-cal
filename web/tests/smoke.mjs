@@ -3618,6 +3618,164 @@ console.log('--- chronological ordering across timezone offsets ---');
     globalThis.fetch = editorFetch;
   }
 
+  // Search opens on All with every calendar, every time (#304). A choice
+  // made in a search is that search's: Back to it and a reload keep it, a
+  // new search does not, and nothing is stored on the device.
+  {
+    const { SearchOverlay, searchSnapshot, reopenSearch } = await import('../src/app/SearchOverlay.js');
+    const asked = [];
+    globalThis.fetch = async (url) => {
+      const u = new URL(String(url), 'http://app.test');
+      if (u.pathname.endsWith('/search')) {
+        asked.push({ q: u.searchParams.get('q'), when: u.searchParams.get('when'), calendar: u.searchParams.get('calendar') });
+        return json({ results: [] });
+      }
+      return json({});
+    };
+    put({ calendars: [{ id: 41, name: 'Sample club', visible: true, folderIds: [] }], folders: [], tags: [], searchOpen: false });
+    const box = dom.doc.createElement('div');
+    dom.doc.body.appendChild(box);
+    render(html`<${SearchOverlay} />`, box);
+    const openSearch = async () => { put({ searchOpen: true }); await settle(); };
+    const closeSearch = async () => { put({ searchOpen: false }); await settle(); };
+    const type = async (text) => {
+      const input = box.querySelector('.bc-search-input');
+      input.value = text;
+      input.dispatch('input');
+      await new Promise((r) => setTimeout(r, 300));
+      await settle();
+    };
+    const shown = () => [box.querySelector('.bc-seg-btn.is-active').textContent, box.querySelector('select.bc-search-cal').value];
+    const seg = (label) => box.querySelectorAll('.bc-seg-btn').find((b) => b.textContent === label);
+    await openSearch();
+    eq('search: a first search opens on All, every calendar', shown(), ['All', '']);
+    await type('sample');
+    eq('search: and asks for All with no calendar', asked.at(-1), { q: 'sample', when: 'all', calendar: null });
+    seg('Past').click();
+    await settle();
+    const cal = box.querySelector('select.bc-search-cal');
+    cal.value = '41';
+    cal.dispatch('change');
+    await settle();
+    eq('search: a choice narrows this search', [shown(), asked.at(-1)], [['Past', '41'], { q: 'sample', when: 'past', calendar: '41' }]);
+    eq('search: a reload keeps the choice with the search', searchSnapshot().scope, { when: 'past', calendar: '41' });
+    await closeSearch();
+    await openSearch();
+    eq('search: the next search opens on All again, every calendar', shown(), ['All', '']);
+    await type('sample');
+    eq('search: and asks for All with no calendar again', asked.at(-1), { q: 'sample', when: 'all', calendar: null });
+    eq('search: nothing about a search is stored on the device', localStorage.getItem('bc-search-opts'), null);
+    await closeSearch();
+    reopenSearch('sample', { when: 'upcoming', calendar: '41' });
+    await settle();
+    eq('search: brought back after a reload, it keeps the range it was on', [shown(), asked.at(-1)], [['Upcoming', '41'], { q: 'sample', when: 'upcoming', calendar: '41' }]);
+    await closeSearch();
+    reopenSearch('sample', { peek: 'all' });
+    await settle();
+    eq('search: a restored search with no choice of its own is on All', shown(), ['All', '']);
+    await closeSearch();
+    render(null, box);
+    box.remove();
+    await settle();
+    const { readFileSync: readSearchSource } = await import('node:fs');
+    eq('search: no code reads or writes the stored choice', /localStorage|loadOpts|saveOpts/.test(readSearchSource(new URL('../src/app/SearchOverlay.js', import.meta.url), 'utf8')), false);
+    globalThis.fetch = editorFetch;
+  }
+
+  // The sidebar's Plugins group (#257): a row for a plugin that draws what
+  // no calendar row controls (ranges and no calendars of its own), and a
+  // hidden state counts only for a plugin with a row.
+  {
+    const { hasLayerRow, layerHidden } = await import('../src/lib/pluginlayers.js');
+    const plugins = [
+      { id: 'sample-tides', name: 'Sample tides', enabled: true, permissions: ['ranges', 'events:write'], ownCalendars: { noun: 'tide calendar' } },
+      { id: 'sample-sun', name: 'Sample sun', enabled: true, permissions: ['events:write'], ownCalendars: { noun: 'sun calendar' } },
+      { id: 'sample-trips', name: 'Sample trips', enabled: true, permissions: ['ranges', 'propose'] },
+      { id: 'sample-notes', name: 'Sample notes', enabled: true, permissions: ['http'] },
+      { id: 'sample-off', name: 'Sample off', enabled: false, permissions: ['ranges'] },
+    ];
+    eq('plugin rows: only a plugin with ranges and no calendars of its own', plugins.filter(hasLayerRow).map((p) => p.id), ['sample-trips']);
+    const hidden = { 'sample-tides': true, 'sample-trips': true };
+    eq("plugin rows: a stored hidden state counts only where there is a row to undo it", ['sample-tides', 'sample-trips', 'sample-sun'].map((id) => layerHidden(plugins, hidden, id)), [false, true, false]);
+    const { Sidebar: Bar } = await import('../src/app/Sidebar.js');
+    put({ calendars: [{ id: 51, name: 'Sample tide calendar', kind: 'subscribed', pluginId: 'sample-tides', visible: true, folderIds: [] }], folders: [], plugins, settings: { ...st.settings, pluginHidden: hidden } });
+    const box = dom.doc.createElement('div');
+    dom.doc.body.appendChild(box);
+    render(html`<${Bar} open=${true} collapsed=${false} onClose=${() => {}} />`, box);
+    await settle();
+    const group = box.querySelector('[data-group="plugins"]');
+    eq('plugin rows: the Plugins group lists the trip plugin alone, its box unchecked as stored', [group && group.querySelectorAll('.bc-cal-name').map((n) => n.textContent), group && group.querySelector('input').checked], [['Sample trips'], false]);
+    render(null, box);
+    box.remove();
+    await settle();
+    put({ plugins: [], settings: { ...st.settings, pluginHidden: {} } });
+  }
+
+  // Empty views say what they are for and offer a start, in one line (#214).
+  {
+    const line = (root) => {
+      const e = root.querySelector('.bc-emptystate');
+      return e ? [e.querySelector('p').textContent, e.querySelectorAll('.bc-link-btn').map((b) => b.textContent)] : null;
+    };
+    const act = (root, label) => root.querySelector('.bc-emptystate').querySelectorAll('.bc-link-btn').find((b) => b.textContent === label);
+
+    // Search: what it finds before a word is typed; with no match, a way
+    // to widen it, and quick add for the words.
+    const { SearchOverlay } = await import('../src/app/SearchOverlay.js');
+    globalThis.fetch = async (url) => (new URL(String(url), 'http://app.test').pathname.endsWith('/search') ? json({ results: [] }) : json({}));
+    put({ calendars: [{ id: 41, name: 'Sample club', visible: true, folderIds: [] }], folders: [], tags: [], searchOpen: false, quickAddOpen: false, quickAddSeed: null });
+    const box = dom.doc.createElement('div');
+    dom.doc.body.appendChild(box);
+    render(html`<${SearchOverlay} />`, box);
+    put({ searchOpen: true });
+    await settle();
+    eq('empty search: says what search finds', line(box), ['Finds events by the words in their title or description. Start with # for a tag, @ for a person.', []]);
+    const input = box.querySelector('.bc-search-input');
+    input.value = 'sample kite';
+    input.dispatch('input');
+    await new Promise((r) => setTimeout(r, 300));
+    await settle();
+    eq('empty search: no match under All offers quick add for the words', line(box), ['No matches for "sample kite".', ['Quick add "sample kite"']]);
+    box.querySelectorAll('.bc-seg-btn').find((b) => b.textContent === 'Past').click();
+    await settle();
+    eq('empty search: narrowed, it offers to search all first', line(box), ['No past matches for "sample kite".', ['Search all', 'Quick add "sample kite"']]);
+    act(box, 'Search all').click();
+    await settle();
+    eq('empty search: Search all searches all', box.querySelector('.bc-seg-btn.is-active').textContent, 'All');
+    act(box, 'Quick add "sample kite"').click();
+    await settle();
+    eq('empty search: quick add opens on the words, search closed', [st.quickAddOpen, st.quickAddSeed, st.searchOpen], [true, 'sample kite', false]);
+    put({ quickAddOpen: false, quickAddSeed: null });
+    render(null, box);
+    await settle();
+
+    // Review with nothing waiting.
+    const { ReviewPage } = await import('../src/app/ReviewPage.js');
+    globalThis.fetch = async () => json({ items: [], nextBefore: null, count: 0 });
+    render(html`<${ReviewPage} />`, box);
+    for (let i = 0; i < 50 && !box.querySelector('.bc-emptystate'); i++) { await new Promise((r) => setTimeout(r, 2)); await settle(); }
+    eq('empty Review: nothing waiting, and a start', line(box), ['Nothing is waiting on you.', ['Subscribe to a calendar']]);
+    act(box, 'Subscribe to a calendar').click();
+    eq('empty Review: the start opens subscribing', st.createDrawer && st.createDrawer.kind, 'subscribe');
+    put({ createDrawer: null });
+    render(null, box);
+    await settle();
+
+    // The Agenda with nothing in it, and loading.
+    const { AgendaList } = await import('../src/ui/AgendaList.js');
+    const starts = [['Quick add', () => {}], ['Subscribe to a calendar', () => {}]];
+    render(html`<${AgendaList} occurrences=${[]} calendars=${{}} emptyLabel="Nothing coming up. The agenda lists your events day by day." emptyActions=${starts} />`, box);
+    await settle();
+    eq('empty Agenda: what it is for, and its starts on the same line', line(box), ['Nothing coming up. The agenda lists your events day by day.', ['Quick add', 'Subscribe to a calendar']]);
+    render(html`<${AgendaList} occurrences=${[]} calendars=${{}} emptyLabel="Loading…" />`, box);
+    await settle();
+    eq('empty Agenda: while loading, no starts', line(box), ['Loading…', []]);
+    render(null, box);
+    box.remove();
+    await settle();
+    globalThis.fetch = editorFetch;
+  }
+
   render(null, ed);
   put({ editor: null });
   await settle();
@@ -6980,6 +7138,8 @@ console.log('--- a change for more than one occurrence goes through its plan, wh
 await import('./repeat-control.mjs');
 // Filters' marks on context items (#72), also in the stand-in DOM.
 await import('./filter-marks.mjs');
+// One press on anything that opens an event, with the panel open (#305).
+await import('./opens-event.mjs');
 
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

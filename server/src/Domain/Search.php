@@ -45,7 +45,8 @@ final class Search
      * then the same three for the description. A tag or linked person whose
      * name matches the same way ranks with the title's tier. Within a tier,
      * upcoming results run soonest first and past ones newest first, and
-     * upcoming come before past. A `#` prefix (e.g. "#work") searches tags
+     * under All every upcoming result comes before any past one, the limit
+     * included. A `#` prefix (e.g. "#work") searches tags
      * only; an `@` prefix (e.g. "@alex") people only. Published search
      * feeds match the same way. $excerpt trims descriptions for list
      * payloads; feed export passes false.
@@ -87,11 +88,35 @@ final class Search
         ?array $projection = null,
     ): array
     {
+        $limit = max(1, $limit); // feeds ask for 500; the search route caps at 200
+        if (($opts['when'] ?? 'all') === 'all') {
+            // All is Upcoming followed by Past, each with its own order, so
+            // a term whose past alone fills the limit can never push an
+            // upcoming match out (#304). One now for both halves; a series
+            // still running is listed once, among the upcoming.
+            $opts['now'] ??= new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+            $kept = $this->search($userId, $q, $limit, $excerpt, ['when' => 'upcoming'] + $opts, $projection);
+            $seen = [];
+            foreach ($kept as $row) {
+                $seen[(int) $row['id']] = true;
+            }
+            if (count($kept) < $limit) {
+                foreach ($this->search($userId, $q, $limit, $excerpt, ['when' => 'past'] + $opts, $projection) as $row) {
+                    if (isset($seen[(int) $row['id']])) {
+                        continue;
+                    }
+                    $kept[] = $row;
+                    if (count($kept) === $limit) {
+                        break;
+                    }
+                }
+            }
+            return $kept;
+        }
         $plan = $this->plan($userId, $q, $opts);
         if ($plan === null) {
             return [];
         }
-        $limit = max(1, $limit); // feeds ask for 500; the search route caps at 200
         $columns = '*';
         if ($projection !== null) {
             $allowed = [
@@ -153,7 +178,7 @@ final class Search
         $nowAt = Time::fromDb($now);
         $dayNow = $plan['dayNow'];
         $viewer = $plan['viewer'];
-        $when = $opts['when'] ?? 'all';
+        $when = $opts['when'];
         // The edited days of the series found, for their next or latest
         // dates (Recurrence::editedDays, as the calendar window loads them),
         // and how each matches the query on its own fields.
@@ -217,10 +242,7 @@ final class Search
                     throw $tooLarge();
                 }
                 if ($next === null) {
-                    if ($when === 'upcoming') {
-                        continue; // no date ahead matches: it takes no place
-                    }
-                    $row['_upcoming'] = false;
+                    continue; // no date ahead matches: it takes no place
                 } else {
                     $row = self::atOccurrence($row, $next, $tierOf($next));
                 }
@@ -232,14 +254,12 @@ final class Search
             }
             $out[] = $row;
         }
-        // The limit keeps the first by tier, then (upcoming before past)
-        // by the start as shown, soonest first for upcoming and newest
-        // first for past; an edited day found by its own match and as its
-        // series' date is listed once. Under Upcoming or Past this is the
-        // order shown; under All the kept rows are then shown upcoming first.
-        $group = static fn(array $r): int => $r['_upcoming'] ? 0 : 1;
-        $byDate = static fn(array $a, array $b): int => $a['_upcoming'] ? strcmp($a['_at'], $b['_at']) : strcmp($b['_at'], $a['_at']);
-        usort($out, static fn(array $a, array $b): int => ([$a['_tier'], $group($a)] <=> [$b['_tier'], $group($b)]) ?: $byDate($a, $b));
+        // The limit keeps the first by tier, then by the start as shown,
+        // soonest first for Upcoming and newest first for Past, which is the
+        // order shown; an edited day found by its own match and as its
+        // series' date is listed once.
+        $byDate = static fn(array $a, array $b): int => $when === 'upcoming' ? strcmp($a['_at'], $b['_at']) : strcmp($b['_at'], $a['_at']);
+        usort($out, static fn(array $a, array $b): int => ($a['_tier'] <=> $b['_tier']) ?: $byDate($a, $b));
         $seen = [];
         $kept = [];
         foreach ($out as $row) {
@@ -252,7 +272,6 @@ final class Search
                 break;
             }
         }
-        usort($kept, static fn(array $a, array $b): int => ([$group($a), $a['_tier']] <=> [$group($b), $b['_tier']]) ?: $byDate($a, $b));
         foreach ($kept as &$row) {
             unset($row['_tier'], $row['_at']);
         }

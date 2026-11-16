@@ -70,7 +70,7 @@ export function GroupPopover() {
     </div>
     <div class="bc-group-list">
       ${group.members.map((occ) => html`<button
-        key=${occ.instanceId} type="button" class="bc-group-row"
+        key=${occ.instanceId} type="button" class="bc-group-row" data-opens-event=""
         onClick=${() => openDetail(occ.instanceId)}
       >
         <span class="bc-group-time">${occ.allDay ? 'all day' : fmtTime(parseISO(occ.start))}</span>

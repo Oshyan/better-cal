@@ -25,6 +25,7 @@ import { contextByDay, dayLabelsByDay, withoutContext, compactTime } from '../li
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress } from './outside.js';
 import { ThumbIcon, TripBadge, PinIcon, Icon } from './icons.js';
+import { EmptyState } from '../app/PageShell.js';
 import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
 import {
   buildAgendaGroups, railRanges, washRects, spanPixelRanges, dayOfSpanLabel,
@@ -142,7 +143,7 @@ function calColorOf(calendars, occ) {
 // Split view); loaded: the held windows ([{start, end}] ms), so a run never
 // fetched reads "not loaded yet" rather than "nothing on". apiRef: receives
 // {el, groups, ...} for a caller that links another scroller to this one.
-export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onExpandDay, onRequestWindow, onVisibleMonthChange, emptyLabel, gapFrom, hiddenDays, onShowHidden, gaps = false, loaded = null, apiRef, onNearEnd = null, endNote = null }) {
+export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onExpandDay, onRequestWindow, onVisibleMonthChange, emptyLabel, emptyActions = null, gapFrom, hiddenDays, onShowHidden, gaps = false, loaded = null, apiRef, onNearEnd = null, endNote = null }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
   const flat = sortMode === 'match';
@@ -447,7 +448,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
   })();
 
   return html`<div class="bc-agenda" ref=${scrollRef} onScroll=${onScroll}>
-    ${groups.length === 0 && html`<div class="bc-empty bc-agenda-empty">${emptyLabel || 'No events in this range'}</div>`}
+    ${groups.length === 0 && html`<div class="bc-agenda-empty"><${EmptyState} text=${emptyLabel || 'No events in this range'} actions=${emptyActions || []} /></div>`}
     ${leadGap && html`<div class="bc-agenda-leadgap">${leadGap}</div>`}
     <div class="bc-agenda-spacer" style=${`height:${totalH}px`}>
       ${washes.map((r) => {
@@ -474,7 +475,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         return html`<div
           key=${'rail:' + r.instanceId}
           class="bc-agenda-rail${r.isTrip ? ' is-trip' : ''}"
-          data-span=${r.instanceId}
+          data-span=${r.instanceId} data-opens-event=""
           style=${`top:${r.topPx}px;height:${r.heightPx}px;left:${-14 - r.lane * 6}px`}
           aria-hidden="true" title=${r.title}
           onPointerEnter=${() => setLinked(r.instanceId)}

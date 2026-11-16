@@ -204,7 +204,7 @@ function ReviewCard({ item, onChanged }) {
     <div class="bc-review-head">
       <span class="bc-review-kind" title=${kindLabel}><${Icon} name=${KIND_ICON[item.kind] || 'proposals'} size=${13} /></span>
       ${open
-        ? html`<button type="button" class="bc-link-btn bc-review-title" title=${openOptions ? 'Open calendar options' : 'Open this event'} onClick=${open}>${item.title}</button>`
+        ? html`<button type="button" class="bc-link-btn bc-review-title" title=${openOptions ? 'Open calendar options' : 'Open this event'} data-opens-event=${item.link ? '' : undefined} onClick=${open}>${item.title}</button>`
         : html`<span class="bc-review-title">${item.title}</span>`}
       ${(item.kind === 'rsvp' || item.kind === 'invite_new') && html`<span class="bc-review-when">${whenLine(d)}${d.location ? ' · ' + d.location : ''}</span>`}
       ${item.kind === 'duplicate' && html`<span class="bc-review-when">${d.a.start === d.b.start ? fmtWhen(d.a.start) : fmtWhen(d.a.start) + ' and ' + fmtWhen(d.b.start)}</span>`}
@@ -264,6 +264,7 @@ export function ReviewPage() {
     ${items === null && html`<${Skeleton} rows=${4} />`}
     ${items !== null && items.length === 0 && html`<${EmptyState}
       text=${showDecided ? 'Nothing has needed a decision yet.' : 'Nothing is waiting on you.'}
+      actions=${[['Subscribe to a calendar', () => set({ createDrawer: { kind: 'subscribe' } })]]}
     />`}
     ${(items || []).map((item) => (item.kind === 'proposal'
       ? html`<${ProposalCard} key=${item.key} p=${item.detail} onChanged=${load} />`

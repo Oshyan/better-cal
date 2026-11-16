@@ -65,7 +65,7 @@ function PersonEvents({ personId }) {
     <div class="bc-person-group-label">${label}</div>
     ${items.map((occ) => {
       const cal = state.calendars.find((c) => c.id === occ.calendarId);
-      return html`<button key=${occ.instanceId} type="button" class="bc-person-eventrow" onClick=${() => go(occ)}>
+      return html`<button key=${occ.instanceId} type="button" class="bc-person-eventrow" data-opens-event="" onClick=${() => go(occ)}>
         <span class="bc-person-when">${fmtWhen(occ)}</span>
         <${CalDot} cal=${cal} color=${(cal && cal.color) || '#888'} />
         <span class="bc-person-title">${occ.title || '(untitled)'}</span>

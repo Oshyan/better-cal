@@ -86,7 +86,7 @@ export function saveResume() {
     settingsTab: state.settingsTab || null,
     time,
     event: occ ? { instanceId: pop.instanceId, at: occ.start, dayKey: pop.dayKey || null, pin: pop.pin || null, backTo: pop.backTo || null } : null,
-    search: search.open && search.q ? { q: search.q, peek: search.peek } : null,
+    search: search.open && search.q ? { q: search.q, scope: search.scope } : null,
     searchBack: pop && pop.backTo && pop.backTo.search && search.last ? search.last : null,
   };
   const st = store();
@@ -175,10 +175,10 @@ export function restoreResume() {
   // A notification tapped to open the app names its own event; that wins.
   const linked = (() => { try { return new URLSearchParams(location.search).has('event'); } catch { return false; } })();
   if (linked) return true;
-  if (snap.search) reopenSearch(snap.search.q, snap.search.peek);
+  if (snap.search) reopenSearch(snap.search.q, snap.search.scope);
   else if (snap.event) {
     const ev = snap.event;
-    if (snap.searchBack) primeSearchBack(snap.searchBack.q, snap.searchBack.peek);
+    if (snap.searchBack) primeSearchBack(snap.searchBack.q, snap.searchBack.scope);
     // The event's window loads first (the notification link's path), then
     // the sheet or panel opens on it as it was: the day it was opened on,
     // and the way back to a trip or to search.

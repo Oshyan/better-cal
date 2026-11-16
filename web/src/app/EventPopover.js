@@ -35,7 +35,7 @@ import { fmtReminder } from '../lib/reminders.js';
 import { ink } from '../lib/color.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
-import { onOutsidePress, insideAny, swallowClickOfThisPress } from '../ui/outside.js';
+import { onOutsidePress, insideAny, swallowClickOfThisPress, opensEvent } from '../ui/outside.js';
 import { EventSheetBody } from './EventSheetBody.js';
 import { TripSheetBody } from './Trips.js';
 
@@ -402,15 +402,13 @@ export function EventPopover() {
       // instead of only closing; a tap anywhere else closes it and does nothing more. Controls
       // inside a row (its swipe actions) never take a press through.
       const inPanel = insideAny(panelRef);
-      // Context tokens and marks (weather, sunset) and day labels (holidays)
-      // open the same way; a holiday tap only closed the panel (#183).
-      const toEvent = (t) => t && t.closest
-        && t.closest('[data-instance], .bc-ctx-token, .bc-ctx-mark-hit, .bc-daylabel') && !t.closest('.bc-agenda-acts, .bc-agenda-grip');
+      // Whatever opens an event says so (opensEvent, ui/outside.js): chips,
+      // context tokens and marks, holidays, search results and the rest.
       // On a computer the panel is a side column: the toolbar and the
       // sidebar beside it just work (Next, Today, the mini-month), and the
       // panel stays. Their first press only closed it (#184).
       const beside = (t) => !isMobile() && t && t.closest && !!t.closest('.bc-toolbar, .bc-sidebar');
-      stop = onOutsidePress((t) => inPanel(t) || toEvent(t) || beside(t), () => set({ popover: null }));
+      stop = onOutsidePress((t) => inPanel(t) || opensEvent(t) || beside(t), () => set({ popover: null }));
       document.addEventListener('keydown', onKey, true);
     }
     return () => {

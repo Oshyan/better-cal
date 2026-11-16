@@ -172,7 +172,7 @@ export function ActivityPage() {
         <span class="bc-activity-badge is-${en.source.startsWith('mail:') ? 'mail' : (en.source.startsWith('plugin:') ? 'plugin' : en.source)}">${sourceLabel(en.source)}</span>
         <span class="bc-activity-summary">
           ${en.entity === 'event' && !en.undone && en.op !== 'delete'
-            ? html`<button type="button" class="bc-activity-link" onClick=${() => jump(en)}>${en.summary}</button>`
+            ? html`<button type="button" class="bc-activity-link" data-opens-event="" onClick=${() => jump(en)}>${en.summary}</button>`
             : en.summary}
           ${en.undone && html`<span class="bc-activity-undonetag">undone</span>`}
           ${en.op === 'refuse' && html`<span class="bc-activity-blockedtag">blocked</span>`}

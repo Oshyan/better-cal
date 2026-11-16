@@ -107,6 +107,28 @@ export const handlers = {
   escape: () => closeOverlays(), // dispatched before the typing guard below
 };
 
+// While a layer is open above the page (ui/outside.js, data-layer: a
+// drawer, a dialog, search, the palette, quick add, a menu, the day sheet),
+// the keyboard is that layer's: no global shortcut acts, whether it would
+// open or replace a layer (n over an edited draft started a fresh one and
+// lost it) or move the calendar the layer covers, where the change happens
+// out of sight. Escape still closes what is on top, and the palette's own
+// key closes the palette. A top layer (a toast) holds no input and takes
+// nothing. The event panel is not a layer: its keys (e, r, Delete, [ ])
+// work while it is open.
+function openLayers() {
+  try {
+    return [...document.querySelectorAll('[data-layer]')].filter((el) => el.getAttribute('data-layer') !== 'top');
+  } catch { return []; }
+}
+
+// A shortcut may act with these layers open: only the palette's key, to
+// close the palette when it is the one open.
+export function shortcutActs(id, layers = openLayers()) {
+  if (layers.length === 0) return true;
+  return id === 'palette' && layers.every((el) => el.classList.contains('bc-palette-overlay'));
+}
+
 function selectOpen() {
   try { return !!document.querySelector('select:open'); } catch { return false; } // :open unknown: no open lists to protect
 }
@@ -127,13 +149,13 @@ export function installKeyboard() {
     // typing — that is the point of a palette. Checked before both guards.
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
       const mod = HOTKEYS.find((h) => h.mod && h.keys.includes(e.key.toLowerCase()));
-      const runMod = mod && handlers[mod.id];
+      const runMod = mod && shortcutActs(mod.id) && handlers[mod.id];
       if (runMod && runMod(e) !== false) e.preventDefault();
       return;
     }
     if (isTyping() || e.altKey) return;
     const entry = HOTKEYS.find((h) => !h.mod && h.keys.includes(e.key));
-    if (!entry) return;
+    if (!entry || !shortcutActs(entry.id)) return;
     const run = handlers[entry.id];
     if (!run) return;
     if (run(e) !== false) e.preventDefault();

@@ -7185,6 +7185,8 @@ console.log('--- a change for more than one occurrence goes through its plan, wh
 await import('./repeat-control.mjs');
 // Filters' marks on context items (#72), also in the stand-in DOM.
 await import('./filter-marks.mjs');
+// The filter form's Which events switch, in the stand-in DOM too.
+await import('./filter-form.mjs');
 // One press on anything that opens an event, with the panel open (#305).
 await import('./opens-event.mjs');
 // The original of an event being moved fades, whatever its kind.

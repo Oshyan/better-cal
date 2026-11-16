@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const { filterMatchText, filterFields, promptTakesFitting, promptLabel, DEFAULT_FIELDS, PROMPT_DESCRIPTION_CHARS, PROMPT_FIELDS } = await import('../src/lib/filterwords.js');
+const { filterMatchText, filterFields, defaultAppliesTo, appliesToOf, actionChip, APPLIES_TO, DEFAULT_FIELDS, PROMPT_DESCRIPTION_CHARS, PROMPT_FIELDS } = await import('../src/lib/filterwords.js');
 
 let checks = 0;
 const ok = (cond, msg) => { assert.ok(cond, msg); checks++; };
@@ -41,19 +41,47 @@ eq(words({ type: 'regex', action: 'dim', config: { pattern: 'a|b', fields: ['tit
   'Events are dimmed when this pattern finds a match in their title, description, location or the name of one of their tags, ignoring case.', 'regex, every field');
 eq(words({ type: 'keyword', action: 'hide', config: { pattern: 'x' } }),
   'Events are hidden when this text appears in their title, description or location, ignoring case.', 'a saved filter with no field list');
-eq(filterMatchText({ type: 'prompt', action: 'highlight', config: { prompt: 'outdoor things' } }), [
+eq(filterMatchText({ type: 'prompt', action: 'highlight', appliesTo: 'match', config: { prompt: 'outdoor things' } }), [
   "Looks at each event's title, the first 300 characters of its description, its location and its start time, and nothing else. Only events on subscribed and Google calendars are judged.",
   'Events judged to fit the description are highlighted; events not judged yet stay as they are.',
 ], 'an AI prompt filter says what it looks at, and what it does');
 
-// Which events a prompt filter's action takes is the server's one reading of
-// a verdict (Filters::promptActionApplies), said the same way on each card.
-ok(/function promptActionApplies\(string \$action, string \$verdict\): bool\s*\{\s*return \$action === 'hide' \? \$verdict === 'fail' : \$verdict === 'pass';/.test(filtersPhp),
-  'the server: hide takes events judged not to fit, dim and highlight events judged to fit');
-eq(['hide', 'dim', 'highlight'].map(promptTakesFitting), [false, true, true], 'the cards read it the same way');
-eq(filterMatchText({ type: 'prompt', action: 'hide', config: {} })[1], 'Events judged not to fit the description are hidden; events not judged yet stay as they are.', 'a prompt hide filter');
-eq(filterMatchText({ type: 'prompt', action: 'dim', config: {} })[1], 'Events judged to fit the description are dimmed; events not judged yet stay as they are.', 'a prompt dim filter');
-eq(['hide', 'dim', 'highlight'].map(promptLabel), ['Keep events that match', 'Dim events that match', 'Highlight events that match'], 'the form says which way the description works');
-
+// Which events a filter's action takes: the server's one function
+// (Filters::takesAction) from its side and whether the event matches, the
+// defaults by kind, and every action and side said on the card.
+ok(/function takesAction\(string \$appliesTo, \?bool \$matches\): bool\s*\{\s*if \(\$matches === null\) \{\s*return false;\s*\}\s*return \$appliesTo === 'nonmatch' \? !\$matches : \$matches;/.test(filtersPhp),
+  'the server: a side and a match decide, and not known takes no action');
+eq(constList(filtersPhp, 'APPLIES_TO'), APPLIES_TO, 'the sides the cards name are the server\'s');
+ok(/function defaultAppliesTo\(string \$type\): string\s*\{\s*return \$type === 'prompt' \? 'nonmatch' : 'match';/.test(filtersPhp), 'the server\'s default side by kind');
+eq(['prompt', 'keyword', 'regex'].map(defaultAppliesTo), ['nonmatch', 'match', 'match'], 'the page\'s, the same');
+eq(appliesToOf({ type: 'prompt', appliesTo: 'match' }), 'match', 'a saved side is read as saved');
+const six = (type, config) => Object.fromEntries(['hide', 'dim', 'highlight'].flatMap((action) => APPLIES_TO.map((side) => [action + ' ' + side, filterMatchText({ type, action, appliesTo: side, scope: 'global', config }).join(' ')])));
+eq(six('prompt', { prompt: 'outdoor things' }), Object.fromEntries(['hidden', 'dimmed', 'highlighted'].flatMap((done, i) => [
+  [['hide', 'dim', 'highlight'][i] + ' match', `Looks at each event's title, the first 300 characters of its description, its location and its start time, and nothing else. Only events on subscribed and Google calendars are judged. Events judged to fit the description are ${done}; events not judged yet stay as they are.`],
+  [['hide', 'dim', 'highlight'][i] + ' nonmatch', `Looks at each event's title, the first 300 characters of its description, its location and its start time, and nothing else. Only events on subscribed and Google calendars are judged. Events judged not to fit the description are ${done}; events not judged yet stay as they are.`],
+])), 'an AI prompt filter: each of the six');
+const every = ' That is every other event on every calendar, weather, holidays and trips included.';
+eq(six('keyword', { pattern: 'webinar', fields: ['title', 'tags'] }), {
+  'hide match': 'Events are hidden when this text appears in their title or the name of one of their tags, ignoring case.',
+  'hide nonmatch': 'Events are hidden when this text does not appear in their title or the name of any of their tags, ignoring case.' + every,
+  'dim match': 'Events are dimmed when this text appears in their title or the name of one of their tags, ignoring case.',
+  'dim nonmatch': 'Events are dimmed when this text does not appear in their title or the name of any of their tags, ignoring case.' + every,
+  'highlight match': 'Events are highlighted when this text appears in their title or the name of one of their tags, ignoring case.',
+  'highlight nonmatch': 'Events are highlighted when this text does not appear in their title or the name of any of their tags, ignoring case.' + every,
+}, 'a keyword filter: each of the six');
+eq(six('regex', { pattern: 'web(inar|cast)', fields: ['title'] }), {
+  'hide match': 'Events are hidden when this pattern finds a match in their title, ignoring case.',
+  'hide nonmatch': 'Events are hidden when this pattern finds no match in their title, ignoring case.' + every,
+  'dim match': 'Events are dimmed when this pattern finds a match in their title, ignoring case.',
+  'dim nonmatch': 'Events are dimmed when this pattern finds no match in their title, ignoring case.' + every,
+  'highlight match': 'Events are highlighted when this pattern finds a match in their title, ignoring case.',
+  'highlight nonmatch': 'Events are highlighted when this pattern finds no match in their title, ignoring case.' + every,
+}, 'a regex filter: each of the six');
+eq(['folder', 'calendar'].map((scope) => filterMatchText({ type: 'keyword', action: 'hide', appliesTo: 'nonmatch', scope, config: { pattern: 'x', fields: ['title'] } })[1]), [
+  'That is every other event on the calendars in its folder, weather, holidays and trips included.',
+  'That is every other event on its calendar, weather, holidays and trips included.',
+], 'the unmatched, said by the filter\'s scope');
+eq([actionChip({ type: 'keyword', action: 'hide', appliesTo: 'match' }), actionChip({ type: 'prompt', action: 'dim', appliesTo: 'nonmatch' }), actionChip({ type: 'regex', action: 'highlight' })],
+  ['Hides what matches', "Dims what doesn't match", 'Highlights what matches'], 'the card\'s action chip says the side');
 
 console.log('Filter words: ' + checks + ' checks (each card says what its filter matches, as the server matches it)');

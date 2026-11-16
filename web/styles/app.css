@@ -2205,6 +2205,11 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-form-actions { margin-left: auto; }
 .bc-form-btnrow { display: flex; gap: 6px; }
 .bc-filter-hint { margin: 0; font-size: 12px; }
+/* Action and Which events on one line, read as a sentence ("Dim events |
+   that don't match"); the switch drops under the select only where the
+   line has no room for both. */
+.bc-filter-action { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bc-filter-action .bc-seg-btn { font-size: 13px; padding: 4px 9px; white-space: nowrap; }
 .bc-filter-fields { display: inline-flex; gap: 10px; padding: 5px 0; }
 
 /* List rows as cards: badges + body type, not raw metadata dumps. */

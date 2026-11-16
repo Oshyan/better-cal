@@ -11,10 +11,13 @@ const FIELD_WORDS = { title: 'title', description: 'description', location: 'loc
 function filterWords(reason, verb) {
   if (!reason) return `${verb} by one of your filters`;
   if (reason.type === 'prompt') {
-    return reason.pattern ? `${verb} by your plain-language filter “${reason.pattern}”` : `${verb} by one of your plain-language filters`;
+    // Which side it took: judged to fit, or judged not to.
+    const side = reason.appliesTo === 'nonmatch' ? ' (judged not to fit)' : reason.appliesTo === 'match' ? ' (judged to fit)' : '';
+    return (reason.pattern ? `${verb} by your plain-language filter “${reason.pattern}”` : `${verb} by one of your plain-language filters`) + side;
   }
   const pattern = reason.type === 'regex' ? `/${reason.pattern}/` : `“${reason.pattern}”`;
-  const where = FIELD_WORDS[reason.field] ? ` (matched in the ${FIELD_WORDS[reason.field]})` : '';
+  const where = FIELD_WORDS[reason.field] ? ` (matched in the ${FIELD_WORDS[reason.field]})`
+    : reason.appliesTo === 'nonmatch' ? ' (no match)' : '';
   return `${verb} by your ${pattern} filter${where}`;
 }
 

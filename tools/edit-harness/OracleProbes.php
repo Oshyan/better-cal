@@ -70,6 +70,43 @@ final class OracleProbes
                     $s1['rows'][$id]['exdates_json'] = json_encode([(string) $s1['rows'][$id]['start_utc']]);
                     return [$out, $s0, $this->reshape($s1)];
                 }],
+            // Free or busy (1.5.8, #303): a field the rows here hold and Google holds, compared, owned and asked like status.
+            ['check' => 'x-agree', 'what' => "the series here is free where Google holds it busy, after a poll", 'case' => 'a-tag-on-a-day-undone-sends-google-nothing', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $master): array {
+                    $s1['rows'][$row($s1, $master)]['show_as'] = 'free';
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-own', 'what' => "a day that doesn't own its marking is busy under a free series", 'case' => 'the-series-made-free-here-then-a-day-titled-follows-its-marking', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {
+                    $s1['rows'][$row($s1, $owns('title'))]['show_as'] = 'busy';
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-conflict', 'what' => 'a rename over a free or busy change at Google not yet read goes through', 'case' => 'free-or-busy-changed-at-google-then-a-rename-here-is-refused', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => true, 'error' => null] + $out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'the marking Google changed is not kept here after a change of the title', 'case' => 'an-event-in-no-series-made-free-at-google-then-renamed-here-keeps-its-marking', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ($this->singles as $id) {
+                        if (isset($s1['rows'][$id])) {
+                            $s1['rows'][$id]['show_as'] = 'busy';
+                        }
+                    }
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-write-asked', 'what' => 'a new timed event made here is stored free', 'case' => 'an-event-in-no-series-renamed-at-google-then-its-place-changed-here-keeps-the-title', 'step' => 1,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    if ($this->made !== null && isset($s1['rows'][$this->made[0]])) {
+                        $s1['rows'][$this->made[0]]['show_as'] = 'free';
+                    }
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-write-asked', 'what' => 'the create of a new timed event sends transparency', 'case' => 'an-event-in-no-series-renamed-at-google-then-its-place-changed-here-keeps-the-title', 'step' => 1,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $this->stand->fake->requests[] = ['method' => 'POST', 'path' => '/calendars/x/events', 'query' => [], 'headers' => [], 'body' => ['summary' => 'Sample probe', 'transparency' => 'transparent']];
+                    $s1['req'] = count($this->stand->fake->requests);
+                    return [$out, $s0, $s1];
+                }],
             ['check' => 'x-follow', 'what' => "a day holding only a tag shows another title than its series'", 'case' => 'an-empty-whole-read-deletes-nothing', 'step' => 1,
                 'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {
                     $s1['rows'][$row($s1, $owns('tags'))]['title'] = 'Sample probe title';

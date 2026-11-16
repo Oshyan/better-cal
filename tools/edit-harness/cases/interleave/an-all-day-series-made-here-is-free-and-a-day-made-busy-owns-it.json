@@ -1,0 +1,26 @@
+{
+    "about": "An all-day series made here with no Show as chosen is free, its create sending transparency transparent (the owner's rule of 2026-11-15, #303); one day made busy here owns its marking, and a poll changes nothing (x-write-asked, x-own, x-agree).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-03-01",
+        "length": 1
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.3,
+            "what": "showAs"
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.1
+        }
+    ]
+}

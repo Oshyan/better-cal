@@ -22,7 +22,7 @@ final class Interleave
     /** The step kinds a case draws, by weight. */
     public const WEIGHTS = [
         'w-all' => 10, 'w-follow' => 3, 'w-delfollow' => 2, 'w-answer' => 2, 'w-this-g' => 6, 'w-this-l' => 8, 'w-this-m' => 4, 'w-del1' => 3, 'w-create' => 2,
-        'r-rename' => 3, 'r-time' => 3, 'r-zone' => 2, 'r-length' => 2, 'r-rule' => 2, 'r-bound' => 3, 'r-skip+' => 2, 'r-skip-' => 1, 'r-exc+' => 3, 'r-exc-' => 1, 'r-gonly' => 3, 'r-delete' => 1, 'r-etag' => 2,
+        'r-rename' => 3, 'r-time' => 3, 'r-zone' => 2, 'r-length' => 2, 'r-rule' => 2, 'r-bound' => 3, 'r-skip+' => 2, 'r-skip-' => 1, 'r-exc+' => 3, 'r-exc-' => 1, 'r-gonly' => 3, 'r-free' => 2, 'r-delete' => 1, 'r-etag' => 2,
         'p-delta' => 8, 'p-whole' => 3, 'p-410' => 2, 'p-empty' => 2, 'p-overlap' => 2, 'p-410-pending' => 2, 'p-budget' => 1, 'w-race' => 3,
         'f-lost' => 5, 'f-before' => 3, 'f-fatal' => 3,
         'finish' => 5, 'putback' => 5,
@@ -39,17 +39,24 @@ final class Interleave
     /** Fields only Google holds (beyond the digest; the A2 scope): the app never sends them, so its writes never change them. */
     /** Every check the oracle makes (docs/design/interleaving-invariants.md), for the oracle probes' account of which are validated. */
     public const CHECKS = ['x-day', 'x-alone', 'x-dropped', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-conditional', 'x-agree', 'x-follow', 'x-structure', 'x-identity', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-empty', 'x-overlap', 'x-budget', 'x-readback', 'x-choice'];
-    /** The six fields the conflict choice compares (google-conflict-choice.md, the one page, (a)), by the names its answers use. */
-    public const CHOICE_FIELDS = ['title', 'description', 'location', 'url', 'status', 'time'];
+    /**
+     * The fields the conflict choice compares (google-conflict-choice.md, the one page, (a)), by the names its answers use:
+     * the six, and since 1.5.8 `showAs` (#303), compared like status, both free or both not.
+     */
+    public const CHOICE_FIELDS = ['title', 'description', 'location', 'url', 'status', 'showAs', 'time'];
     /** What a change here sets each field of an event in no series to (withSingle), so a change at Google can set the same value. */
     private const SINGLE_VALUES = ['title' => 'Sample single title', 'description' => 'Sample single notes', 'location' => 'Sample single room', 'url' => 'https://example.test/single-mine'];
-    public const GOOGLE_ONLY = ['colorId', 'attendees', 'transparency', 'visibility', 'reminders', 'guestsCanModify', 'guestsCanInviteOthers', 'extendedProperties'];
+    // Since 1.5.8 `transparency` is no longer among them: it is stored here as show_as, a field Google holds (decisions.md,
+    // "Whether an event takes up time is one stored fact per event": "It is a field Google holds ... the body key
+    // `transparency`").
+    public const GOOGLE_ONLY = ['colorId', 'attendees', 'visibility', 'reminders', 'guestsCanModify', 'guestsCanInviteOthers', 'extendedProperties'];
     /**
      * The keys a request body may carry: the fields Google holds of an edited day (OwnFields' list less HELD_HERE: date,
-     * time, length and all-day as start and end, title as summary, location, description, url as source, status) and the
-     * series' rule (recurrence), plus a resource's identity (google-calendar.md, What Writes Send).
+     * time, length and all-day as start and end, title as summary, location, description, url as source, status, and
+     * since 1.5.8 showAs as transparency) and the series' rule (recurrence), plus a resource's identity (google-calendar.md,
+     * What Writes Send; decisions.md, the show_as entry).
      */
-    public const WRITER_KEYS = ['summary', 'description', 'location', 'source', 'start', 'end', 'status', 'recurrence', 'id', 'iCalUID', 'recurringEventId', 'originalStartTime'];
+    public const WRITER_KEYS = ['summary', 'description', 'location', 'source', 'start', 'end', 'status', 'transparency', 'recurrence', 'id', 'iCalUID', 'recurringEventId', 'originalStartTime'];
     /** What a write never sends (google-calendar.md, What Writes Send: "Not sent: attendees, reminders and color"). */
     public const NEVER_SENT = ['attendees', 'reminders', 'colorId'];
     /** The fields held here alone a step can send. */
@@ -60,7 +67,7 @@ final class Interleave
      * are its own only when its own list says so, so an undo leaves a day that doesn't own them with the series' set as it
      * stands and puts an owned set back exactly.
      */
-    private const OWN_OF = ['title' => ['title'], 'description' => ['description'], 'location' => ['location'], 'url' => ['url'], 'status' => ['status'],
+    private const OWN_OF = ['title' => ['title'], 'description' => ['description'], 'location' => ['location'], 'url' => ['url'], 'status' => ['status'], 'showAs' => ['showAs'],
         'tags' => ['tags'], 'people' => ['people'], 'reminders' => ['reminders'], 'icon' => ['icon'], 'attendance' => ['attendance'],
         'lat' => ['location', 'coords', 'lat'], 'lng' => ['location', 'coords', 'lat']];
     private const OTHER_ZONES = ['America/Phoenix', 'Europe/Berlin', 'Asia/Tokyo', 'America/New_York', 'Pacific/Auckland'];
@@ -111,6 +118,8 @@ final class Interleave
     private ?array $lastSingle = null;
     /** The w-single request of the step being checked, for x-choice, or null. */
     private ?array $singleSent = null;
+    /** What a w-create step made, for the new-event marking check: [row id, Google id, all-day], or null. */
+    private ?array $made = null;
 
     public function __construct(
         private readonly Db $db,
@@ -388,13 +397,14 @@ final class Interleave
     {
         $step = ['do' => $do, 'pick' => $r->int(0, 999) / 1000];
         $what = match ($do) {
-            'w-all' => $r->pick(['title', 'title', 'description', 'location', 'url', 'tags', 'time', 'length', 'count']),
+            'w-all' => $r->pick(['title', 'title', 'description', 'location', 'url', 'tags', 'time', 'length', 'count', 'showAs']),
             'w-race' => 'title',
-            'w-follow' => $r->pick(['title', 'tags', 'description']),
-            'w-this-g' => $r->pick(['title', 'description', 'location', 'time']),
+            'w-follow' => $r->pick(['title', 'tags', 'description', 'showAs']),
+            'w-this-g' => $r->pick(['title', 'description', 'location', 'time', 'showAs']),
             'w-this-l' => $r->pick(['tags', 'tags', 'people', 'reminders', 'icon', 'coords']),
             'w-this-m' => $r->pick(['title+tags', 'description+reminders', 'location+coords']),
-            'r-gonly' => $r->pick(['colorId', 'attendees', 'transparency', 'visibility']),
+            // Since 1.5.8 transparency is a shown field (r-free); guestsCanModify stands in its place among the fields only Google holds.
+            'r-gonly' => $r->pick(['colorId', 'attendees', 'guestsCanModify', 'visibility']),
             default => null,
         };
         if (in_array($do, ['f-lost', 'f-before', 'f-fatal'], true)) {
@@ -423,12 +433,19 @@ final class Interleave
         $this->entryStates = [];
         $this->etagOnly = [];
         $this->singles = $this->served = [];
-        $this->single = $this->lastSingle = $this->singleSent = null;
+        $this->single = $this->lastSingle = $this->singleSent = $this->made = null;
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
         $this->step = 0;
-        if ($this->createSeries($spec['series']) === null) {
+        $req = count($this->stand->fake->requests);
+        $made = $this->createSeries($spec['series']);
+        if ($made === null) {
             return $this->result('none');
         }
+        // The case's series is a new event made here too: judged as w-create's is, before any step (step 0).
+        $rows = $this->rows();
+        $gid = (string) ($rows[$made]['google_event_id'] ?? '');
+        $this->checkNewMarking('create', $rows[$made] ?? null, $gid === '' ? null : GoogleStand::showAsOf($this->stand->fake->events[$gid] ?? []),
+            array_slice($this->stand->fake->requests, $req), !empty($spec['series']['allDay']), ['step' => 0, 'do' => 'create']);
         $this->stand->poll();
         foreach ($spec['steps'] as $i => $step) {
             $this->step = $i + 1;
@@ -505,7 +522,7 @@ final class Interleave
             sort($ex);
             $out[$id] = [
                 'uid' => $r['uid'], 'parent' => $r['recurrence_parent_id'], 'key' => $r['recurrence_instance_utc'], 'title' => $r['title'], 'description' => (string) $r['description'], 'location' => (string) $r['location'],
-                'url' => (string) $r['url'], 'status' => $r['status'], 'start' => $r['start_utc'], 'end' => $r['end_utc'], 'allDay' => (int) $r['all_day'], 'tz' => $r['tzid'], 'rrule' => $r['rrule'], 'skips' => $ex,
+                'url' => (string) $r['url'], 'status' => $r['status'], 'showAs' => (string) ($r['show_as'] ?? ''), 'start' => $r['start_utc'], 'end' => $r['end_utc'], 'allDay' => (int) $r['all_day'], 'tz' => $r['tzid'], 'rrule' => $r['rrule'], 'skips' => $ex,
                 'own' => $r['own'], 'tags' => $r['tags'], 'people' => $r['people'], 'reminders' => $r['reminders_json'] ?? null, 'icon' => $r['icon'] ?? null, 'attendance' => $r['attendance'],
                 'lat' => $r['location_lat'], 'lng' => $r['location_lng'], 'trip' => (int) ($r['is_container'] ?? 0), 'floating' => (int) ($r['floating'] ?? 0), 'links' => $r['links'],
             ];
@@ -527,7 +544,7 @@ final class Interleave
                 $h = $this->stand->held($gid);
                 if ($h !== null) {
                     $h += ['zone' => isset($m['start']['date']) ? null : ($m['start']['timeZone'] ?? null), 'description' => (string) ($m['description'] ?? ''), 'location' => (string) ($m['location'] ?? ''),
-                        'url' => (string) ($m['source']['url'] ?? ''), 'status' => (string) ($m['status'] ?? 'confirmed')];
+                        'url' => (string) ($m['source']['url'] ?? ''), 'status' => (string) ($m['status'] ?? 'confirmed'), 'showAs' => GoogleStand::showAsOf($m)];
                 }
                 $digest[$gid] = $h;
             } else {
@@ -567,7 +584,7 @@ final class Interleave
             }
             $children = array_values(array_filter($rows, static fn(array $c): bool => (int) ($c['recurrence_parent_id'] ?? 0) === (int) $r['id']));
             $out[(string) $r['google_event_id']] = GoogleStand::stored($r, $children) + ['zone' => (int) $r['all_day'] === 1 ? null : $r['tzid'], 'description' => (string) $r['description'],
-                'location' => (string) $r['location'], 'url' => (string) $r['url'], 'status' => (string) $r['status']];
+                'location' => (string) $r['location'], 'url' => (string) $r['url'], 'status' => (string) $r['status'], 'showAs' => (string) ($r['show_as'] ?? '')];
         }
         // The case's events in no series, in gstate's shape for them.
         foreach ($rows as $r) {
@@ -581,7 +598,7 @@ final class Interleave
     // ---- the six fields of an event in no series, by the harness's own equalities ----------------------------------
     // google-conflict-choice.md, the one page, (a): title trimmed, "(No title)" equal to empty; notes, null equal to
     // empty (the harness's notes are plain text, which the sanitizer leaves alone); place trimmed; link, null equal to
-    // empty (the harness's links are plain https addresses); status, tentative or not; time, start, end and all-day
+    // empty (the harness's links are plain https addresses); status, tentative or not; showAs (1.5.8), free or not; time, start, end and all-day
     // together, the zone not compared. Each read three ways: a row here, a resource at the stand-in, a record as served.
 
     private static function titleOf(?string $t): string
@@ -599,14 +616,14 @@ final class Interleave
     private static function rowSix(array $r): array
     {
         return ['title' => self::titleOf($r['title']), 'description' => trim((string) $r['description']), 'location' => trim((string) $r['location']), 'url' => trim((string) $r['url']),
-            'status' => (string) $r['status'] === 'tentative', 'time' => [self::instantOf((string) $r['start_utc']), self::instantOf((string) $r['end_utc']), (int) $r['all_day'] === 1]];
+            'status' => (string) $r['status'] === 'tentative', 'showAs' => (string) ($r['show_as'] ?? '') === 'free', 'time' => [self::instantOf((string) $r['start_utc']), self::instantOf((string) $r['end_utc']), (int) $r['all_day'] === 1]];
     }
 
     private static function googleSix(array $m): array
     {
         $at = static fn(array $w): int => self::instantOf((string) ($w['date'] ?? $w['dateTime'] ?? '1970-01-01'));
         return ['title' => self::titleOf($m['summary'] ?? ''), 'description' => trim((string) ($m['description'] ?? '')), 'location' => trim((string) ($m['location'] ?? '')),
-            'url' => trim((string) ($m['source']['url'] ?? '')), 'status' => ($m['status'] ?? '') === 'tentative', 'time' => [$at((array) ($m['start'] ?? [])), $at((array) ($m['end'] ?? [])), isset($m['start']['date'])]];
+            'url' => trim((string) ($m['source']['url'] ?? '')), 'status' => ($m['status'] ?? '') === 'tentative', 'showAs' => GoogleStand::showAsOf($m) === 'free', 'time' => [$at((array) ($m['start'] ?? [])), $at((array) ($m['end'] ?? [])), isset($m['start']['date'])]];
     }
 
     /** One field's value in the form the API serves it (a served record's, an over's, a 409's was, now or yours), compared as rowSix compares. */
@@ -615,6 +632,7 @@ final class Interleave
         return match ($field) {
             'title' => self::titleOf(is_string($v) ? $v : null),
             'status' => $v === 'tentative',
+            'showAs' => $v === 'free',
             'time' => is_array($v) ? self::timeOf($v) : null,
             default => trim(is_string($v) ? $v : ''),
         };
@@ -1176,6 +1194,11 @@ final class Interleave
                 case 'icon':
                     $in['icon'] = $fields['icon'] = 'star';
                     break;
+                case 'showAs':
+                    // Free or busy (1.5.8, #303): the other of the series' marking, so the value is new for the series and
+                    // for a day that follows it.
+                    $in['showAs'] = $fields['showAs'] = (string) ($master['show_as'] ?? 'busy') === 'free' ? 'busy' : 'free';
+                    break;
                 case 'coords':
                     // A picked place for the text the day already has: the coordinates alone (A1: held here alone).
                     $in['locationLat'] = 37.5 + $n / 100;
@@ -1235,6 +1258,7 @@ final class Interleave
             // The event in no series is the case's from here on: what each side holds of it is recorded (gstate, ldigest),
             // and the record the API serves for it now is what the person was shown (withSingle's change sends it as `over`).
             $gid = (string) $this->db->scalar('SELECT google_event_id FROM events WHERE id = ?', [$id]);
+            $this->made = [$id, $gid, $days > 0];
             if ($gid !== '') {
                 $this->gids[$gid] = true;
                 $this->singles[$gid] = $id;
@@ -1438,7 +1462,7 @@ final class Interleave
         }
         $shown = ($step['shown'] ?? 'earlier') === 'now' || !isset($this->served[$gid]) ? $this->serve($id) : $this->served[$gid];
         // A delete names every field as shown, the time whole (T2: "if `over` names the time, it names it whole").
-        $all = ['title', 'description', 'location', 'url', 'status', ...self::TIME_KEYS];
+        $all = ['title', 'description', 'location', 'url', 'status', 'showAs', ...self::TIME_KEYS];
         $outdated = isset($step['outdated']) ? (string) $step['outdated'] : null;
         // `over`'s all-day boundaries with a clock on each, read as their dates (T4 narrowed).
         $clockOver = static function (array $body) use ($step): array {
@@ -1476,6 +1500,10 @@ final class Interleave
             } elseif ($f === 'status') {
                 $body['status'] = $other;
                 $body['over']['status'] = $shown['status'] ?? null;
+            } elseif ($f === 'showAs') {
+                // The other of the two from what was shown (1.5.8, #303).
+                $body['showAs'] = (string) ($shown['showAs'] ?? 'busy') === 'free' ? 'busy' : 'free';
+                $body['over']['showAs'] = $shown['showAs'] ?? null;
             } else {
                 $body[$f] = self::SINGLE_VALUES[$f];
                 $body['over'][$f] = $shown[$f] ?? null;
@@ -1492,7 +1520,7 @@ final class Interleave
     private function sendSingle(string $action, array $body, int $id, string $gid, array $s0, ?array $overwriting): array
     {
         $fields = [];
-        foreach (['title', 'description', 'location', 'url', 'status'] as $f) {
+        foreach (['title', 'description', 'location', 'url', 'status', 'showAs'] as $f) {
             if (array_key_exists($f, $body)) {
                 $fields[$f] = true;
             }
@@ -1872,11 +1900,21 @@ final class Interleave
                 $target = ($step['pick'] > 0.5 && $instance !== null) ? $instance : $gid;
                 $body = match ((string) ($step['what'] ?? 'colorId')) {
                     'attendees' => ['attendees' => [['email' => 'guest@example.test', 'responseStatus' => 'needsAction']]],
-                    'transparency' => ['transparency' => 'transparent'],
+                    'guestsCanModify' => ['guestsCanModify' => true],
                     'visibility' => ['visibility' => 'private'],
                     default => ['colorId' => (string) (1 + $n % 11)],
                 };
                 $touched = [$touch('gonly')]; // no field the rows here hold, for x-conflict's r-gonly count
+                break;
+            case 'r-free':
+                // Free or busy changed at Google by another client (1.5.8, #303): a field the rows here hold (show_as), so a
+                // change to the series is a conflict until polled, as a rename is. On the series, or on one day of it (an
+                // exception whose only difference is its marking), set to the other of what Google holds there.
+                $onDay = $step['pick'] > 0.5 && $instance !== null;
+                $target = $onDay ? $instance : $gid;
+                $there = $onDay ? ($this->stand->fake->events[$instance] ?? $g) : $g;
+                $body = ['transparency' => GoogleStand::showAsOf($there) === 'free' ? 'opaque' : 'transparent'];
+                $touched = [$touch('showAs', $onDay ? $occ[0] : null)];
                 break;
             case 'r-etag':
                 $this->stand->fake->seed($g);
@@ -1963,6 +2001,10 @@ final class Interleave
                     break;
                 case 'status':
                     $body['status'] = 'tentative';
+                    break;
+                case 'showAs':
+                    // Two values: Google's change is to the other one, which is also what a change here sets.
+                    $body['transparency'] = GoogleStand::showAsOf($g) === 'free' ? 'opaque' : 'transparent';
                     break;
                 case 'time':
                     $time = $this->remoteTime($g, $step, $mine);
@@ -2287,7 +2329,7 @@ final class Interleave
     /** The fields of a row whose values an undo is judged on: a series' or event's every field; a day's own and held-here ones. */
     private static function judged(string $ident, array ...$states): array
     {
-        $all = ['title', 'description', 'location', 'url', 'status', 'start', 'end', 'allDay', 'tz', 'rrule', 'skips', 'tags', 'people', 'reminders', 'icon',
+        $all = ['title', 'description', 'location', 'url', 'status', 'showAs', 'start', 'end', 'allDay', 'tz', 'rrule', 'skips', 'tags', 'people', 'reminders', 'icon',
             'attendance', 'lat', 'lng', 'trip', 'floating', 'links', 'key', 'uid'];
         if (!str_starts_with($ident, 'day:')) {
             return $all;
@@ -2297,7 +2339,7 @@ final class Interleave
         foreach ($states as $st) {
             $own = array_merge($own, (array) ($st['own'] ?? []));
         }
-        $map = ['title' => ['title'], 'description' => ['description'], 'location' => ['location'], 'url' => ['url'], 'status' => ['status'],
+        $map = ['title' => ['title'], 'description' => ['description'], 'location' => ['location'], 'url' => ['url'], 'status' => ['status'], 'showAs' => ['showAs'],
             'date' => ['start', 'end'], 'time' => ['start', 'end', 'tz'], 'length' => ['end'], 'allDay' => ['allDay']];
         foreach (array_unique($own) as $o) {
             $f = array_merge($f, $map[$o] ?? []);
@@ -2487,7 +2529,7 @@ final class Interleave
         // x-write-asked: the fields only Google holds never change through the app, and no body carries them.
         if ($isWrite) {
             $this->ran('x-write-asked', $do);
-            $this->expect('x-write-asked', self::onlyKept($s0['g']['only'], $s1['g']['only']), "step {$this->step} ($do): a write here leaves every field only Google holds as it was (colorId, attendees, transparency, visibility)",
+            $this->expect('x-write-asked', self::onlyKept($s0['g']['only'], $s1['g']['only']), "step {$this->step} ($do): a write here leaves every field only Google holds as it was (colorId, attendees, visibility, guest permissions)",
                 $context + ['before' => array_slice($s0['g']['only'], 0, 4, true), 'after' => array_slice($s1['g']['only'], 0, 4, true)]);
             foreach ($writes as $q) {
                 $sent = array_values(array_intersect(array_keys((array) $q['body']), self::NEVER_SENT));
@@ -2554,6 +2596,15 @@ final class Interleave
             $this->ran('x-conflict', 'etag or Google-only fields');
             $this->expect('x-conflict', $error !== 'google_conflict', "step {$this->step} ($do): a change to a series whose shown fields at Google are as here (its etag or a Google-only field moved) is no conflict", $context);
         }
+
+        // x-write-asked, a new event's marking: what the create sent and stored of free or busy.
+        if ($do === 'w-create' && $out['ok'] && $this->made !== null) {
+            [$mid, $mgid, $mAllDay] = $this->made;
+            $g1 = $s1['g']['digest'][$mgid] ?? null;
+            $this->checkNewMarking($do, $s1['rows'][$mid] ?? null, $g1 === null ? null : ($g1['showAs'] ? 'free' : 'busy'),
+                array_slice($this->stand->fake->requests, $s0['req'], $s1['req'] - $s0['req']), $mAllDay, $context);
+        }
+        $this->made = null;
 
         // x-choice: a change or delete of an event in no series, the conflict choice on.
         if ($choice && $this->singleSent !== null) {
@@ -2659,6 +2710,25 @@ final class Interleave
         }
     }
 
+    /**
+     * x-write-asked, a new event made here with no Show as chosen (the owner's rule of 2026-11-15, #303): an all-day one is
+     * free, its create sending `transparency: "transparent"`; a timed one sends nothing for the field and is busy, Google's
+     * own default (`opaque`). Here and at Google alike. $google is the stand-in's marking of it in the column's words, null
+     * when Google holds no such event; $requests the app's requests during the create.
+     */
+    private function checkNewMarking(string $do, ?array $row, ?string $google, array $requests, bool $allDay, array $context): void
+    {
+        $this->ran('x-write-asked', 'a new event made here, ' . ($allDay ? 'all-day' : 'timed'));
+        $want = $allDay ? 'free' : 'busy';
+        $inserts = array_values(array_filter($requests, static fn(array $q): bool => $q['method'] === 'POST' && !in_array('X-Harness: remote', $q['headers'], true)));
+        $sent = array_map(static fn(array $q): mixed => array_key_exists('transparency', (array) $q['body']) ? $q['body']['transparency'] : '(none)', $inserts);
+        $context += ['allDay' => $allDay, 'here' => $row['show_as'] ?? null, 'google' => $google, 'sent' => $sent];
+        $this->expect('x-write-asked', $row !== null && (string) $row['show_as'] === $want && $google === $want,
+            "step {$this->step} ($do): a new " . ($allDay ? 'all-day event made here is free' : 'timed event made here is busy') . ', here and at Google', $context);
+        $this->expect('x-write-asked', $inserts !== [] && $sent === array_fill(0, count($inserts), $allDay ? 'transparent' : '(none)'),
+            "step {$this->step} ($do): the create of a new " . ($allDay ? 'all-day event sends transparency "transparent"' : 'timed event sends nothing for transparency'), $context);
+    }
+
     private function checkOnlyAsked(array $asked, array $s0, array $s1, array $context): void
     {
         $gid = (string) $asked['gid'];
@@ -2668,11 +2738,11 @@ final class Interleave
             return;
         }
         $this->ran('x-write-asked', 'only asked');
-        $changed = array_intersect_key(['title' => 1, 'description' => 1, 'location' => 1, 'url' => 1], $asked['fields']);
+        $changed = array_intersect_key(['title' => 1, 'description' => 1, 'location' => 1, 'url' => 1, 'showAs' => 1], $asked['fields']);
         if ($this->racedNow !== null && $this->racedNow[0] === $gid && $this->racedNow[1] === null) {
             $changed['title'] = 1; // the series renamed at Google during the write: x-readback's to judge
         }
-        $series = ['title', 'description', 'location', 'url', 'zone', 'rule', 'start', 'end', 'allDay', 'skips'];
+        $series = ['title', 'description', 'location', 'url', 'showAs', 'zone', 'rule', 'start', 'end', 'allDay', 'skips'];
         foreach ($series as $f) {
             if (($asked['kind'] === 'this' || !isset($changed[$f])) && ($a[$f] ?? null) !== ($b[$f] ?? null)) {
                 $this->fail('x-write-asked', "step {$this->step}: a " . ($asked['kind'] === 'this' ? '"this event"' : 'whole-series') . ' change of ' . implode(', ', array_keys($asked['fields'])) . " changed the series' $f at Google",
@@ -2713,7 +2783,7 @@ final class Interleave
             return null;
         }
         $rows = $s0['rows'];
-        $rows[$id] = ['title' => $g['title'], 'description' => $g['description'], 'location' => $g['location'], 'url' => $g['url'], 'status' => $g['status'] ? 'tentative' : 'confirmed',
+        $rows[$id] = ['title' => $g['title'], 'description' => $g['description'], 'location' => $g['location'], 'url' => $g['url'], 'status' => $g['status'] ? 'tentative' : 'confirmed', 'show_as' => $g['showAs'] ? 'free' : 'busy',
             'start_utc' => gmdate('Y-m-d H:i:s', $g['time'][0]), 'end_utc' => gmdate('Y-m-d H:i:s', $g['time'][1]), 'all_day' => $g['time'][2] ? 1 : 0] + $rows[$id];
         return $this->byIdentity($rows);
     }
@@ -2777,7 +2847,7 @@ final class Interleave
         // What the person was shown: `over` where the request sends it, else the row as stored ((b)). The time is `over`'s
         // whole time, one value (T4: "the base ... for the time is `over`'s whole time").
         $B = $R;
-        foreach (['title', 'description', 'location', 'url', 'status'] as $f) {
+        foreach (['title', 'description', 'location', 'url', 'status', 'showAs'] as $f) {
             if (array_key_exists($f, $over)) {
                 $B[$f] = self::servedValue($f, $over[$f]);
             }
@@ -2791,7 +2861,7 @@ final class Interleave
         // and kind, the zone not compared (the page's field table), so a zone changed alone is no change of the time.
         $W = [];
         if ($action !== 'delete') {
-            foreach (['title', 'description', 'location', 'url', 'status'] as $f) {
+            foreach (['title', 'description', 'location', 'url', 'status', 'showAs'] as $f) {
                 if (array_key_exists($f, $body)) {
                     $W[$f] = self::servedValue($f, $body[$f]);
                 }
@@ -3084,10 +3154,10 @@ final class Interleave
             }
         }
         if ($asked['kind'] === 'all' && $g !== null && $master !== null) {
-            foreach (['title', 'description', 'location', 'url'] as $f) {
+            foreach (['title' => 'title', 'description' => 'description', 'location' => 'location', 'url' => 'url', 'showAs' => 'show_as'] as $f => $col) {
                 if (isset($asked['fields'][$f])) {
-                    $this->expect('x-finish', (($g[$f] ?? null) === $asked['fields'][$f] && (string) $master[$f] === $asked['fields'][$f]) || $differences !== [],
-                        "step {$this->step}: after Finish the series holds the change's $f at Google and here, or the answer names why not", $context + ['want' => $asked['fields'][$f], 'google' => $g[$f] ?? null, 'here' => $master[$f]]);
+                    $this->expect('x-finish', (($g[$f] ?? null) === $asked['fields'][$f] && (string) $master[$col] === $asked['fields'][$f]) || $differences !== [],
+                        "step {$this->step}: after Finish the series holds the change's $f at Google and here, or the answer names why not", $context + ['want' => $asked['fields'][$f], 'google' => $g[$f] ?? null, 'here' => $master[$col]]);
                 }
             }
             if (isset($asked['fields']['tags'])) {
@@ -3303,7 +3373,7 @@ final class Interleave
      */
     private static function ground(?array $row, bool $links = true): array
     {
-        $map = ['title' => ['title'], 'description' => ['description'], 'location' => ['location', 'lat', 'lng'], 'url' => ['url'], 'status' => ['status'],
+        $map = ['title' => ['title'], 'description' => ['description'], 'location' => ['location', 'lat', 'lng'], 'url' => ['url'], 'status' => ['status'], 'showAs' => ['showAs'],
             'date' => ['start', 'end'], 'time' => ['start', 'end', 'tz'], 'length' => ['end'], 'allDay' => ['allDay'], 'tags' => ['tags'], 'people' => ['people'],
             'reminders' => ['reminders'], 'icon' => ['icon'], 'attendance' => ['attendance'], 'coords' => ['lat', 'lng'], 'lat' => ['lat', 'lng']];
         $out = [];
@@ -3529,7 +3599,7 @@ final class Interleave
                 // series' current notes)", never the series as a snapshot showed it).
                 $series = $result['series:' . $m[1]] ?? null;
                 $this->expect('x-undo-fields', ($r['own'] ?? []) === [], "step {$this->step} ($do): a day brought back on a date its entry skipped owns fields of its own", $where + ['now' => $r]);
-                foreach (['title', 'description', 'location', 'url', 'tags'] as $f) {
+                foreach (['title', 'description', 'location', 'url', 'showAs', 'tags'] as $f) {
                     if ($series !== null && !in_array($f === 'tags' ? 'tags' : $f, (array) ($r['own'] ?? []), true)) {
                         $this->expect('x-undo-fields', ($r[$f] ?? null) == ($series[$f] ?? null), "step {$this->step} ($do): a day brought back on a date its entry skipped shows the series' $f as it stands", $where + ['field' => $f, 'series' => $series[$f] ?? null, 'now' => $r[$f] ?? null]);
                     }
@@ -3886,8 +3956,7 @@ final class Interleave
                 continue;
             }
             $this->ran('x-own', $do);
-            foreach (['title', 'description', 'location', 'url', 'status'] as $f) {
-                $ownName = $f === 'url' ? 'url' : $f;
+            foreach (['title' => 'title', 'description' => 'description', 'location' => 'location', 'url' => 'url', 'status' => 'status', 'show_as' => 'showAs'] as $f => $ownName) {
                 if (!in_array($ownName, $r['own'], true) && (string) $r[$f] !== (string) $master[$f]) {
                     $this->fail($onlyLocal ? 'x-follow' : 'x-own', "step {$this->step} ($do): an edited day that doesn't own its $f has another than its series'", $context + ['row' => $id, 'own' => $r['own'], 'day' => (string) $r[$f], 'series' => (string) $master[$f]]);
                 }
@@ -3995,7 +4064,8 @@ final class Interleave
                 continue;
             }
             if (!isset($a[$id]) || !isset($b[$id])) {
-                $out[$id] = isset($a[$id]) ? 'removed' : 'added';
+                // The row itself, so a finding says which day came or went.
+                $out[$id] = isset($a[$id]) ? ['removed' => $a[$id]] : ['added' => $b[$id]];
             } else {
                 $d = [];
                 foreach (array_unique(array_merge(array_keys($a[$id]), array_keys($b[$id]))) as $k) {

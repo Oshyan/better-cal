@@ -446,19 +446,27 @@ final class SystemHealth
         return ['subject' => $subject, 'text' => $text, 'html' => $html];
     }
 
-    /** "14 failures over 3h 20m" from a row's streak, pure. */
+    /**
+     * "14 failed attempts over 3 hours and 20 minutes" from a row's streak, as a person would say it (#281): the time
+     * in words, and none for a streak under a minute ("2 failed attempts", never "over 0m"). Pure.
+     */
     public static function describeStreak(array $row, string $nowDb): string
     {
         $n = (int) ($row['consecutive_failures'] ?? 0);
-        $part = $n . ' failure' . ($n === 1 ? '' : 's');
+        $part = $n . ' failed attempt' . ($n === 1 ? '' : 's');
         if (empty($row['first_failed_at'])) {
             return $part;
         }
         $secs = max(0, Time::fromDb($nowDb)->getTimestamp() - Time::fromDb((string) $row['first_failed_at'])->getTimestamp());
+        if ($secs < 60) {
+            return $part;
+        }
+        $unit = static fn(int $v, string $word): string => $v . ' ' . $word . ($v === 1 ? '' : 's');
         $d = intdiv($secs, 86400);
         $hh = intdiv($secs % 86400, 3600);
         $mm = intdiv($secs % 3600, 60);
-        $dur = $d > 0 ? "{$d}d {$hh}h" : ($hh > 0 ? "{$hh}h {$mm}m" : "{$mm}m");
+        $dur = $d > 0 ? $unit($d, 'day') . ($hh > 0 ? ' and ' . $unit($hh, 'hour') : '')
+            : ($hh > 0 ? $unit($hh, 'hour') . ($mm > 0 ? ' and ' . $unit($mm, 'minute') : '') : $unit($mm, 'minute'));
         return "$part over $dur";
     }
 

@@ -267,7 +267,9 @@ final class ReviewController
                 'title' => $half['title'],
                 // A pending undo whose entry is in an older format can't be finished
                 // (GoogleUndo::entryToFinish): said up front, and Put back offered alone.
-                'summary' => 'Half done in Google Calendar: ' . $half['summary'] . ' It stopped at step ' . ($half['stepsDone'] + 1) . ': ' . $half['error']
+                // Why it stopped is a sentence of its own, ending with its full stop (#281); which step it was is
+                // in `detail` (stepsDone), not in the words, since a step's number means nothing to a person.
+                'summary' => 'Half done in Google Calendar: ' . $half['summary'] . ' ' . rtrim(trim($half['error']), '.') . '.'
                     . ' ' . ($half['unrecoverable'] ?? $half['finishRefused'] ?? 'Finish sends the rest from what Google Calendar has now; Put back reverses every step done, only while nothing changed there since.'),
                 'createdAt' => $half['createdAt'],
                 'eventId' => $half['eventId'],

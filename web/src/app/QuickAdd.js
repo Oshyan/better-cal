@@ -538,7 +538,7 @@ export function QuickAdd() {
     }
   }
 
-  return html`<div class="bc-quickadd-wrap">
+  return html`<div class="bc-quickadd-wrap" data-layer="">
     <div class="bc-quickadd" ref=${cardRef} role="dialog" aria-label="Quick add event" onKeyDown=${onCardKeyDown}>
       <div class="bc-msuggest-anchor">
         <input

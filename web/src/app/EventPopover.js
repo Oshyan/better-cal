@@ -408,7 +408,13 @@ export function EventPopover() {
       // sidebar beside it just work (Next, Today, the mini-month), and the
       // panel stays. Their first press only closed it (#184).
       const beside = (t) => !isMobile() && t && t.closest && !!t.closest('.bc-toolbar, .bc-sidebar');
-      stop = onOutsidePress((t) => inPanel(t) || opensEvent(t) || beside(t), () => set({ popover: null }));
+      // A layer above the panel (search, the command palette, quick add, a
+      // dialog, a toast) takes its own presses (ui/outside.js) and the panel
+      // stays open under it: when the layer closes, the event is still
+      // there, and a result picked in search replaces it.
+      const owns = (t) => inPanel(t) || opensEvent(t) || beside(t);
+      owns.refs = inPanel.refs;
+      stop = onOutsidePress(owns, () => set({ popover: null }));
       document.addEventListener('keydown', onKey, true);
     }
     return () => {

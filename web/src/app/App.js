@@ -1228,7 +1228,7 @@ function DropChoiceChip({ choice }) {
   // Phones: edge to edge with a margin (CSS), at the drop's height.
   const x = window.matchMedia(PHONE_QUERY).matches ? 8 : Math.max(8, Math.min(choice.x, window.innerWidth - 300));
   const y = Math.max(8, Math.min(choice.y, window.innerHeight - 56));
-  return html`<div class="bc-dropchoice" ref=${rootRef} style=${'left:' + x + 'px;top:' + y + 'px'} role="dialog" aria-label=${choice.title}>
+  return html`<div class="bc-dropchoice" data-layer="" ref=${rootRef} style=${'left:' + x + 'px;top:' + y + 'px'} role="dialog" aria-label=${choice.title}>
     <span class="bc-dropchoice-title">${choice.title}</span>
     ${choice.options.map((o) => html`<button
       key=${String(o.value)} type="button"
@@ -1276,7 +1276,7 @@ function PluginRangeCard({ card }) {
   const sameDay = spanStart.toDateString() === spanEnd.toDateString();
   const fmtD = (d) => d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   const fmtT = (d) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  return html`<div class="bc-plugincard" ref=${rootRef} style=${'left:' + x + 'px;top:' + y + 'px'} role="dialog" aria-label=${occ.title}>
+  return html`<div class="bc-plugincard" data-layer="" ref=${rootRef} style=${'left:' + x + 'px;top:' + y + 'px'} role="dialog" aria-label=${occ.title}>
     <div class="bc-plugincard-head">
       <${CalDot} color=${occ.pluginColor || null} deco=${occ.pluginIcon || occ.pluginIconPath ? { icon: occ.pluginIcon, iconPath: occ.pluginIconPath } : null} />
       <span class="bc-plugincard-title">${occ.title}</span>

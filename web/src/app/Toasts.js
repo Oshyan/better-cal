@@ -40,7 +40,7 @@ export function Toasts() {
     return () => window.removeEventListener('resize', fitAll);
   }, []);
   if (!toasts.length) return null;
-  return html`<div class="bc-toasts" role="status" aria-live="polite" ref=${listRef}>
+  return html`<div class="bc-toasts" data-layer="top" role="status" aria-live="polite" ref=${listRef}>
     ${toasts.map((t) => html`<div key=${t.id} class="bc-toast${t.error ? ' is-error' : ''}">
       <span class=${'bc-toast-text' + (t.title ? ' has-title' : '')} onClick=${() => dismissToast(t.id)}>${t.title
         ? html`<b class="bc-toast-title">${t.title}</b><span class="bc-toast-what">${t.text}</span>`

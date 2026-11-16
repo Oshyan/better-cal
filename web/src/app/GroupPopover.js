@@ -56,6 +56,7 @@ export function GroupPopover() {
 
   return html`<div
     class="bc-group-pop${mobile ? ' bc-sheet' : ''}"
+    data-layer=""
     style=${style}
     ref=${panelRef}
     role="dialog"

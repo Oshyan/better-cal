@@ -254,7 +254,7 @@ function MoveDialogBody({ calendarId, cal, close }) {
   }
 
   const ready = google && accounts.length > 0 && !running && !failed && !(move && move.status === 'done');
-  return html`<div class="bc-overlay bc-move-overlay" onClick=${(e) => { if (e.target === e.currentTarget) close(); }}>
+  return html`<div class="bc-overlay bc-move-overlay" data-layer="" onClick=${(e) => { if (e.target === e.currentTarget) close(); }}>
     <div class="bc-move-dialog" ref=${panelRef} role="dialog" aria-modal="true" aria-label=${'Move ' + name + ' to Google'} tabindex="-1">
       <div class="bc-move-head">
         <h2><${Icon} name="google" size=${16} /> Move to Google</h2>

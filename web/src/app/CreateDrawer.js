@@ -127,7 +127,7 @@ export function CreateDrawer() {
     (kind === 'person' && name.trim() !== '')
   );
 
-  return html`<div class="bc-drawer-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) close(); }}>
+  return html`<div class="bc-drawer-backdrop" data-layer="" onClick=${(e) => { if (e.target === e.currentTarget) close(); }}>
     <form class="bc-drawer bc-drawer-slim" ref=${panelRef} onSubmit=${submit} role="dialog" aria-modal="true" aria-label=${TITLES[kind]}>
       <div class="bc-drawer-head">
         <h2>${TITLES[kind]}</h2>

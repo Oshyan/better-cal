@@ -398,7 +398,7 @@ export function RescheduleOverlay({ occ, cal, onDropConfirmed, onExit }) {
   if (pending) {
     const left = Math.max(8, Math.min(pending.x, window.innerWidth - CHIP_W));
     const top = Math.max(8, Math.min(pending.y + 10, window.innerHeight - 52));
-    chip = html`<div class="bc-confirm-chip" style=${`left:${left}px;top:${top}px`} role="dialog" aria-label="Confirm move">
+    chip = html`<div class="bc-confirm-chip" data-layer="" style=${`left:${left}px;top:${top}px`} role="dialog" aria-label="Confirm move">
       <span>${pending.label}</span>
       <button
         type="button" class="bc-btn bc-btn-primary"

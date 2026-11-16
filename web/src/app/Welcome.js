@@ -251,7 +251,7 @@ export function Welcome() {
     },
   ];
 
-  return html`<div class="bc-welcome-wrap">
+  return html`<div class="bc-welcome-wrap" data-layer="">
     <div class="bc-welcome" role="dialog" aria-modal="true" aria-labelledby="bc-welcome-h">
       ${step === 1 && html`
         <div class="bc-welcome-head">

@@ -51,10 +51,9 @@ export function JumpPopover() {
     focusedRef.current = false;
     const onKey = (e) => { if (e.key === 'Tab') trapFocus(panelRef.current, e); };
     // The month title that opens it counts as inside, so its click toggles it.
-    const stop = onOutsidePress(
-      (t) => (panelRef.current && panelRef.current.contains(t)) || !!(t.closest && t.closest('.bc-toolbar-date')),
-      () => set({ jumpOpen: false }),
-    );
+    const inside = (t) => (panelRef.current && panelRef.current.contains(t)) || !!(t.closest && t.closest('.bc-toolbar-date'));
+    inside.refs = [panelRef];
+    const stop = onOutsidePress(inside, () => set({ jumpOpen: false }));
     document.addEventListener('keydown', onKey, true);
     return () => {
       stop();
@@ -88,7 +87,7 @@ export function JumpPopover() {
   const weeks = monthWeeks(disp.year, disp.month);
   const monthPrefix = disp.year + '-' + pad(disp.month);
 
-  return html`<div class="bc-jump-pop" ref=${panelRef} role="dialog" aria-label="Jump to date">
+  return html`<div class="bc-jump-pop" data-layer="" ref=${panelRef} role="dialog" aria-label="Jump to date">
     <div class="bc-jump-inputrow">
       <input
         ref=${inputRef}

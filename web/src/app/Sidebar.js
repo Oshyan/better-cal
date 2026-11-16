@@ -24,6 +24,7 @@ import {
 import { writeCalendarVisibility } from './api.js';
 import { sortedCalendars, calendarDrop } from '../lib/calorder.js';
 import { sidebarGroups, moveGroup } from '../lib/sidebarorder.js';
+import { hasLayerRow } from '../lib/pluginlayers.js';
 
 // What a dragged sidebar group carries, so other drags never read as one.
 const GROUP_MIME = 'application/x-bettercal-group';
@@ -521,9 +522,9 @@ export function Sidebar({ open, collapsed, onClose }) {
     }));
   }, [manageCal]);
 
-  // Enabled plugins that contribute overlay bands get a visibility row; the
-  // toggle is a persisted setting so it survives reloads.
-  const layerPlugins = (plugins || []).filter((pl) => pl.enabled && (pl.permissions || []).includes('ranges'));
+  // A plugin that draws what no calendar row controls gets a visibility row
+  // (hasLayerRow, #257); the toggle is a setting so it survives reloads.
+  const layerPlugins = (plugins || []).filter(hasLayerRow);
   const togglePluginLayer = (id) => {
     saveSetting('pluginHidden', { ...(state.settings.pluginHidden || {}), [id]: !pluginHidden[id] });
     set({ pluginSeq: state.pluginSeq + 1 });

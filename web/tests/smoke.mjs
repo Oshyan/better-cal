@@ -3680,6 +3680,35 @@ console.log('--- chronological ordering across timezone offsets ---');
     globalThis.fetch = editorFetch;
   }
 
+  // The sidebar's Plugins group (#257): a row for a plugin that draws what
+  // no calendar row controls (ranges and no calendars of its own), and a
+  // hidden state counts only for a plugin with a row.
+  {
+    const { hasLayerRow, layerHidden } = await import('../src/lib/pluginlayers.js');
+    const plugins = [
+      { id: 'sample-tides', name: 'Sample tides', enabled: true, permissions: ['ranges', 'events:write'], ownCalendars: { noun: 'tide calendar' } },
+      { id: 'sample-sun', name: 'Sample sun', enabled: true, permissions: ['events:write'], ownCalendars: { noun: 'sun calendar' } },
+      { id: 'sample-trips', name: 'Sample trips', enabled: true, permissions: ['ranges', 'propose'] },
+      { id: 'sample-notes', name: 'Sample notes', enabled: true, permissions: ['http'] },
+      { id: 'sample-off', name: 'Sample off', enabled: false, permissions: ['ranges'] },
+    ];
+    eq('plugin rows: only a plugin with ranges and no calendars of its own', plugins.filter(hasLayerRow).map((p) => p.id), ['sample-trips']);
+    const hidden = { 'sample-tides': true, 'sample-trips': true };
+    eq("plugin rows: a stored hidden state counts only where there is a row to undo it", ['sample-tides', 'sample-trips', 'sample-sun'].map((id) => layerHidden(plugins, hidden, id)), [false, true, false]);
+    const { Sidebar: Bar } = await import('../src/app/Sidebar.js');
+    put({ calendars: [{ id: 51, name: 'Sample tide calendar', kind: 'subscribed', pluginId: 'sample-tides', visible: true, folderIds: [] }], folders: [], plugins, settings: { ...st.settings, pluginHidden: hidden } });
+    const box = dom.doc.createElement('div');
+    dom.doc.body.appendChild(box);
+    render(html`<${Bar} open=${true} collapsed=${false} onClose=${() => {}} />`, box);
+    await settle();
+    const group = box.querySelector('[data-group="plugins"]');
+    eq('plugin rows: the Plugins group lists the trip plugin alone, its box unchecked as stored', [group && group.querySelectorAll('.bc-cal-name').map((n) => n.textContent), group && group.querySelector('input').checked], [['Sample trips'], false]);
+    render(null, box);
+    box.remove();
+    await settle();
+    put({ plugins: [], settings: { ...st.settings, pluginHidden: {} } });
+  }
+
   render(null, ed);
   put({ editor: null });
   await settle();

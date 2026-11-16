@@ -26,6 +26,7 @@ import {
 } from '../lib/dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
 import { bandDays } from '../lib/bands.js';
+import { layerHidden } from '../lib/pluginlayers.js';
 import { MonthGrid } from '../ui/MonthGrid.js';
 import { TimeGrid } from '../ui/TimeGrid.js';
 import { AgendaList } from '../ui/AgendaList.js';
@@ -440,6 +441,7 @@ export function App() {
   const pluginRanges = useStore((st) => st.pluginRanges);
   const pluginSeq = useStore((st) => st.pluginSeq);
   const pluginHidden = useStore((st) => st.settings.pluginHidden);
+  const pluginList = useStore((st) => st.plugins);
   const calendarsForRanges = useStore((st) => st.calendars);
   const plugRangeKeyRef = useRef(null);
   useEffect(() => {
@@ -471,7 +473,7 @@ export function App() {
     const out = [];
     const calById = new Map((calendarsForRanges || []).map((c) => [c.id, c]));
     for (const [pid, entry] of Object.entries(pluginRanges)) {
-      if (pluginHidden && pluginHidden[pid]) continue;
+      if (layerHidden(pluginList, pluginHidden, pid)) continue;
       for (const r of entry.ranges || []) {
         if (!isWindow(r)) continue;
         const cal = calById.get(r.calendarId);
@@ -480,7 +482,7 @@ export function App() {
       }
     }
     return out;
-  }, [pluginRanges, pluginHidden, calendarsForRanges]); // eslint-disable-line
+  }, [pluginRanges, pluginHidden, pluginList, calendarsForRanges]); // eslint-disable-line
 
   const pluginOccs = useMemo(() => {
     const out = [];
@@ -489,7 +491,7 @@ export function App() {
     // A band that belongs to one of a plugin's calendars hides with it.
     const calById = new Map((calendarsForRanges || []).map((c) => [c.id, c]));
     for (const [pid, entry] of Object.entries(pluginRanges)) {
-      if (pluginHidden && pluginHidden[pid]) continue;
+      if (layerHidden(pluginList, pluginHidden, pid)) continue;
       for (const r of entry.ranges || []) {
         if (r.calendarId != null && (calById.get(r.calendarId) || {}).visible !== true) continue;
         if (isWindow(r)) continue;
@@ -518,7 +520,7 @@ export function App() {
       }
     }
     return out;
-  }, [pluginRanges, pluginHidden, calendarsForRanges]); // eslint-disable-line
+  }, [pluginRanges, pluginHidden, pluginList, calendarsForRanges]); // eslint-disable-line
 
   const occurrencesWithAvail = useMemo(
     () => {

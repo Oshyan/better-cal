@@ -1,0 +1,40 @@
+{
+    "about": "A day given its own tags, another day deleted, a tag added to the whole series, then a third day given its own place (its row holds the series' tags as a copy), then the tag for all events undone: the day with its own place, which does not own its tags, follows its series and loses the tag; the day that owns its tags keeps them exactly (x-undo-fields; decisions.md, \"A day kept by an undo shows the series' tags and people it does not own\"; seed 40783 case 201).",
+    "series": {
+        "family": "yearly_months",
+        "rrule": "FREQ=YEARLY;BYMONTH=1,7;BYMONTHDAY=27",
+        "import": false,
+        "bound": "none",
+        "boundAt": 10,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-04-11 21:15",
+        "length": 120
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.305,
+            "what": "tags"
+        },
+        {
+            "do": "w-del1",
+            "pick": 0.211
+        },
+        {
+            "do": "w-all",
+            "pick": 0.064,
+            "what": "tags"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.977,
+            "what": "location"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.397
+        }
+    ]
+}

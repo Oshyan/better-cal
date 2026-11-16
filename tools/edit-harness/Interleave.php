@@ -3607,10 +3607,31 @@ final class Interleave
                 continue;
             }
             if ($fields === null) {
-                // A row the entry didn't change: exactly as it was before the undo, every field and its own list.
+                // A row the entry didn't change: exactly as it was before the undo, every field and its own list. But a day's
+                // tags and people it does not own are its series' copy, not its own value: "a day's tags and people are its
+                // own only when its own list says so; otherwise its links are the series' copy", and a day's row an undo
+                // keeps "takes the tags and people it doesn't own from its series as it stands" (decisions.md, "A day kept by
+                // an undo shows the series' tags and people it does not own"; series-model.md, Own Fields: "Every other
+                // field is inherited and follows the series"). So such a set is expected to be the series' set after the
+                // undo, which is what x-own checks, and an owned set to be exactly as it was (seed 40783 case 201).
                 $keep = $c === null || $r === null ? [] : array_flip(array_merge(self::judged($ident, $c, $r), ['own']));
+                $series = preg_match('/^day:([^:]+):/', $ident, $m) === 1 ? ($result['series:' . $m[1]] ?? null) : null;
+                $copied = [];
+                if ($c !== null && $r !== null && $series !== null) {
+                    foreach (['tags', 'people'] as $f) {
+                        if (!in_array($f, (array) ($c['own'] ?? []), true) && !in_array($f, (array) ($r['own'] ?? []), true)) {
+                            $copied[] = $f;
+                            unset($keep[$f]);
+                        }
+                    }
+                }
                 $plain = static fn(?array $x): ?array => $x === null ? null : array_intersect_key($x, $keep);
                 $this->expect('x-undo-fields', ($c === null) === ($r === null) && $plain($c) == $plain($r), "step {$this->step} ($do): an undo changed a row its entry did not change", $where + ['was' => $c, 'now' => $r]);
+                foreach ($copied as $f) {
+                    $this->ran('x-undo-fields', "a day's $f it does not own, after an undo of another row's entry");
+                    $this->expect('x-undo-fields', ($r[$f] ?? null) == ($series[$f] ?? null), "step {$this->step} ($do): a day the entry did not change holds other $f than its series' as they stand after the undo, though it does not own them",
+                        $where + ['field' => $f, 'series' => $series[$f] ?? null, 'now' => $r[$f] ?? null]);
+                }
                 continue;
             }
             if ($fields === ['+']) {

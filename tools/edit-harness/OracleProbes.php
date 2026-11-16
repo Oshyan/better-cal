@@ -86,6 +86,21 @@ final class OracleProbes
                     $s1['rows'][$row($s1, $owns('title'))]['show_as'] = 'busy';
                     return [$out, $s0, $this->reshape($s1)];
                 }],
+            // A row the undone entry did not change: its owned tags exactly as they were, its copied ones the series' after the undo.
+            ['check' => 'x-undo-fields', 'what' => 'an undo of a tag for all events takes a tag off a day that owns its tags', 'case' => 'a-day-given-its-own-place-after-a-tag-for-all-follows-the-series-when-the-tag-is-undone', 'step' => 5,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {
+                    $id = $row($s1, $owns('tags'));
+                    $s1['rows'][$id]['tags'] = array_values(array_diff($s1['rows'][$id]['tags'], ['sample']));
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-undo-fields', 'what' => 'an undo of a tag for all events leaves a following day with the tag its series no longer has', 'case' => 'a-day-given-its-own-place-after-a-tag-for-all-follows-the-series-when-the-tag-is-undone', 'step' => 5,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {
+                    $id = $row($s1, static fn(array $r): bool => $owns('location')($r) && !in_array('tags', $r['own'], true));
+                    $tags = [...$s1['rows'][$id]['tags'], 'own-3'];
+                    sort($tags);
+                    $s1['rows'][$id]['tags'] = $tags;
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
             ['check' => 'x-conflict', 'what' => 'a rename over a free or busy change at Google not yet read goes through', 'case' => 'free-or-busy-changed-at-google-then-a-rename-here-is-refused', 'step' => 2,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => true, 'error' => null] + $out, $s0, $s1];

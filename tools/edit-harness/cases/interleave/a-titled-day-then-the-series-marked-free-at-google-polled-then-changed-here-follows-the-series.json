@@ -1,5 +1,5 @@
 {
-    "about": "A day given its own title, then the whole series marked free in Google Calendar and polled: Google keeps the day's record busy and the day does not own its marking (Oshyan/better-cal#318, left to the 1.5.11 rebuild). x-own does not judge that day's marking while the series' marking was last changed in Google Calendar, and counts it as Not checked (#318); every other field of the day is judged.",
+    "about": "A day given its own title, then the whole series marked free in Google Calendar, a poll, then a day deleted and the notes changed for all events here. Google writes the master's marking into every exception (live probe of 2026-11-16), so the titled day is free at Google as its series is, it does not own its marking, the changes here go through and x-own holds (the regression for #318's case, seed 42701 case 11).",
     "series": {
         "family": "weekly_list",
         "rrule": "FREQ=WEEKLY;BYDAY=MO,TU",
@@ -27,9 +27,13 @@
             "pick": 0.1
         },
         {
-            "do": "w-this-l",
-            "pick": 0.348,
-            "what": "coords"
+            "do": "w-del1",
+            "pick": 0.696
+        },
+        {
+            "do": "w-all",
+            "pick": 0.1,
+            "what": "description"
         }
     ]
 }

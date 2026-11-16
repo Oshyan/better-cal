@@ -558,8 +558,7 @@ function interleaveReport(array $out, string $findingsFile, int $seed, bool $qui
     }
     $missing = array_values(array_filter($required, static fn(string $c): bool => array_sum($out['runs'][$c] ?? []) === 0));
     foreach ($out['na'] as $why => $n) {
-        // A known open case the oracle does not judge (an issue number in its words), apart from what does not apply.
-        echo str_starts_with($why, 'Not checked ') ? '  ' . preg_replace('/^Not checked /', "Not checked ($n) ", $why) . "\n" : "  not applicable ($n): $why\n";
+        echo "  not applicable ($n): $why\n";
     }
     // Coverage by pair of consecutive step kinds that ran: every kind can follow every kind, and a setup kind the start, so the pairs a
     // run never exercised are listed by their first step, with how often each first step ran at all.

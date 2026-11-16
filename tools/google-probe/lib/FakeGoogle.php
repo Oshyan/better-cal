@@ -510,7 +510,12 @@ final class FakeGoogle
      * changed start onto the pattern's time (3.5), takes a field or status
      * set on the master (3.12 to 3.15, a cancelled record un-cancelled by a
      * status) and a link set on it (3.32: `source` written into every kept
-     * record, the cancelled one included), and its end follows a changed
+     * record, the cancelled one included), and its free or busy marking
+     * whenever the master's `transparency` is written, set or sent as null
+     * (live probe of 2026-11-16: every exception takes it, one patched to
+     * its own marking before included; a master write that leaves the key
+     * out is assumed, not probed, to leave the records' markings alone, as
+     * for the other fields), and its end follows a changed
      * length (3.2). A zone change that moves no instant (3.17) resets a kept
      * record's start to the pattern's in the new zone and leaves its end
      * where it was, in the new zone; a pattern change
@@ -548,7 +553,7 @@ final class FakeGoogle
             unset($body['status']);
             $new['status'] = 'cancelled';
         }
-        $fields = array_intersect_key($body, array_flip(['summary', 'description', 'location', 'status', 'source']));
+        $fields = array_intersect_key($body, array_flip(['summary', 'description', 'location', 'status', 'source', 'transparency']));
         // A series with no notes, written without them: every kept record's own notes are cleared (3.52 to 3.57; and
         // with no recurrence sent, 3.68, 2026-11-14; with notes of its own, or its empty notes sent, they stay: 3.58 to
         // 3.61).

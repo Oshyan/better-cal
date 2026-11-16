@@ -16,7 +16,7 @@ import {
   updateCalendar, renameFolder, deleteFolder, createFolder, setSidebarOrder,
 } from './actions.js';
 import { sidebarGroups, moveGroup } from '../lib/sidebarorder.js';
-import { PageShell, EmptyState } from './PageShell.js';
+import { PageShell, EmptyState, revealConfirm } from './PageShell.js';
 import { api, entriesOf, loadCalendars, refreshWindow } from './api.js';
 import { useOwnList, superseded } from './lists.js';
 import { tagNameWritable, TAG_NAME_HINT } from '../lib/markersuggest.js';
@@ -172,7 +172,7 @@ function FolderSection({ folder, cals, folders }) {
             ><${Icon} name="trash" size=${13} /></button>
           </span>`}
     </div>
-    ${confirming && html`<div class="bc-org-confirm">
+    ${confirming && html`<div class="bc-org-confirm" ref=${revealConfirm}>
       <span>Delete folder "${folder.name}"?</span>
       <button type="button" class="bc-btn bc-btn-danger" onClick=${() => deleteFolder(folder)}>Delete folder</button>
       <button type="button" class="bc-btn" onClick=${() => setConfirming(false)}>Cancel</button>
@@ -229,7 +229,7 @@ function TagRow({ tag, tags, onChanged }) {
   const cancel = () => { setName(tag.name); setEditing(false); setAsk(null); };
   const filters = tag.filterCount > 0 && html`<span class="bc-org-note" title="Filters match the text they hold. Renaming or deleting this tag leaves them as they are.">matched by ${tag.filterCount} filter${tag.filterCount === 1 ? '' : 's'}</span>`;
 
-  return html`<li class="bc-tag-item">
+  return html`<li class=${'bc-tag-item' + (editing || ask ? ' is-wide' : '')}>
     <div class="bc-tag-line">
       ${editing
         ? html`<input
@@ -261,12 +261,12 @@ function TagRow({ tag, tags, onChanged }) {
           </span>`}
     </div>
     ${unwritable && html`<div class="bc-org-note bc-tag-hint" role="status">${TAG_NAME_HINT}</div>`}
-    ${ask && ask.into && html`<div class="bc-org-confirm" role="group" aria-label="Merge tags">
+    ${ask && ask.into && html`<div class="bc-org-confirm" ref=${revealConfirm} role="group" aria-label="Merge tags">
       <span>"${ask.into.name}" is already a tag, on ${events(ask.into.eventCount)}. Merge "${tag.name}" (${events(tag.eventCount)}) into it?</span>
       <button type="button" class="bc-btn bc-btn-primary" disabled=${busy} onClick=${rename}>Merge</button>
       <button type="button" class="bc-btn" onClick=${() => setAsk(null)}>Cancel</button>
     </div>`}
-    ${ask === 'delete' && html`<div class="bc-org-confirm" role="group" aria-label="Delete tag">
+    ${ask === 'delete' && html`<div class="bc-org-confirm" ref=${revealConfirm} role="group" aria-label="Delete tag">
       <span>Take "${tag.name}" off ${events(tag.eventCount)} and delete it? The events stay.</span>
       <button type="button" class="bc-btn bc-btn-danger" disabled=${busy} onClick=${remove}>Delete tag</button>
       <button type="button" class="bc-btn" onClick=${() => setAsk(null)}>Cancel</button>

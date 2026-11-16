@@ -6445,6 +6445,10 @@ console.log('--- the editor\'s save: only what changed (#199), all events throug
   eq('editor lines: each changed field, before and now', fieldLines({ title: 'Sample chorus', reminders: [30] }, { ...was, reminders: [60] }),
     [{ label: 'Title', words: 'Sample choir, now Sample chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes before' }]);
   eq('editor lines: the trip flag, before and now', fieldLines({ isContainer: false }, { ...was, isContainer: true }), [{ label: 'Trip', field: 'isContainer', words: 'yes, now no' }]);
+  // #303: free or busy is sent only when the person changed it, and the panel says it.
+  eq('editor payload: Show as sent only when changed', [changedFields({ ...was, showAs: 'busy' }, { ...was, showAs: 'busy' }), changedFields({ ...was, showAs: 'free' }, { ...was, showAs: 'busy' })],
+    [{}, { showAs: 'free' }]);
+  eq('editor lines: Show as, before and now', fieldLines({ showAs: 'free' }, { ...was, showAs: 'busy' }), [{ label: 'Show as', words: 'Busy, now Free' }]);
   // Reminders reach the panel in the shapes the editor holds them: the form
   // as it opened has minutes, the save sends entries ({minutes}). One
   // normalization, then one formatter (1.5.0 review, F6).

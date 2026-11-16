@@ -409,7 +409,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
         <${Icon} name="clock" size=${20} />
         <div class="bc-es-rt">
           <span class="bc-date-duration">${fmtRangeParts(s, e, occ.allDay).map((p) => p.year ? html`<strong class="bc-es-year">${p.text}</strong>` : p.text)} <${DurationSuffix} occ=${occ} expanded /></span>
-          ${(occ.recurring || zoneNote(occ)) && html`<small>${[occ.recurring ? describeRrule(occ.rrule) : null, zoneNote(occ)].filter(Boolean).join(' · ')}</small>`}
+          ${(occ.recurring || zoneNote(occ) || occ.showAs === 'free') && html`<small>${[occ.recurring ? describeRrule(occ.rrule) : null, zoneNote(occ), occ.showAs === 'free' ? 'Free' : null].filter(Boolean).join(' · ')}</small>`}
         </div>
       </div>
       ${occ.halfDone && html`<${HalfDoneLine} half=${occ.halfDone} />`}

@@ -41,7 +41,7 @@ use BetterCal\Support\Time;
  */
 final class Model
 {
-    public const CONTENT_FIELDS = ['title', 'location', 'description', 'url', 'reminders', 'status', 'icon', 'attendance', 'tags', 'people'];
+    public const CONTENT_FIELDS = ['title', 'location', 'description', 'url', 'reminders', 'status', 'showAs', 'icon', 'attendance', 'tags', 'people'];
 
     /** Columns of the series that no edited day owns: every row takes them (the trip flag, floating). */
     public const SERIES_COLUMNS = ['is_container' => 'Trip', 'floating' => 'Floating'];
@@ -54,7 +54,7 @@ final class Model
 
     private const OWN_WORDS = [
         'date' => 'date', 'time' => 'time', 'length' => 'length', 'allDay' => 'all-day setting', 'title' => 'title', 'location' => 'place',
-        'description' => 'notes', 'url' => 'link', 'reminders' => 'reminders', 'status' => 'status', 'attendance' => 'answer',
+        'description' => 'notes', 'url' => 'link', 'reminders' => 'reminders', 'status' => 'status', 'showAs' => 'free or busy setting', 'attendance' => 'answer',
         'tags' => 'tags', 'people' => 'people', 'icon' => 'icon', 'trip' => 'trip',
         'duplicates' => 'duplicate decision', 'pluginData' => 'plugin data',
     ];

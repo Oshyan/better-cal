@@ -29,7 +29,8 @@ if (!function_exists('check')) {
  *   (a) title: trimmed strings equal, "(No title)" equal to empty. description: Sanitize::description of each equal,
  *       null equal to empty (the table uses plain text only, which that sanitizer leaves as it is, so the reference
  *       compares the strings with null as empty). location: trimmed strings equal. url: null equal to empty (valid
- *       https links only, which Ics::webUrl leaves as they are). status: both tentative or both not. time: start_utc,
+ *       https links only, which Ics::webUrl leaves as they are). status: both tentative or both not. showAs (#303):
+ *       both free or both not. time: start_utc,
  *       end_utc and all_day all equal; the zone is not compared.
  *   threeWay: not wanted and now = base: same; not wanted and now != base: kept; wanted and (now = base or now =
  *       wanted): send; wanted and now != base and now != wanted: ask. A delete wants every field with a value no map
@@ -37,7 +38,7 @@ if (!function_exists('check')) {
  */
 final class ThreeWayReference
 {
-    public const FIELDS = ['title', 'description', 'location', 'url', 'status', 'time'];
+    public const FIELDS = ['title', 'description', 'location', 'url', 'status', 'showAs', 'time'];
 
     public static function eq(string $field, mixed $a, mixed $b): bool
     {
@@ -58,6 +59,8 @@ final class ThreeWayReference
                 return trim((string) ($a ?? '')) === trim((string) ($b ?? ''));
             case 'status':
                 return ($a === 'tentative') === ($b === 'tentative');
+            case 'showAs':
+                return ($a === 'free') === ($b === 'free');
             case 'time':
                 return [(string) $a['start_utc'], (string) $a['end_utc'], (int) $a['all_day']]
                     === [(string) $b['start_utc'], (string) $b['end_utc'], (int) $b['all_day']];
@@ -91,6 +94,7 @@ $V = [
     'location' => ['B' => 'Room 2', 'Bs' => 'Room 2 ', 'G' => 'Sample Hall', 'Gs' => ' Sample Hall', 'T' => 'Room 5'],
     'url' => ['B' => 'https://example.test/sync', 'Bs' => null, 'G' => 'https://example.test/standup', 'Gs' => null, 'T' => 'https://example.test/weekly'],
     'status' => ['B' => 'confirmed', 'Bs' => null, 'G' => 'tentative', 'Gs' => null, 'T' => null],
+    'showAs' => ['B' => 'busy', 'Bs' => null, 'G' => 'free', 'Gs' => null, 'T' => null],
     'time' => [
         'B' => $time('2027-03-03 22:00:00', '2027-03-03 23:00:00'),
         'Bs' => $time('2027-03-03 22:00:00', '2027-03-03 23:00:00', 0, 'UTC'),

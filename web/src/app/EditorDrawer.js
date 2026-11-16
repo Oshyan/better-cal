@@ -241,6 +241,8 @@ function seedForm(occ, draft = {}, seriesRule = '') {
     isContainer: occ ? !!occ.isContainer : !!draft.isContainer,
     // Planned or Maybe, on my own calendars (status confirmed / tentative).
     rel: (occ ? occ.relationship : draft.relationship) === 'maybe' ? 'maybe' : 'planned',
+    // Whether it takes up time (#303): busy unless it is marked free.
+    showAs: (occ ? occ.showAs : draft.showAs) === 'free' ? 'free' : 'busy',
     location: occ ? (occ.location || '') : (draft.location || ''),
     locationLat: occ ? (occ.locationLat != null ? occ.locationLat : null)
       : (draft.locationLat != null ? draft.locationLat : null),
@@ -314,6 +316,7 @@ function formFields(fm, occ, mine, shown = occ) {
     floating: !!fm.floating && !fm.allDay,
     // Planned or Maybe is the event's status on my own calendars.
     ...(mine ? { status: fm.rel === 'maybe' ? 'tentative' : 'confirmed' } : {}),
+    showAs: fm.showAs,
   };
   // A zone the owner picked becomes the event's own zone: it is what a
   // repeating event keeps its clock time in across DST changes. All-day
@@ -333,7 +336,8 @@ function formFields(fm, occ, mine, shown = occ) {
 
 // A new event's base for the fields that have a default: one left at its
 // default is not sent, and the server applies the same default.
-const NEW_EVENT_BASE = { reminders: null, isContainer: false, floating: false, status: 'confirmed' };
+// Busy is not sent, so on a Google calendar Google's own default decides.
+const NEW_EVENT_BASE = { reminders: null, isContainer: false, floating: false, status: 'confirmed', showAs: 'busy' };
 const sameValue = (a, b) => JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
 
 /**
@@ -1239,6 +1243,15 @@ export function EditorDrawer() {
               aria-pressed=${form.rel === v} onClick=${() => upd({ rel: v })}
             >${v === 'planned' && html`<${Icon} name="star" size=${13} />`}${label}</button>`)}
           </span>`}
+          <span class=${'bc-ed-showas' + flash('showAs')} title="Whether this event takes up time. Free leaves the time open in other calendar apps and in what you share of when you are free or busy.">
+            Show as
+            <span class="bc-ed-seg" role="group" aria-label="Show as">
+              ${[['busy', 'Busy'], ['free', 'Free']].map(([v, label]) => html`<button
+                key=${v} type="button" class=${'bc-ed-segbtn' + (form.showAs === v ? ' is-on' : '')}
+                aria-pressed=${form.showAs === v} onClick=${() => upd({ showAs: v })}
+              >${label}</button>`)}
+            </span>
+          </span>
           <label class="bc-check" title="A trip is a span of days that other events happen inside">
             <input type="checkbox" checked=${form.isContainer} onChange=${(e) => upd({ isContainer: e.target.checked })} />
             <span>This is a trip (container)</span>

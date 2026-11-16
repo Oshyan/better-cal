@@ -606,6 +606,9 @@ final class GoogleSync
             'rrule' => $rrule,
             'exdates' => Recurrence::validateExdates($exdates),
             'status' => $status,
+            // Google's "Show as": `transparent` takes up no time; `opaque`,
+            // its default, does, and so does an item that says neither.
+            'show_as' => ($item['transparency'] ?? 'opaque') === 'transparent' ? 'free' : 'busy',
             'recurrence_instance_utc' => $instance,
             'reminders' => [],
             'google_event_id' => $googleId,
@@ -944,6 +947,7 @@ final class GoogleSync
                 'rrule' => $r['rrule'] !== null ? (string) $r['rrule'] : null,
                 'exdates' => $exdates,
                 'status' => (string) $r['status'],
+                'show_as' => (string) ($r['show_as'] ?? 'busy'),
                 'recurrence_instance_utc' => $r['recurrence_instance_utc'] !== null ? (string) $r['recurrence_instance_utc'] : null,
                 'reminders' => [],
                 'google_event_id' => isset($r['google_event_id']) && $r['google_event_id'] !== null ? (string) $r['google_event_id'] : null,

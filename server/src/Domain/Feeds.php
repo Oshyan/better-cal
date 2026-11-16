@@ -756,6 +756,7 @@ final class Feeds
             'location' => $series['location'],
             'url' => $series['url'],
             'status' => $series['status'],
+            'show_as' => $series['show_as'] ?? 'busy',
             'all_day' => $allDay ? 1 : 0,
             'tzid' => $series['tzid'],
         ];
@@ -997,6 +998,7 @@ final class Feeds
             'rrule' => $ev['rrule'],
             'exdates_json' => $ev['exdates'] === [] ? null : json_encode($ev['exdates']),
             'status' => $ev['status'],
+            'show_as' => $ev['show_as'],
             'recurrence_instance_utc' => $ev['recurrence_instance_utc'],
             'recurrence_parent_id' => $ev['recurrence_instance_utc'] !== null ? $parentId : null,
         ];
@@ -1370,7 +1372,7 @@ final class Feeds
             if ($pm['recurrence_instance_utc'] === null) {
                 $parsedMasters[(string) $pm['uid']] = ['title' => $pm['title'], 'description' => Sanitize::description($pm['description']), 'location' => $pm['location'],
                     'url' => $pm['url'], 'start_utc' => $pm['start_utc'], 'end_utc' => $pm['end_utc'], 'all_day' => $pm['all_day'], 'tzid' => $pm['tzid'], 'status' => $pm['status'],
-                    'invite_json' => $pm['invite_json'] ?? null];
+                    'show_as' => $pm['show_as'], 'invite_json' => $pm['invite_json'] ?? null];
             }
         }
         // A record of one day is named under its series (Ics::keysUnder):

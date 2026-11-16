@@ -690,7 +690,7 @@ export async function updateEvent(occ, fields, scope, words = null, rescope = nu
 const OWN_FIELD_WORDS = {
   date: 'date', time: 'time', length: 'length', allDay: 'all-day', title: 'title', location: 'place',
   description: 'description', url: 'link', reminders: 'reminders', status: 'planned or maybe',
-  attendance: 'attendance', tags: 'tags', people: 'people', icon: 'icon',
+  showAs: 'free or busy setting', attendance: 'attendance', tags: 'tags', people: 'people', icon: 'icon',
 };
 export function ownFieldWords(name) { return OWN_FIELD_WORDS[name] || name; }
 // The request goes to the series with the day's key (seriesId, seriesKey:

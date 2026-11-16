@@ -335,7 +335,7 @@ export function startedLine(acted, opts = {}) {
 
 // The fields changed days have of their own, most common first: " (title,
 // location and 2 others)". Ties keep the editor's order.
-const OWN_ORDER = ['title', 'location', 'description', 'date', 'time', 'length', 'reminders', 'status', 'tags', 'people', 'url', 'icon', 'attendance', 'allDay', 'trip'];
+const OWN_ORDER = ['title', 'location', 'description', 'date', 'time', 'length', 'reminders', 'status', 'showAs', 'tags', 'people', 'url', 'icon', 'attendance', 'allDay', 'trip'];
 function ownFieldsAside(days) {
   const counts = new Map();
   for (const d of days || []) {
@@ -371,7 +371,7 @@ export const seriesLine = (name, calendar) => quoted(name || 'Untitled event') +
 // to say it by, it is named by both its values, "Planned or Maybe".
 const FIELD_NOUNS = {
   date: 'date', time: 'time', length: 'length', allDay: 'all-day setting', title: 'title', location: 'location',
-  description: 'notes', url: 'link', reminders: 'reminders', status: 'Planned or Maybe', attendance: 'answer',
+  description: 'notes', url: 'link', reminders: 'reminders', status: 'Planned or Maybe', showAs: 'free or busy setting', attendance: 'answer',
   tags: 'tags', people: 'people', icon: 'icon', trip: 'trip',
   // References that keep a day's row (OwnFields::REFERENCES): its trip, a duplicate decision, plugin data.
   duplicates: 'duplicate decision', pluginData: 'plugin data',
@@ -1069,6 +1069,7 @@ function cutPair(a, b) {
 function valueWords(field, v, other, ref) {
   if (field === 'time') return timeValueWords(v, ref);
   if (field === 'status') return v === 'tentative' ? 'a Maybe' : 'Planned';
+  if (field === 'showAs') return v === 'free' ? 'Free' : 'Busy';
   const s = plainOf(field, v);
   const o = other === undefined || isEmptyValue(field, other) ? null : plainOf(field, other);
   return quoted(cutPair(s, o)[0]);

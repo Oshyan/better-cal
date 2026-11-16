@@ -1018,7 +1018,7 @@ final class Events
      */
     public function overColumns(int $userId, array $row, array $over): array
     {
-        $over = array_intersect_key($over, array_flip(['title', 'description', 'location', 'url', 'status', ...self::TIME_KEYS]));
+        $over = array_intersect_key($over, array_flip(['title', 'description', 'location', 'url', 'status', 'showAs', ...self::TIME_KEYS]));
         if ($over === []) {
             return [];
         }
@@ -1041,7 +1041,7 @@ final class Events
         // A floating row's on the viewer's clock, as serializeSingle serves it.
         [$start, $end] = Floating::span($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $this->viewerFor([$row], (int) $row['user_id']));
         $s = $this->serializeFields($row, $start, $end, [], true);
-        return ['title' => $s['title'], 'description' => $s['description'], 'location' => $s['location'], 'url' => $s['url'], 'status' => $s['status'],
+        return ['title' => $s['title'], 'description' => $s['description'], 'location' => $s['location'], 'url' => $s['url'], 'status' => $s['status'], 'showAs' => $s['showAs'],
             'time' => ['start' => $s['start'], 'end' => $s['end'], 'allDay' => $s['allDay'], 'tzid' => $s['allDay'] ? 'UTC' : $s['tzid']]];
     }
 
@@ -1713,6 +1713,10 @@ final class Events
                 ? self::encodeReminders(Reminders::validateEventReminders($in['reminders']))
                 : null,
             'status' => $this->statusOrDefault($in['status'] ?? null),
+            // Busy (the column's default) unless asked otherwise; on a Google
+            // calendar busy sends nothing, so Google's own default decides
+            // (GoogleWriter::body).
+            ...(array_key_exists('showAs', $in) && $in['showAs'] !== null ? ['show_as' => self::showAs($in['showAs'])] : []),
             'source' => 'local',
             'created_via' => ActivityContext::get(),
             'created_at' => Time::nowDb(),
@@ -1814,6 +1818,7 @@ final class Events
             'tzid' => $tzid,
             'floating' => Floating::is($source),
             'status' => (string) $source['status'],
+            'showAs' => (string) $source['show_as'],
             'tagNames' => $links['tags'][(int) $source['id']] ?? [],
             'personIds' => $personIds,
         ];
@@ -2976,9 +2981,10 @@ final class Events
      * before removal: uid 76, reminders 43, createdAt 39, updatedAt 39,
      * rrule 35, reminderSource 26, description 21 — a third of the row, none
      * of it read by anything that draws a grid. The zone (28) went back on in
-     * 1.5.7: it is part of the time the grid shows.
+     * 1.5.7: it is part of the time the grid shows. Free or busy (#303) is
+     * the record's: the grid draws nothing of it.
      */
-    private const DETAIL_ONLY = ['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'rrule', 'description', 'geocodedAt', 'locationSource', 'locationProvider', 'locationPlacedAt'];
+    private const DETAIL_ONLY = ['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'rrule', 'description', 'geocodedAt', 'locationSource', 'locationProvider', 'locationPlacedAt', 'showAs'];
 
     /**
      * Beyond bytes, the list shape skips work: effective reminders need the
@@ -3079,6 +3085,8 @@ final class Events
             'source' => (string) $row['source'],
             'attendance' => (string) $row['attendance'],
             'status' => (string) $row['status'],
+            // Whether it takes up time (#303): 'busy' or 'free'.
+            'showAs' => (string) $row['show_as'],
             'relationship' => self::relationship((string) $row['attendance'], (string) $row['status'], (string) ($calMeta['role'] ?? 'mine'), self::googleAnswer($row)),
             'icon' => isset($row['icon']) && $row['icon'] !== '' ? (string) $row['icon'] : null,
             'score' => isset($row['score']) && $row['score'] !== null ? (float) $row['score'] : null,
@@ -3330,6 +3338,9 @@ final class Events
         if (array_key_exists('status', $in) && $in['status'] !== null) {
             $fields['status'] = $this->statusOrDefault($in['status']);
         }
+        if (array_key_exists('showAs', $in) && $in['showAs'] !== null) {
+            $fields['show_as'] = self::showAs($in['showAs']);
+        }
         if (array_key_exists('calendarId', $in)) {
             $fields['calendar_id'] = (int) $in['calendarId'];
         }
@@ -3554,6 +3565,15 @@ final class Events
     private static function cleanUrl(string $url): ?string
     {
         return Ics::webUrl($url);
+    }
+
+    /** Whether an event takes up time, as a request says it: 'busy' or 'free', nothing else. */
+    private static function showAs(mixed $value): string
+    {
+        if ($value !== 'busy' && $value !== 'free') {
+            throw HttpError::badRequest("showAs must be 'busy' or 'free'", 'invalid_show_as');
+        }
+        return $value;
     }
 
     private function statusOrDefault(mixed $status): string

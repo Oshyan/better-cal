@@ -114,7 +114,7 @@ final class GoogleSeries
      * the snapshot.
      */
     private const SYNCED = ['user_id', 'calendar_id', 'uid', 'source', 'title', 'description', 'location', 'url', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule',
-        'exdates_json', 'status', 'recurrence_instance_utc', 'recurrence_parent_id', 'google_event_id', 'google_etag', 'invite_json', 'override_fields', 'deleted_at'];
+        'exdates_json', 'status', 'show_as', 'recurrence_instance_utc', 'recurrence_parent_id', 'google_event_id', 'google_etag', 'invite_json', 'override_fields', 'deleted_at'];
     public const HALF_WORDS = 'Part of this change reached Google. Review lists it as half done at Google, with Finish and Put back.';
     /** Read-backs of a write not yet showing it, with backoff (seconds); never a wait for correctness. */
     private const READBACK_TRIES = 4;
@@ -159,6 +159,7 @@ final class GoogleSeries
             'description' => $row['description'] ?? null,
             'location' => $row['location'] ?? null,
             'status' => (string) ($row['status'] ?? 'confirmed') === 'tentative' ? 'tentative' : 'confirmed',
+            'show_as' => (string) ($row['show_as'] ?? 'busy') === 'free' ? 'free' : 'busy',
             'start_utc' => (string) $row['start_utc'],
             'end_utc' => (string) $row['end_utc'],
             'all_day' => (int) ($row['all_day'] ?? 0),
@@ -172,6 +173,7 @@ final class GoogleSeries
         'date' => ['start_utc', 'end_utc', 'all_day', 'tzid'], 'time' => ['start_utc', 'end_utc', 'all_day', 'tzid'],
         'length' => ['start_utc', 'end_utc', 'all_day', 'tzid'], 'allDay' => ['start_utc', 'end_utc', 'all_day', 'tzid'],
         'title' => ['title'], 'location' => ['location'], 'description' => ['description'], 'url' => ['url'], 'status' => ['status'],
+        'showAs' => ['show_as'],
     ];
 
     /**
@@ -1363,7 +1365,7 @@ final class GoogleSeries
     {
         return [
             'title' => $cols['title'], 'description' => $cols['description'], 'location' => $cols['location'], 'status' => $cols['status'],
-            'start_utc' => $cols['start_utc'], 'end_utc' => $cols['end_utc'], 'all_day' => $cols['all_day'], 'tzid' => $cols['tzid'],
+            'show_as' => $cols['show_as'] ?? 'busy', 'start_utc' => $cols['start_utc'], 'end_utc' => $cols['end_utc'], 'all_day' => $cols['all_day'], 'tzid' => $cols['tzid'],
             'url' => $cols['url'] ?? null, 'rrule' => $rrule, 'exdates_json' => null,
         ];
     }
@@ -1406,6 +1408,12 @@ final class GoogleSeries
         if ($before === null || (string) ($before['url'] ?? '') !== (string) ($after['url'] ?? '')) {
             // The link as Google's source; null clears one (a PATCH leaves out what it doesn't name).
             $body['source'] = $full['source'] ?? null;
+        }
+        if ($before !== null && (string) ($before['show_as'] ?? 'busy') !== (string) ($after['show_as'] ?? 'busy')) {
+            // Free as `transparent`; busy as null, which clears it to Google's default. A new series sends nothing for busy.
+            $body['transparency'] = $full['transparency'] ?? null;
+        } elseif ($before === null && isset($full['transparency'])) {
+            $body['transparency'] = $full['transparency'];
         }
         if ($body !== [] || $before === null || (string) $before['rrule'] !== (string) $after['rrule']) {
             $body['recurrence'] = GoogleWriter::recurrenceLines($after['rrule'] !== '' ? (string) $after['rrule'] : null, $exdates, (int) $after['all_day'] === 1, (string) $after['tzid']);
@@ -1587,11 +1595,11 @@ final class GoogleSeries
     ];
 
     /** The resource's fields a column here holds, compared normalized by fieldsOf (and a rule by its parts), not raw. */
-    private const READ = ['summary', 'description', 'location', 'status', 'source', 'start', 'end', 'recurrence'];
+    private const READ = ['summary', 'description', 'location', 'status', 'transparency', 'source', 'start', 'end', 'recurrence'];
 
     /** The value Google shows for a field it was given none for: equal to it is the same as absent, so an insert that set none is what it sent. */
     private const DEFAULTS = [
-        'attendees' => [], 'transparency' => 'opaque', 'visibility' => 'default', 'reminders' => ['useDefault' => true],
+        'attendees' => [], 'visibility' => 'default', 'reminders' => ['useDefault' => true],
         'guestsCanModify' => false, 'guestsCanInviteOthers' => true, 'guestsCanSeeOtherGuests' => true, 'anyoneCanAddSelf' => false,
         'attachments' => [], 'eventType' => 'default', 'endTimeUnspecified' => false, 'attendeesOmitted' => false, 'locked' => false, 'privateCopy' => false,
     ];
@@ -1655,6 +1663,7 @@ final class GoogleSeries
             'description' => Sanitize::description(isset($r['description']) && $r['description'] !== '' ? (string) $r['description'] : null) ?? '',
             'location' => trim((string) ($r['location'] ?? '')),
             'status' => (string) ($r['status'] ?? 'confirmed') === 'tentative' ? 'tentative' : 'confirmed',
+            'show_as' => (string) ($r['show_as'] ?? 'busy') === 'free' ? 'free' : 'busy',
             'start_utc' => (string) $r['start_utc'],
             'end_utc' => (string) $r['end_utc'],
             'all_day' => $allDay,
@@ -1819,6 +1828,10 @@ final class GoogleSeries
         // A link set is written into every kept record, as a title is (3.32, 2026-11-10; 3.52, 2026-11-13).
         if (array_key_exists('source', $body)) {
             $set['url'] = $new['url'] ?? null;
+        }
+        // Free or busy predicted as a title is: not yet probed (#303); a read-back that differs sends the day again.
+        if (array_key_exists('transparency', $body)) {
+            $set['show_as'] = $new['show_as'] ?? 'busy';
         }
         // A series with no notes at Google, written without them: Google clears every kept record's own notes (probe
         // 2026-11-13, 3.52 to 3.57; with notes of its own the records keep theirs, 3.58 to 3.60). Predicted here only
@@ -2408,6 +2421,9 @@ final class GoogleSeries
         if ($d['status'] !== $other['status']) {
             $parts[] = 'the status ' . $d['status'];
         }
+        if ($d['show_as'] !== $other['show_as']) {
+            $parts[] = 'shown as ' . $d['show_as'];
+        }
         return $parts === [] ? 'other details' : Words::andList($parts);
     }
 
@@ -2430,7 +2446,7 @@ final class GoogleSeries
         $m = $t['master'];
         $p = self::ASKED[$mode];
         $tz = (int) $m['all_day'] === 1 ? 'UTC' : (string) $m['tzid'];
-        $words = ['title' => 'title', 'description' => 'notes', 'location' => 'place', 'status' => 'status', 'url' => 'link'];
+        $words = ['title' => 'title', 'description' => 'notes', 'location' => 'place', 'status' => 'status', 'url' => 'link', 'show_as' => 'free or busy setting'];
         $out = [];
         foreach ($entries as $e) {
             if ($e['of'] === 'series') {
@@ -2552,11 +2568,11 @@ final class GoogleSeries
 
     /** The groups a day's or a master's fields are compared in: each content field, and its placement as one. */
     private const GROUPS = ['title' => ['title'], 'description' => ['description'], 'location' => ['location'], 'status' => ['status'], 'url' => ['url'],
-        'when' => ['start_utc', 'end_utc', 'all_day', 'tzid']];
-    private const GROUP_WORDS = ['title' => 'title', 'description' => 'notes', 'location' => 'place', 'status' => 'status', 'url' => 'link', 'when' => 'time', 'rule' => 'rule'];
+        'show_as' => ['show_as'], 'when' => ['start_utc', 'end_utc', 'all_day', 'tzid']];
+    private const GROUP_WORDS = ['title' => 'title', 'description' => 'notes', 'location' => 'place', 'status' => 'status', 'url' => 'link', 'show_as' => 'free or busy setting', 'when' => 'time', 'rule' => 'rule'];
     /** An edited day's own field, by the group it is compared in. */
     private const OWN_GROUP = ['date' => 'when', 'time' => 'when', 'length' => 'when', 'allDay' => 'when', 'title' => 'title', 'description' => 'description',
-        'location' => 'location', 'url' => 'url', 'status' => 'status'];
+        'location' => 'location', 'url' => 'url', 'status' => 'status', 'showAs' => 'show_as'];
 
     /** An event's fields (fieldsOf) by group; a master's with its rule as parts. @return array<string,mixed> */
     private static function groupsOf(array $r, bool $master = false): array
@@ -2601,7 +2617,7 @@ final class GoogleSeries
     }
 
     /** What a change made at Google did to a day, by the group it changed, as a sentence's verb phrase ("was renamed"); the time by the series' form. */
-    private const DONE_WORDS = ['title' => 'renamed', 'description' => 'given other notes', 'location' => 'given another place', 'status' => 'given another status', 'url' => 'given another link'];
+    private const DONE_WORDS = ['title' => 'renamed', 'description' => 'given other notes', 'location' => 'given another place', 'status' => 'given another status', 'url' => 'given another link', 'show_as' => 'given another free or busy setting'];
 
     /**
      * A change made at Google to one day that the change being finished

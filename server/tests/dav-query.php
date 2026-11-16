@@ -44,7 +44,7 @@ $dqDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, display_name
 $dqDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, name TEXT, color TEXT, position INTEGER DEFAULT 0, synctoken INTEGER DEFAULT 1)');
 $dqDb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, event_id INTEGER, container_id INTEGER, position INTEGER DEFAULT 0)');
 $dqDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT,
-    start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT, rrule TEXT, exdates_json TEXT, status TEXT DEFAULT \'confirmed\', reminders_json TEXT,
+    start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT, rrule TEXT, exdates_json TEXT, status TEXT DEFAULT \'confirmed\', show_as TEXT NOT NULL DEFAULT \'busy\', reminders_json TEXT,
     recurrence_parent_id INTEGER, recurrence_instance_utc TEXT, is_container INTEGER DEFAULT 0, floating INTEGER DEFAULT 0, deleted_at TEXT, updated_at TEXT DEFAULT \'2026-11-01 00:00:00\')');
 davJournal($dqDb);
 $dqDb->run("INSERT INTO users VALUES (1, 'sam@example.test', 'Sam Sample', '{}')");

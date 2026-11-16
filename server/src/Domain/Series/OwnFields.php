@@ -15,7 +15,7 @@ use BetterCal\Support\Time;
  */
 final class OwnFields
 {
-    public const FIELDS = ['date', 'time', 'length', 'allDay', 'title', 'location', 'description', 'url', 'reminders', 'status', 'attendance', 'tags', 'people', 'icon'];
+    public const FIELDS = ['date', 'time', 'length', 'allDay', 'title', 'location', 'description', 'url', 'reminders', 'status', 'showAs', 'attendance', 'tags', 'people', 'icon'];
 
     /**
      * What refers to an edited row, and so is the day's own without being a
@@ -250,6 +250,7 @@ final class OwnFields
         'url' => ['url'],
         'reminders' => ['reminders_json'],
         'status' => ['status'],
+        'showAs' => ['show_as'],
         'attendance' => ['attendance'],
         'icon' => ['icon'],
     ];
@@ -358,9 +359,9 @@ final class OwnFields
         if ($mAllDay === $rAllDay && $len($row) !== $len($master)) {
             $own[] = 'length';
         }
-        foreach (['title', 'location', 'description', 'url', 'icon', 'status', 'attendance'] as $col) {
+        foreach (['title' => 'title', 'location' => 'location', 'description' => 'description', 'url' => 'url', 'icon' => 'icon', 'status' => 'status', 'show_as' => 'showAs', 'attendance' => 'attendance'] as $col => $field) {
             if (array_key_exists($col, $row) && array_key_exists($col, $master) && (string) ($row[$col] ?? '') !== (string) ($master[$col] ?? '')) {
-                $own[] = $col;
+                $own[] = $field;
             }
         }
         if (self::reminders($row['reminders_json'] ?? null) !== self::reminders($master['reminders_json'] ?? null)) {

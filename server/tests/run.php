@@ -7852,6 +7852,29 @@ check('email: a message with no event names its button and footer for what they 
 check('email: a reminder keeps "Open event"', str_contains(EmailSender::buildMessage(['title' => 'x', 'body' => '', 'url' => '/'], 'https://x.example')['html'], '>Open event</a>'));
 check('email base url trailing slash collapsed', str_contains(EmailSender::buildMessage(['title' => 'T', 'body' => '', 'url' => '/'], 'https://x.example/')['text'], 'https://x.example/'));
 
+// #26: the description's start rides along on a line of its own, as plain
+// text cut at a word; nothing when there is no description.
+checkEq('rem excerpt: no description, nothing', '', Reminders::excerpt(null));
+checkEq('rem excerpt: markup alone is nothing', '', Reminders::excerpt('<p><br></p>'));
+checkEq('rem excerpt: html is flattened and its entities read', 'Bring the slides & the handouts. Doors open early.',
+    Reminders::excerpt("<p>Bring the <b>slides</b> &amp; the handouts.</p>\n<p>Doors open early.</p>"));
+checkEq('rem excerpt: a short text is whole, its spacing single', 'Ask at the front desk', Reminders::excerpt("  Ask at the\n\nfront desk  "));
+$long = 'Sam Sample brings the projector, so bring the laptop and its adapter, the notes from the last planning meeting, and a list of rooms for the spring schedule, please';
+$ex = Reminders::excerpt($long);
+checkEq('rem excerpt: a long text is cut at the last whole word, its comma dropped, with an ellipsis',
+    'Sam Sample brings the projector, so bring the laptop and its adapter, the notes from the last planning meeting, and a list of rooms for the spring schedule…', $ex);
+check('rem excerpt: within the limit', mb_strlen($ex) <= Reminders::EXCERPT_CHARS + 1);
+checkEq('rem excerpt: a word ending exactly at the limit is kept whole', str_repeat('ab ', 53) . 'a…', Reminders::excerpt(str_repeat('ab ', 53) . 'a b'));
+checkEq('rem excerpt: one word longer than the limit is cut inside it', str_repeat('x', Reminders::EXCERPT_CHARS) . '…', Reminders::excerpt(str_repeat('x', 400)));
+checkEq('rem excerpt: characters, not bytes', str_repeat('é', 10), Reminders::excerpt(str_repeat('é', 10)));
+checkEq('rem payload: the description is the second line of the body', "Fri, Aug 7, 12:00 PM · Example Cafe\nBring the slides & the handouts.",
+    Reminders::payload($payloadRow + ['description' => '<p>Bring the <b>slides</b> &amp; the handouts.</p>'], $startUtc, false)['body']);
+checkEq('rem payload: an empty description adds no line', 'Fri, Aug 7, 12:00 PM · Example Cafe',
+    Reminders::payload($payloadRow + ['description' => ''], $startUtc, false)['body']);
+$withNotes = EmailSender::buildMessage(Reminders::payload($payloadRow + ['description' => 'Doors open early'], $startUtc, false), 'https://cal.example.com');
+check('email: the description is a line of its own in the html', str_contains($withNotes['html'], "Example Cafe<br>\nDoors open early"));
+check('email: and in the text', str_contains($withNotes['text'], "Example Cafe\nDoors open early\n"));
+
 // VALARM trigger mapping, both directions.
 checkEq('valarm parse -PT10M', 10, Ics::parseTriggerMinutes('-PT10M'));
 checkEq('valarm parse -P1D', 1440, Ics::parseTriggerMinutes('-P1D'));

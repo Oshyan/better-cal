@@ -360,7 +360,9 @@ async function shareTarget(request) {
 }
 
 // --- Web Push reminders -----------------------------------------------------
-// The worker sends {title, body, url, tag, join?, map?}; tag replaces earlier
+// The worker sends {title, body, url, tag, join?, map?}; body's first line is
+// the time and place, a second the start of the description (#26), which a
+// phone shows when the notification is expanded. tag replaces earlier
 // notifications for the same occurrence instead of stacking duplicates. Join
 // and Map become the notification's buttons (0.6.3). The badge is a white
 // silhouette: Android draws the status-bar icon from its shape alone, so the
@@ -423,13 +425,19 @@ self.addEventListener('notificationclick', (event) => {
     event.waitUntil(clients.openWindow(data[event.action]));
     return;
   }
+  // The app already open (in front or in the background) is brought forward
+  // and told which event to open (#26): it opens it where it is, the page
+  // keeping whatever else was open. Navigating it to the link instead
+  // reloaded the whole app, which drew the calendar before the event. With
+  // no window open, one opens on the link; the app opens the event before it
+  // first draws (web/src/app/main.js).
   const url = data.url || '/';
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
       for (const client of list) {
         if (new URL(client.url).origin === self.location.origin && 'focus' in client) {
-          client.focus();
-          return 'navigate' in client ? client.navigate(url) : undefined;
+          client.postMessage({ type: 'open-event', url });
+          return client.focus();
         }
       }
       return clients.openWindow(url);

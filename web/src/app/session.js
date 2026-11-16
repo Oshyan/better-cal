@@ -124,6 +124,8 @@ export function startSession(handoff) {
     return;
   }
   // Notification deep link (/?event=instanceId): open that event's detail.
+  // A page load has opened it already, before the app first drew (main.js);
+  // this is for one still waiting after a sign-in.
   handleEventLink().catch(() => { /* best-effort */ });
   if (handoff) runHandoff(handoff).catch(() => { /* best-effort */ });
   resyncPush(); // own catch; keeps this device registered after a reset

@@ -10,6 +10,7 @@ import './google-changed.mjs';
 import './dayshift-clock.mjs';
 import './visible-month.mjs';
 import './filter-words.mjs';
+import './notification-open.mjs';
 // The series panel never guesses a clock's zone: under test a clock with none throws.
 import { setStrictClocks } from '../src/lib/planwords.js';
 setStrictClocks(true);

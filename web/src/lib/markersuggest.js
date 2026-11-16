@@ -67,11 +67,22 @@ export function calendarMarker(name) {
   return body ? '/' + body : null;
 }
 
+// The one spelling rule for a tag's name, as the server's # marker reads it
+// (Tags::NAME_PATTERN, which the unit suite compares with this text):
+// letters, digits, hyphens and underscores, at least one letter, at most 50.
+export const TAG_NAME = String.raw`(?=[\p{L}\p{N}_-]*\p{L})[\p{L}\p{N}][\p{L}\p{N}_-]{0,49}`;
+const TAG_WHOLE = new RegExp('^' + TAG_NAME + '$', 'u');
+
+/** Whether a name can be a tag's: typed after #, it reads back as itself. */
+export function tagNameWritable(name) {
+  return TAG_WHOLE.test(String(name || ''));
+}
+
 // A tag as typed after #; one whose name a marker can't hold (spaces) isn't
 // offered, since typing it would make a different tag.
 export function tagMarker(name) {
   const n = String(name || '');
-  return /^(?=[\p{L}\p{N}_-]*\p{L})[\p{L}\p{N}][\p{L}\p{N}_-]{0,49}$/u.test(n) ? '#' + n : null;
+  return tagNameWritable(n) ? '#' + n : null;
 }
 
 // A person by first name when no one else has it (the server's matchPerson

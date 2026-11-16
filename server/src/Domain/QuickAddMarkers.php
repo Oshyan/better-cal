@@ -63,7 +63,7 @@ final class QuickAddMarkers
         }, $text) ?? $text;
 
         $tags = [];
-        $work = preg_replace_callback('/(?<=^|\s)#((?=[\p{L}\p{N}_-]*\p{L})[\p{L}\p{N}][\p{L}\p{N}_-]{0,49})(?=$|\s|[,.;!?])/u', static function (array $m) use (&$tags): string {
+        $work = preg_replace_callback('/(?<=^|\s)#(' . Tags::NAME_PATTERN . ')(?=$|\s|[,.;!?])/u', static function (array $m) use (&$tags): string {
             if (!in_array(mb_strtolower($m[1]), array_map('mb_strtolower', $tags), true)) {
                 $tags[] = $m[1];
             }

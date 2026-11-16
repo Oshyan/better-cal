@@ -6689,6 +6689,17 @@ checkEq('pd applies -> highlight', 'highlight', Filters::promptDisposition($prom
     checkEq('markers: a quoted title is kept apart', [['Wacky Wednesday'], 'QUOTED0 Friday 8pm'], [$m['literals'], $m['llmText']]);
     $m = BetterCal\Domain\QuickAddMarkers::extract('Lunch 7/31 w/ Sam at noon, email sam@example.test, see https://example.test/a/b Room #5');
     checkEq('markers: dates, w/, emails, URLs and #5 are not markers', [null, [], [], []], [$m['calendar'], $m['tags'], $m['people'], $m['literals']]);
+    // #310: one spelling rule for a tag's name. The app's text is the server's, character for character, and a
+    // name the rule allows is exactly one the # marker reads back whole.
+    preg_match('/export const TAG_NAME = String\.raw`([^`]*)`;/', (string) file_get_contents(dirname(__DIR__, 2) . '/web/src/lib/markersuggest.js'), $tagRule);
+    checkEq('tag names: markersuggest.js TAG_NAME is Tags::NAME_PATTERN', BetterCal\Domain\Tags::NAME_PATTERN, $tagRule[1] ?? null);
+    $tagReads = [];
+    foreach (['food', 'Café_2027', 'b-day', 'x2', 'two words', 'a.b', 'a#b', '2027', '-food', '_x', str_repeat('m', 50), str_repeat('m', 51)] as $name) {
+        $read = BetterCal\Domain\QuickAddMarkers::extract('Lunch #' . $name)['tags'];
+        $tagReads[$name] = [BetterCal\Domain\Tags::writable($name), $read === [$name]];
+    }
+    checkEq('tag names: the rule allows a name exactly when the # marker reads it back whole', array_map(static fn(array $p): array => [$p[0], $p[0]], $tagReads), $tagReads);
+    checkEq('tag names: which names the rule allows', [true, true, true, true, false, false, false, false, false, false, true, false], array_values(array_map(static fn(array $p): bool => $p[0], $tagReads)));
     $m = BetterCal\Domain\QuickAddMarkers::extract('Gym #health #Health /work /home');
     checkEq('markers: repeated tags once; the first calendar decides, later ones stay text', ['Gym /home', 'work', ['health']], [$m['text'], $m['calendar'], $m['tags']]);
     checkEq('markers: no calendar read when asked not to', ['Party /nowhere', null], [

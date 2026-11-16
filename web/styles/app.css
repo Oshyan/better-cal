@@ -2407,6 +2407,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-tag-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .bc-tag-line .bc-org-count, .bc-tag-line .bc-org-note { flex: none; white-space: nowrap; }
 .bc-tag-item .bc-org-confirm { padding: 2px 0 8px; }
+.bc-tag-hint { padding: 0 0 8px; color: var(--danger); }
 
 /* --- quick create ----------------------------------------------------------- */
 

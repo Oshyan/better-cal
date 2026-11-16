@@ -39,7 +39,7 @@ import { dayStepList, hidesCancelled } from '../src/ui/daysteps.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { zoneIndex, filterZones, parseOffset } from '../src/lib/zonesearch.js';
 import { parseJumpText, jumpGranularity, parseJumpTarget } from '../src/lib/jumpparse.js';
-import { activeMarker, markerSuggestions, applyMarkerPick, calendarMarker, personMarker, SUGGEST_MAX } from '../src/lib/markersuggest.js';
+import { activeMarker, markerSuggestions, applyMarkerPick, calendarMarker, personMarker, tagNameWritable, SUGGEST_MAX } from '../src/lib/markersuggest.js';
 import { pastedText } from '../src/lib/pastetext.js';
 import { sidebarGroups, moveGroup } from '../src/lib/sidebarorder.js';
 import { timeChange, editedWords, listWords } from '../src/lib/changeline.js';
@@ -774,6 +774,7 @@ console.log('--- quick add marker suggestions (#169) ---');
   eq('suggest: a one-word name', sug('x @rob'), '@Robin');
   eq('suggest: capped', markerSuggestions(activeMarker('#', 1), { tags: Array.from({ length: 40 }, (_, i) => ({ id: i, name: 'tag' + i })) }).length, SUGGEST_MAX);
   eq('suggest: the server reads a picked calendar as that calendar', calendarMarker('Friends & Family'), '/Friends-Family');
+  eq('tag names: the rename field allows what the # marker can write (#310)', ['food', 'Café_2027', 'b-day', 'two words', 'a.b', '2027', '-x', 'm'.repeat(50), 'm'.repeat(51)].map(tagNameWritable), [true, true, true, false, false, false, false, true, false]);
   eq('suggest: a person alone with one name', personMarker({ id: 9, name: 'Taylor' }, [{ id: 9, name: 'Taylor' }, { id: 10, name: 'Taylor Test' }]), '@Taylor');
 
   const m = activeMarker('Coffee @al tomorrow', 10);

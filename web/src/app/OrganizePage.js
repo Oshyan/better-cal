@@ -19,6 +19,7 @@ import { sidebarGroups, moveGroup } from '../lib/sidebarorder.js';
 import { PageShell, EmptyState } from './PageShell.js';
 import { api, entriesOf, loadCalendars, refreshWindow } from './api.js';
 import { useOwnList, superseded } from './lists.js';
+import { tagNameWritable } from '../lib/markersuggest.js';
 import { CalendarSettings } from './CalendarSettings.js';
 import { feedProblem } from '../lib/feedproblem.js';
 import { hasLayerRow } from '../lib/pluginlayers.js';
@@ -214,9 +215,13 @@ function TagRow({ tag, tags, onChanged }) {
     const saved = await api('/tags/' + tag.id, { method: 'DELETE' });
     after(saved, 'Tag deleted');
   });
+  // A name the # marker can't hold is refused by the server too (#310): said
+  // here as it's typed, so Save is never a surprise.
+  const unwritable = editing && name.trim() !== '' && name.trim() !== tag.name && !tagNameWritable(name.trim());
   const save = () => {
     const trimmed = name.trim();
     if (!trimmed || trimmed === tag.name) { setName(tag.name); setEditing(false); return; }
+    if (unwritable) return;
     const into = tags.find((t) => t.id !== tag.id && t.name.toLowerCase() === trimmed.toLowerCase());
     if (into) setAsk({ into });
     else rename();
@@ -228,7 +233,8 @@ function TagRow({ tag, tags, onChanged }) {
     <div class="bc-tag-line">
       ${editing
         ? html`<input
-            class="bc-org-rename" value=${name} autofocus maxlength="80"
+            class="bc-org-rename" value=${name} autofocus maxlength="50"
+            aria-invalid=${unwritable ? 'true' : 'false'}
             aria-label=${'Rename tag ' + tag.name}
             onInput=${(e) => { setName(e.target.value); setAsk(null); }}
             onKeyDown=${(e) => {
@@ -236,7 +242,7 @@ function TagRow({ tag, tags, onChanged }) {
               if (e.key === 'Escape') { e.stopPropagation(); cancel(); }
             }}
           />
-          <button type="button" class="bc-btn bc-btn-primary" disabled=${busy || !name.trim()} onClick=${save}>Save</button>
+          <button type="button" class="bc-btn bc-btn-primary" disabled=${busy || !name.trim() || unwritable} onClick=${save}>Save</button>
           <button type="button" class="bc-btn" onClick=${cancel}>Cancel</button>`
         : html`<span class="bc-tag-name">#${tag.name}</span>
           <span class="bc-org-count">${events(tag.eventCount)}</span>
@@ -254,6 +260,7 @@ function TagRow({ tag, tags, onChanged }) {
             ><${Icon} name="trash" size=${13} /></button>
           </span>`}
     </div>
+    ${unwritable && html`<div class="bc-org-note bc-tag-hint" role="status">Letters, digits, - and _ only, starting with a letter or digit, at least one letter and no spaces, so the tag can be typed after #.</div>`}
     ${ask && ask.into && html`<div class="bc-org-confirm" role="group" aria-label="Merge tags">
       <span>"${ask.into.name}" is already a tag, on ${events(ask.into.eventCount)}. Merge "${tag.name}" (${events(tag.eventCount)}) into it?</span>
       <button type="button" class="bc-btn bc-btn-primary" disabled=${busy} onClick=${rename}>Merge</button>

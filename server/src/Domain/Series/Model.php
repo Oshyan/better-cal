@@ -1312,12 +1312,7 @@ final class Model
         // changes form: a split's part is inserted at Google under a new id, holding no record of the old series, so
         // nothing of it can be hidden (the second independent read, F3).
         if ($this->google && !isset($this->opts['splitDay']) && $out['writes'] !== null) {
-            $keys = $this->exdates;
-            foreach ($this->rows as $row) {
-                if (!empty($row['recurrence_instance_utc']) && OwnFields::googleHeld(OwnFields::stored($row)) !== []) {
-                    $keys[] = (string) $row['recurrence_instance_utc'];
-                }
-            }
+            $keys = \BetterCal\Domain\GoogleSeries::recordKeysByRows($this->exdates, $this->rows);
             $hidden = \BetterCal\Domain\GoogleSeries::hiddenRefusal($this->master, $out['writes']['master'] + $this->master, $keys, $this->exdates, $this->thisYear);
             if ($hidden !== null) {
                 return $this->refused('googleHidden', $hidden['words'], array_diff_key($hidden, ['words' => true]));

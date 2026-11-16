@@ -1921,6 +1921,64 @@ final class GoogleSeries
     }
 
     /**
+     * The days Google holds a record for, read from the rows here: every
+     * deleted day, and every edited day holding a field Google holds. The one
+     * reading of them for the planner (Model) and for Review (finishHidden).
+     *
+     * @param list<string> $exdates the series' deleted days (keys)
+     * @param list<array> $rows its edited days' rows
+     * @return list<string>
+     */
+    public static function recordKeysByRows(array $exdates, array $rows): array
+    {
+        $keys = $exdates;
+        foreach ($rows as $row) {
+            if (!empty($row['recurrence_instance_utc']) && OwnFields::googleHeld(OwnFields::stored($row)) !== []) {
+                $keys[] = (string) $row['recurrence_instance_utc'];
+            }
+        }
+        return $keys;
+    }
+
+    /**
+     * Finish's refusal of a half-done change for days Google would hide, said
+     * before Finish is pressed (#271): a switch between timed and all-day left
+     * half done before 1.5.6 refused it, its series' own write not yet sent.
+     * Judged as the planner judges a new change, by the rows here, which keep
+     * the series as it was until Finish saves the change; a series whose own
+     * write was sent may hold the new form at Google already, and is left to
+     * Finish. The sentence Finish gives, or null.
+     *
+     * @param list<array> $targets the pending row's targets
+     * @param list<array> $steps its steps so far
+     */
+    public static function finishHidden(Db $db, int $calendarId, array $targets, array $steps, int $thisYear): ?string
+    {
+        foreach ($targets as $i => $t) {
+            if (!empty($t['insert']) || !empty($t['remove']) || empty($t['uid']) || !is_array($t['master'] ?? null)) {
+                continue;
+            }
+            $own = array_filter($steps, static fn(array $s): bool => (int) ($s['series'] ?? -1) === $i && in_array($s['kind'] ?? '', ['master', 'insert', 'remove'], true));
+            $master = $own !== [] ? null
+                : $db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [$calendarId, (string) $t['uid']]);
+            if ($master === null) {
+                continue;
+            }
+            try {
+                $exdates = Recurrence::decodeExdates($master['exdates_json'] ?? null);
+            } catch (\InvalidArgumentException) {
+                continue; // a skip list over its limit: the planner reads no such series either
+            }
+            $rows = $db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [(int) $master['id']]);
+            $hidden = self::hiddenRefusal($master, $t['master'] + $master, self::recordKeysByRows($exdates, $rows), $exdates, $thisYear, 'finish');
+            if ($hidden !== null) {
+                return $hidden['words'];
+            }
+        }
+        return null;
+    }
+
+    /**
      * The refusal of such a switch, or null when it hides no day: `days`, the
      * days it would hide, as they would show after it (dates, Y-m-d), with
      * `deleted` those of them the person deleted (a deleted day of the same
@@ -3296,6 +3354,8 @@ final class GoogleSeries
                     $finishRefused = $e->getMessage();
                 }
             }
+            // A switch Finish would refuse for days Google would hide (#271): said up front, Put back offered alone.
+            $finishRefused ??= self::finishHidden($db, (int) $row['calendar_id'], json_decode((string) $row['targets_json'], true) ?: [], $steps, (int) Time::nowUtc()->format('Y'));
             $out[] = [
                 'id' => (int) $row['id'],
                 'calendarId' => (int) $row['calendar_id'],

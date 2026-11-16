@@ -73,6 +73,19 @@ final class GoogleWriter
         return self::bound($calendar) && self::writes($calendar['google_access_role'] ?? null);
     }
 
+    /**
+     * Whether a new event on $calendar takes up time when the person did not
+     * say (#303): the one rule the create path and the editor (served on
+     * each calendar as `newShowAs`) both ask. On a Google calendar a new
+     * all-day event is free, as Google Calendar's own page makes it (its API
+     * would make it busy, `opaque`); every other new event is busy, which on
+     * Google is its API's default, so nothing is sent for it. Pure.
+     */
+    public static function newShowAs(array $calendar, bool $allDay): string
+    {
+        return $allDay && self::bound($calendar) ? 'free' : 'busy';
+    }
+
     /** Is this a calendar read through a connected Google account, whatever its access? Pure. */
     public static function bound(array $calendar): bool
     {
@@ -448,7 +461,7 @@ final class GoogleWriter
         // A busy one sends nothing, which is Google's default (`opaque`) for
         // timed and all-day events alike: an insert follows Google's own
         // default, and a patch from free sends null, which clears it.
-        if ((string) ($row['show_as'] ?? 'busy') === 'free') {
+        if ((string) $row['show_as'] === 'free') {
             $body['transparency'] = 'transparent';
         }
         // The event's link (a Partiful or Luma page, say) travels as Google's

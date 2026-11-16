@@ -118,11 +118,11 @@ if (class_exists(\Sabre\VObject\Reader::class)) {
     // Out again with no TZID and no Z, its UNTIL a local time as RFC 5545 asks.
     $floatRow = ['uid' => 'float-out', 'title' => 'Sample stretching', 'start_utc' => '2027-03-04 15:00:00', 'end_utc' => '2027-03-04 15:30:00',
         'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'floating' => 1, 'rrule' => 'FREQ=DAILY;UNTIL=20270320T145959Z',
-        'exdates_json' => json_encode(['2027-03-06 15:00:00']), 'status' => 'confirmed'];
+        'exdates_json' => json_encode(['2027-03-06 15:00:00']), 'status' => 'confirmed', 'show_as' => 'busy'];
     $floatOut = Ics::buildObject([
         $floatRow,
         ['uid' => 'float-out', 'title' => 'Sample stretching, late', 'start_utc' => '2027-03-16 15:00:00', 'end_utc' => '2027-03-16 15:30:00', 'all_day' => 0,
-            'tzid' => 'America/Los_Angeles', 'floating' => 1, 'recurrence_instance_utc' => '2027-03-16 14:00:00', 'status' => 'confirmed'],
+            'tzid' => 'America/Los_Angeles', 'floating' => 1, 'recurrence_instance_utc' => '2027-03-16 14:00:00', 'status' => 'confirmed', 'show_as' => 'busy'],
     ]);
     check('floating export: DTSTART and DTEND are wall clocks with no zone', str_contains($floatOut, "DTSTART:20270304T070000\r\n") && str_contains($floatOut, "DTEND:20270304T073000\r\n"), $floatOut);
     check('floating export: no TZID and no VTIMEZONE', !str_contains($floatOut, 'TZID') && !str_contains($floatOut, 'VTIMEZONE'));

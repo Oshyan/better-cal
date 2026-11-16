@@ -213,7 +213,7 @@ if (!function_exists('check')) {
     // --- Which day a row is (Feeds::ofSeries): by identity first, by the day second ---
     // A daily game at 19:00 in New York from Tuesday 5 January 2027: the game of Wednesday the 6th is the instant
     // 2027-01-07T00:00Z, which is also the key an all-day series gives Thursday the 7th.
-    $gameOf = static fn(array $more): array => $more + ['title' => 'Sample game', 'description' => null, 'location' => null, 'url' => null, 'status' => 'confirmed',
+    $gameOf = static fn(array $more): array => $more + ['title' => 'Sample game', 'description' => null, 'location' => null, 'url' => null, 'status' => 'confirmed', 'show_as' => 'busy',
         'start_utc' => '2027-01-06 00:00:00', 'end_utc' => '2027-01-06 02:00:00', 'all_day' => 0, 'tzid' => 'America/New_York', 'rrule' => 'FREQ=DAILY;COUNT=10', 'exdates_json' => null];
     $newYork = $gameOf([]);
     $wednesday = ['recurrence_instance_utc' => '2027-01-07 00:00:00'];

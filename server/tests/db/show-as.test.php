@@ -160,4 +160,65 @@ return static function (Db $db): void {
             [$asked, $db->scalar('SELECT show_as FROM events WHERE id = ?', [$id]), isset($s->fake->events[$gid]['transparency'])]);
         GoogleStand::forget($db, $u);
     });
+    // The owner's rule (2026-11-15): a new all-day event made here on a Google calendar is free, as Google Calendar's
+    // own page makes it; a new timed one is busy and sends nothing; a choice made wins; elsewhere a new event is busy.
+    // An existing event switched between timed and all-day keeps its value. The calendar serves the rule as newShowAs.
+    scenario('show as: a new all-day event on a Google calendar is free unless the person says otherwise', function () use ($db): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $s = GoogleStand::make($db, $d->undo, $u);
+        $home = (int) Settings::defaultCalendarId($db, $u);
+        $sentInsert = static function (int $from) use ($s): ?array {
+            foreach (array_slice($s->fake->requests, $from) as $r) {
+                if ($r['method'] === 'POST') {
+                    return (array) $r['body'];
+                }
+            }
+            return null;
+        };
+        $make = static function (int $calendarId, string $title, bool $allDay, array $more = []) use ($s, $u, $db, $sentInsert): array {
+            $from = count($s->fake->requests);
+            $in = ['calendarId' => $calendarId, 'title' => $title] + ($allDay
+                ? ['start' => '2027-03-20T00:00:00+00:00', 'end' => '2027-03-21T00:00:00+00:00', 'allDay' => true, 'tzid' => 'UTC']
+                : ['start' => '2027-03-20T18:00:00+00:00', 'end' => '2027-03-20T19:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC']) + $more;
+            $id = (int) $s->events->create($u, $in)['eventId'];
+            $insert = $sentInsert($from);
+            return [$db->scalar('SELECT show_as FROM events WHERE id = ?', [$id]), $insert === null ? 'nothing sent' : ($insert['transparency'] ?? null), $id];
+        };
+        [$allDay, $allDaySent, $allDayId] = $make($s->calendarId, 'Sample offsite', true);
+        [$timed, $timedSent] = $make($s->calendarId, 'Sample call', false);
+        [$chosen, $chosenSent] = $make($s->calendarId, 'Sample conference', true, ['showAs' => 'busy']);
+        [$local, $localSent] = $make($home, 'Sample holiday', true);
+        checkEq('on Google: all-day free with transparent sent; timed busy with nothing; a choice of busy wins; a local all-day event busy',
+            [['free', 'transparent'], ['busy', null], ['busy', null], ['busy', 'nothing sent']],
+            [[$allDay, $allDaySent], [$timed, $timedSent], [$chosen, $chosenSent], [$local, $localSent]]);
+        $served = [];
+        foreach ($d->calendars->listAll($u)['calendars'] as $c) {
+            $served[$c['id'] === $s->calendarId ? 'google' : ($c['id'] === $home ? 'home' : 'other')] = $c['newShowAs'];
+        }
+        checkEq('each calendar serves the rule the editor shows', [['timed' => 'busy', 'allDay' => 'free'], ['timed' => 'busy', 'allDay' => 'busy']],
+            [$served['google'] ?? null, $served['home'] ?? null]);
+        $s->events->patch($u, $allDayId, ['start' => '2027-03-20T18:00:00+00:00', 'end' => '2027-03-20T19:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC']);
+        $s->events->throwDeferred();
+        checkEq('the free all-day event made timed keeps free', 'free', $db->scalar('SELECT show_as FROM events WHERE id = ?', [$allDayId]));
+        GoogleStand::forget($db, $u);
+    });
+    // x-agree (#303): a series' free or busy changed in Google Calendar, with an edited day Google keeps a record of;
+    // a delta poll, then a whole read of the same calendar, change no row.
+    scenario('show as: a delta poll and a whole read agree on a series and its edited day', function () use ($db): void {
+        $t = H::make($db, ['start' => '2027-03-01T10:00:00-08:00', 'end' => '2027-03-01T11:00:00-08:00', 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY;COUNT=6']);
+        H::this($t, '2027-03-08T18:00:00Z', ['title' => 'Sample series, renamed day']);
+        H::this($t, '2027-03-15T17:00:00Z', ['tagNames' => ['sample-local']]);
+        H::this($t, '2027-03-22T17:00:00Z', ['title' => 'Sample series, both', 'tagNames' => ['sample-both']]);
+        H::atGoogle($t, 'PATCH', '/events/' . rawurlencode($t->gid), ['transparency' => 'transparent']);
+        H::pollChanges($t);
+        $after = $db->all("SELECT recurrence_instance_utc AS k, show_as, override_fields FROM events WHERE calendar_id = ? AND deleted_at IS NULL ORDER BY k", [$t->s->calendarId]);
+        $db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$t->s->calendarId]);
+        checkEq('a whole read after the delta poll changes no row', [], H::pollChanges($t));
+        checkEq('after both reads: the series free; a day Google keeps a record of keeps that record\'s busy, and a day held here alone follows the series',
+            [['k' => null, 'show_as' => 'free'], ['k' => '2027-03-08 18:00:00', 'show_as' => 'busy', 'own' => ['title']], ['k' => '2027-03-15 17:00:00', 'show_as' => 'free', 'own' => ['tags']],
+             ['k' => '2027-03-22 17:00:00', 'show_as' => 'busy', 'own' => ['title', 'tags']]],
+            array_map(static fn(array $r): array => ['k' => $r['k'], 'show_as' => $r['show_as']] + ($r['k'] === null ? [] : ['own' => json_decode((string) $r['override_fields'], true)]), $after));
+        H::done($t);
+    });
 };

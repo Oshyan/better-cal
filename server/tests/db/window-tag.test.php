@@ -84,7 +84,7 @@ return static function (Db $db): void {
         (new Feeds($db))->sync($db->one('SELECT * FROM calendars WHERE id = ?', [$feedCal]), [[
             'uid' => 'sample-feed-1', 'title' => 'Market day', 'description' => null, 'location' => 'Old Mill Square', 'url' => null,
             'start_utc' => '2031-03-12 10:00:00', 'end_utc' => '2031-03-12 12:00:00', 'all_day' => 0, 'tzid' => 'UTC',
-            'rrule' => null, 'exdates' => [], 'status' => 'confirmed', 'recurrence_instance_utc' => null,
+            'rrule' => null, 'exdates' => [], 'status' => 'confirmed', 'show_as' => 'busy', 'recurrence_instance_utc' => null,
         ]]);
     });
     $fed = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ?', [$feedCal]);

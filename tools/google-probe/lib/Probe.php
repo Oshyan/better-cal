@@ -903,7 +903,7 @@ final class Probe
             $e = new \DateTimeImmutable((string) $inst['end']['dateTime']);
             $body = GoogleWriter::body([
                 'title' => 'Probe weekly (one changed)', 'description' => 'Probe series notes ' . self::MARKER_TEXT, 'location' => 'Probe room 1',
-                'start_utc' => Time::toDb($s), 'end_utc' => Time::toDb($e), 'all_day' => 0, 'tzid' => self::LA,
+                'start_utc' => Time::toDb($s), 'end_utc' => Time::toDb($e), 'all_day' => 0, 'tzid' => self::LA, 'show_as' => 'busy',
                 'rrule' => null, 'exdates_json' => null, 'status' => 'confirmed',
             ]);
             $this->standard($c, fn(CaseRun $c) => $this->send($c, 'write', 'patch occurrence 5 with GoogleWriter::body', 'PATCH', '/events/' . rawurlencode((string) $inst['id']), [], $body));

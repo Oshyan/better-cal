@@ -78,6 +78,21 @@ export function tagNameWritable(name) {
   return TAG_WHOLE.test(String(name || ''));
 }
 
+/** The rule in words, under any field where a person types a tag's name. */
+export const TAG_NAME_HINT = 'Letters, digits, - and _ only, starting with a letter or digit, at least one letter and no spaces, so the tag can be typed after #.';
+
+/**
+ * The names in a comma-separated Tags field that would be new tags the rule
+ * doesn't allow (#310). A name already one of the tags (`known`, case aside)
+ * is always fine, however it is spelled: an event carrying an older tag with
+ * a space still saves.
+ */
+export function newUnwritableTags(text, known = []) {
+  const have = new Set(known.map((n) => String(n).toLowerCase()));
+  return String(text || '').split(',').map((t) => t.trim()).filter(Boolean)
+    .filter((n) => !have.has(n.toLowerCase()) && !tagNameWritable(n));
+}
+
 // A tag as typed after #; one whose name a marker can't hold (spaces) isn't
 // offered, since typing it would make a different tag.
 export function tagMarker(name) {

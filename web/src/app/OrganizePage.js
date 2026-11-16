@@ -19,7 +19,7 @@ import { sidebarGroups, moveGroup } from '../lib/sidebarorder.js';
 import { PageShell, EmptyState } from './PageShell.js';
 import { api, entriesOf, loadCalendars, refreshWindow } from './api.js';
 import { useOwnList, superseded } from './lists.js';
-import { tagNameWritable } from '../lib/markersuggest.js';
+import { tagNameWritable, TAG_NAME_HINT } from '../lib/markersuggest.js';
 import { CalendarSettings } from './CalendarSettings.js';
 import { feedProblem } from '../lib/feedproblem.js';
 import { hasLayerRow } from '../lib/pluginlayers.js';
@@ -260,7 +260,7 @@ function TagRow({ tag, tags, onChanged }) {
             ><${Icon} name="trash" size=${13} /></button>
           </span>`}
     </div>
-    ${unwritable && html`<div class="bc-org-note bc-tag-hint" role="status">Letters, digits, - and _ only, starting with a letter or digit, at least one letter and no spaces, so the tag can be typed after #.</div>`}
+    ${unwritable && html`<div class="bc-org-note bc-tag-hint" role="status">${TAG_NAME_HINT}</div>`}
     ${ask && ask.into && html`<div class="bc-org-confirm" role="group" aria-label="Merge tags">
       <span>"${ask.into.name}" is already a tag, on ${events(ask.into.eventCount)}. Merge "${tag.name}" (${events(tag.eventCount)}) into it?</span>
       <button type="button" class="bc-btn bc-btn-primary" disabled=${busy} onClick=${rename}>Merge</button>

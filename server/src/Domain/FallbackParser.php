@@ -232,21 +232,18 @@ final class FallbackParser
             $timeFound = false; // "all day" / a date range wins over a stray time
         }
 
-        // Trailing "at <location>" (times were already removed, so a remaining
-        // "at ..." tail is a place, not a time — the time pattern always wins).
-        // Multi-word locations are kept intact; a trailing with-clause is not
-        // part of the location ("Dinner at Luna with Sam" -> "Luna").
-        // The place also STAYS in the title (0.6.2): "Lunch at The Captain's Table"
-        // is what the event is called, the way a with-clause stays; only the
-        // date and time phrases leave it. "@" reads as "at" there.
+        // The place after "at" (self::place). A venue's name STAYS in the
+        // title (0.6.2): "Lunch at The Captain's Table" is what the event is
+        // called, the way a with-clause stays, and "@" reads as "at" there.
+        // A street address leaves it (1.5.8, #258): "Lunch at 123 Example
+        // St" is called "Lunch", and the address says nothing Location
+        // doesn't.
         $location = null;
-        $locPattern = '/\s(?:at|@)\s+([^,]+?)\s*(?=$|\bwith\s|\bw\/)/i';
-        // A date or time word in it is never the place's ("at Luna,
-        // Tuesday" when the date says otherwise): withoutWhen.
-        if (preg_match($locPattern, $work, $m) && !preg_match('/^\d/', trim($m[1]))
-            && ($place = self::withoutWhen('at', $m[1], $now)) !== '') {
-            $location = $place;
-            $work = preg_replace('/\s@\s+/', ' at ', $work, 1) ?? $work;
+        if (($place = self::place($work, $now)) !== null) {
+            $location = $place['place'];
+            $work = $place['address']
+                ? self::cutSpan($work, $place['at'], $place['length'])
+                : (preg_replace('/\s@\s+/', ' at ', $work, 1) ?? $work);
             $confidence += 0.05;
         }
 
@@ -438,17 +435,15 @@ final class FallbackParser
             $m1 = self::MONTHS[strtolower(substr($m[1], 0, 3))] ?? null;
             $m2 = ($m[3] ?? '') !== '' ? (self::MONTHS[strtolower(substr($m[3], 0, 3))] ?? null) : $m1;
             $year = ($m[5] ?? '') !== '' ? (int) $m[5] : null;
-            if ($m1 !== null && $m2 !== null) {
-                $y = $year ?? (int) $now->format('Y');
-                $start = self::mkDate($now, $y, $m1, (int) $m[2]);
+            $first = $m1 !== null && $m2 !== null
+                ? self::upcoming($year, $now, $m[0], static fn(int $y): ?\DateTimeImmutable => self::mkDate($now, $y, $m1, (int) $m[2]))
+                : null;
+            if ($first !== null) {
+                // The end counts from the start's year ("Dec 30 to Jan 2").
+                [$start, $assumed] = $first;
+                $y = (int) $start->format('Y');
                 $end = self::mkDate($now, $m2 < $m1 ? $y + 1 : $y, $m2, (int) $m[4]);
-                if ($start !== null && $end !== null && $end >= $start) {
-                    $assumed = null;
-                    if ($year === null && $start < $now->setTime(0, 0)) {
-                        $start = $start->modify('+1 year');
-                        $end = $end->modify('+1 year');
-                        $assumed = self::nextYear($m[0], $start);
-                    }
+                if ($end !== null && $end >= $start) {
                     return [self::cut($work, $m[0]), $start, true, $end, true, $assumed];
                 }
             }
@@ -466,14 +461,9 @@ final class FallbackParser
             if ($year !== null && $year < 100) {
                 $year += 2000;
             }
-            $candidate = self::mkDate($now, $year ?? (int) $now->format('Y'), (int) $m[1], (int) $m[2]);
-            if ($candidate !== null) {
-                $assumed = null;
-                if ($year === null && $candidate < $now->setTime(0, 0)) {
-                    $candidate = $candidate->modify('+1 year');
-                    $assumed = self::nextYear($m[0], $candidate);
-                }
-                return [self::cut($work, $m[0]), $candidate, true, null, false, $assumed];
+            $read = self::upcoming($year, $now, $m[0], static fn(int $y): ?\DateTimeImmutable => self::mkDate($now, $y, (int) $m[1], (int) $m[2]));
+            if ($read !== null) {
+                return [self::cut($work, $m[0]), $read[0], true, null, false, $read[1]];
             }
         }
         // Month name: "July 31", "Jul 31, 2026", "31 July"
@@ -486,14 +476,9 @@ final class FallbackParser
             $monthNum = self::MONTHS[strtolower(substr($m[1], 0, 3))] ?? null;
             if ($monthNum !== null) {
                 $year = isset($m[3]) && $m[3] !== '' ? (int) $m[3] : null;
-                $candidate = self::mkDate($now, $year ?? (int) $now->format('Y'), $monthNum, (int) $m[2]);
-                if ($candidate !== null) {
-                    $assumed = null;
-                    if ($year === null && $candidate < $now->setTime(0, 0)) {
-                        $candidate = $candidate->modify('+1 year');
-                        $assumed = self::nextYear($m[0], $candidate);
-                    }
-                    return [self::cut($work, $m[0]), $candidate, true, null, false, $assumed];
+                $read = self::upcoming($year, $now, $m[0], static fn(int $y): ?\DateTimeImmutable => self::mkDate($now, $y, $monthNum, (int) $m[2]));
+                if ($read !== null) {
+                    return [self::cut($work, $m[0]), $read[0], true, null, false, $read[1]];
                 }
             }
         }
@@ -506,18 +491,22 @@ final class FallbackParser
         if (preg_match('/\bin\s+(' . $numAlt . ')\s+(day|week|month)s?\b/i', $work, $m)) {
             return [self::cut($work, $m[0]), $now->modify('+' . $num($m[1]) . ' ' . strtolower($m[2])), true, null];
         }
-        if (preg_match('/\b(' . $numAlt . ')\s+(day|week|month)s?\s+(?:from|after)\s+(now|today|tomorrow|' . $dayAltAll . ')\b/i', $work, $m)) {
-            $base = strtolower($m[3]);
+        // A weekday counted from is the coming one, never today: typed on a
+        // Friday, "a week from Friday" is 14 days out (#288). "Week from
+        // Friday" without a count is one week.
+        if (preg_match('/\b(?:(' . $numAlt . ')\s+(day|week|month)s?|(week))\s+(?:from|after)\s+(now|today|tomorrow|' . $dayAltAll . ')\b/i', $work, $m)) {
+            [$count, $unit] = ($m[3] ?? '') !== '' ? [1, 'week'] : [$num($m[1]), strtolower($m[2])];
+            $base = strtolower($m[4]);
             $from = match ($base) {
                 'now', 'today' => $now,
                 'tomorrow' => $now->add(new \DateInterval('P1D')),
-                default => $now->add(new \DateInterval('P' . ((self::WEEKDAYS[$base] - (int) $now->format('w') + 7) % 7 ?: 7) . 'D')),
+                default => $now->add(new \DateInterval('P' . self::weekdayAhead(self::WEEKDAYS[$base], $now, false) . 'D')),
             };
-            return [self::cut($work, $m[0]), $from->modify('+' . $num($m[1]) . ' ' . strtolower($m[2])), true, null];
+            return [self::cut($work, $m[0]), $from->modify('+' . $count . ' ' . $unit), true, null];
         }
         // "Friday after next": a week past the coming Friday.
         if (preg_match('/\b(?:the\s+)?(' . $dayAltAll . ')\s+after\s+next\b/i', $work, $m)) {
-            $diff = (self::WEEKDAYS[strtolower($m[1])] - (int) $now->format('w') + 7) % 7 ?: 7;
+            $diff = self::weekdayAhead(self::WEEKDAYS[strtolower($m[1])], $now, false);
             return [self::cut($work, $m[0]), $now->add(new \DateInterval('P' . ($diff + 7) . 'D')), true, null];
         }
         // "end of the month", "end of next month": its last day.
@@ -552,22 +541,9 @@ final class FallbackParser
             }
         }
         // Compounds BEFORE their fragments, or "day after tomorrow" would
-        // match as "tomorrow" and "a week from Friday" as "Friday".
+        // match as "tomorrow" ("a week from Friday" is read above).
         if (preg_match('/\b(?:the\s+)?day\s+after\s+tomorrow\b/i', $work, $m)) {
             return [self::cut($work, $m[0]), $now->add(new \DateInterval('P2D')), true, null];
-        }
-        // "a week from Friday" / "week from tomorrow": the base day plus 7.
-        if (preg_match('/\b(?:a\s+)?week\s+from\s+(today|tomorrow|' . $dayAltAll . ')\b/i', $work, $m)) {
-            $base = strtolower($m[1]);
-            if ($base === 'today') {
-                $day = $now;
-            } elseif ($base === 'tomorrow') {
-                $day = $now->add(new \DateInterval('P1D'));
-            } else {
-                $diff = (self::WEEKDAYS[$base] - (int) $now->format('w') + 7) % 7;
-                $day = $now->add(new \DateInterval('P' . $diff . 'D'));
-            }
-            return [self::cut($work, $m[0]), $day->add(new \DateInterval('P7D')), true, null];
         }
         // "first Monday of September" / "last Friday in October" (nth weekday
         // of a month; rolls to next year when the whole month is past).
@@ -578,17 +554,11 @@ final class FallbackParser
         )) {
             $monthNum = self::MONTHS[strtolower(substr($m[3], 0, 3))] ?? null;
             if ($monthNum !== null) {
-                $year = ($m[4] ?? '') !== '' ? (int) $m[4] : (int) $now->format('Y');
-                $candidate = self::nthWeekdayOfMonth($now, $year, $monthNum, self::WEEKDAYS[strtolower($m[2])], strtolower($m[1]));
-                if ($candidate !== null) {
-                    $assumed = null;
-                    if (($m[4] ?? '') === '' && $candidate < $now->setTime(0, 0)) {
-                        $candidate = self::nthWeekdayOfMonth($now, $year + 1, $monthNum, self::WEEKDAYS[strtolower($m[2])], strtolower($m[1]));
-                        $assumed = $candidate !== null ? self::nextYear($m[0], $candidate) : null;
-                    }
-                    if ($candidate !== null) {
-                        return [self::cut($work, $m[0]), $candidate, true, null, false, $assumed];
-                    }
+                $year = ($m[4] ?? '') !== '' ? (int) $m[4] : null;
+                $read = self::upcoming($year, $now, $m[0], static fn(int $y): ?\DateTimeImmutable
+                    => self::nthWeekdayOfMonth($now, $y, $monthNum, self::WEEKDAYS[strtolower($m[2])], strtolower($m[1])));
+                if ($read !== null) {
+                    return [self::cut($work, $m[0]), $read[0], true, null, false, $read[1]];
                 }
             }
         }
@@ -623,12 +593,11 @@ final class FallbackParser
             if (!$range['leading'] || RepeatParser::timeFollows($tail)) {
                 $codes = ['SU' => 0, 'MO' => 1, 'TU' => 2, 'WE' => 3, 'TH' => 4, 'FR' => 5, 'SA' => 6];
                 $from = $codes[$range['from']];
-                $todayW = (int) $now->format('w');
-                $ahead = ($from - $todayW + 7) % 7;
+                $ahead = self::weekdayAhead($from, $now, true);
                 $rest = $range['rest'];
                 // "Mon-Fri next week": in the next calendar week (from Monday).
                 if (preg_match('/^\s*next\s+week\b/i', $tail, $nw) === 1) {
-                    $ahead = ((1 - $todayW + 7) % 7 ?: 7) + ($from - 1 + 7) % 7;
+                    $ahead = self::weekdayAhead(1, $now, false) + ($from - 1 + 7) % 7;
                     $rest = self::cutSpan($work, $range['offset'], strlen($range['match']) + strlen($nw[0]));
                 }
                 $start = $now->add(new \DateInterval('P' . $ahead . 'D'));
@@ -639,10 +608,8 @@ final class FallbackParser
         }
         if (preg_match('/\bnext\s+week(?:\s+(?:on\s+)?(' . $dayAlt . '))\b/i', $work, $m)) {
             $target = self::WEEKDAYS[strtolower($m[1])];
-            $todayW = (int) $now->format('w');
-            $daysToNextMonday = (1 - $todayW + 7) % 7 ?: 7;
             $offsetInWeek = ($target - 1 + 7) % 7; // Monday-based position
-            return [self::cut($work, $m[0]), $now->add(new \DateInterval('P' . ($daysToNextMonday + $offsetInWeek) . 'D')), true, null];
+            return [self::cut($work, $m[0]), $now->add(new \DateInterval('P' . (self::weekdayAhead(1, $now, false) + $offsetInWeek) . 'D')), true, null];
         }
         // Weekday with optional next/this. "this"/bare = next occurrence (today
         // counts); "next" = strictly future occurrence (1-7 days out). Right
@@ -677,11 +644,7 @@ final class FallbackParser
         if ($pick !== null) {
             $name = strtolower(rtrim($pick[2][0], '.'));
             $target = self::WEEKDAYS[$name] ?? self::WEEKDAY_ABBR[$name];
-            $todayW = (int) $now->format('w');
-            $diff = ($target - $todayW + 7) % 7;
-            if (strtolower($pick[1][0] ?? '') === 'next' && $diff === 0) {
-                $diff = 7;
-            }
+            $diff = self::weekdayAhead($target, $now, strtolower($pick[1][0] ?? '') !== 'next');
             // Cut at the match itself, not an earlier copy of the same word
             // ("Meet at Sat Nam Yoga Sat 10am").
             $rest = self::cutSpan($work, $pick[0][1], strlen($pick[0][0]));
@@ -960,6 +923,39 @@ final class FallbackParser
         return [$work, null];
     }
 
+    /**
+     * Days from $now to the next such weekday (0 Sunday to 6 Saturday): 0
+     * when it is today and today counts ("Friday", "Fri-Sun" typed on a
+     * Friday), else 1 to 7 ("next Friday", and every weekday a count or
+     * "after next" is reckoned from). Every weekday the parser reads ahead
+     * goes through here.
+     */
+    private static function weekdayAhead(int $weekday, \DateTimeImmutable $now, bool $todayCounts): int
+    {
+        $ahead = ($weekday - (int) $now->format('w') + 7) % 7;
+        return $ahead === 0 && !$todayCounts ? 7 : $ahead;
+    }
+
+    /**
+     * A date typed with or without its year: with one, that year's; without,
+     * this year's, or next year's once it has passed (today has not). $inYear
+     * gives the date in a year, or null when there is none that year. [date,
+     * the year it assumed (`assumed`) or null], or null when there is no
+     * such date. Every date read without a year goes through here.
+     *
+     * @param callable(int):?\DateTimeImmutable $inYear
+     * @return null|array{0:\DateTimeImmutable,1:?array<string,mixed>}
+     */
+    private static function upcoming(?int $year, \DateTimeImmutable $now, string $typed, callable $inYear): ?array
+    {
+        $date = $inYear($year ?? (int) $now->format('Y'));
+        if ($date === null || $year !== null || $date >= $now->setTime(0, 0)) {
+            return $date === null ? null : [$date, null];
+        }
+        $next = $inYear((int) $now->format('Y') + 1);
+        return $next === null ? null : [$next, self::nextYear($typed, $next)];
+    }
+
     /** A date typed without a year, read as next year's (`assumed`). */
     private static function nextYear(string $typed, \DateTimeImmutable $date): array
     {
@@ -1044,6 +1040,39 @@ final class FallbackParser
             return self::cutSpan($work, $m[0][1], strlen($m[0][0]));
         }
         return $work;
+    }
+
+    /**
+     * The place after "at" or "@", read once the dates and times are out of
+     * $work (so "at 7pm" is never a place: the time reader took it). It runs
+     * to the end of the text or to a with-clause, and the separator before
+     * "with" is not part of it; a comma inside it stays, so "at Sample
+     * Theater, with Alex" is "Sample Theater" and "at 123 Example St,
+     * Springfield CA" keeps its city (#236). A place that starts with a
+     * number is a street address when a name follows the number, capitalized
+     * as names are ("123 Example St", "12B Sample Rd"); a number with no name
+     * after it ("at 7 sharp") is no place. A date or time word in it is never
+     * the place's (withoutWhen). `at` and `length` are the span from "at" to
+     * the place's end, which an address leaves the title by.
+     *
+     * @return null|array{place:string,address:bool,at:int,length:int}
+     */
+    private static function place(string $work, \DateTimeImmutable $now): ?array
+    {
+        if (preg_match('/\s(?:at|@)\s+(.+?)[\s,;]*(?=$|\bwith\s|\bw\/)/iu', $work, $m, PREG_OFFSET_CAPTURE) !== 1) {
+            return null;
+        }
+        [$typed, $from] = $m[1];
+        $address = preg_match('/^\d/', $typed) === 1;
+        if ($address && preg_match('/^\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+(?-i:\p{Lu})/iu', $typed) !== 1) {
+            return null;
+        }
+        $place = self::withoutWhen('at', $typed, $now);
+        if ($place === '') {
+            return null;
+        }
+        $at = $m[0][1] + 1; // past the space before "at"
+        return ['place' => $place, 'address' => $address, 'at' => $at, 'length' => $from + strlen($typed) - $at];
     }
 
     /**

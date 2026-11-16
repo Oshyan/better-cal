@@ -11,6 +11,7 @@ import { occurrenceDaySpan } from './monthmath.js';
 import { Icon } from './icons.js';
 import { TokenIcon, DayLabel } from './ContextStrip.js';
 import { isContext, isDayLabel, contextToken, contextText, contextTitle } from '../lib/context.js';
+import { filterClasses, hlStyle } from '../lib/filtermarks.js';
 import { gridMove } from './gridmove.js';
 
 export const MOBILE_QUERY = PHONE_QUERY;
@@ -142,7 +143,8 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
             const cal = calendars[occ.calendarId];
             const tk = contextToken(occ, cal, 60);
             return html`<button
-              key=${occ.instanceId} type="button" role="listitem" class="bc-dayexpand-ctxrow"
+              key=${occ.instanceId} type="button" role="listitem" class=${'bc-dayexpand-ctxrow' + filterClasses(occ)}
+              style=${hlStyle(occ) || undefined}
               data-ctx-instance=${occ.instanceId} aria-label=${contextTitle(occ)}
               onClick=${(e) => onOpenEvent && onOpenEvent(occ.instanceId, e.currentTarget.getBoundingClientRect(), { dayKey })}
             >

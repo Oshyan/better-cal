@@ -974,6 +974,9 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 .bc-ctx-mark:has(.bc-ctx-mark-hit:is(:hover, :focus-visible)) :is(.bc-ctx-mark-label, .bc-ctx-mark-line) { z-index: 45; }
 .bc-ctx-mark-pill:has(.bc-ctx-mark-hit:hover) .bc-ctx-mark-label { filter: brightness(1.08); }
 .bc-ctx-mark-pill:has(.bc-ctx-mark-hit:focus-visible) .bc-ctx-mark-label { box-shadow: 0 0 0 1.5px var(--bg), 0 0 0 3px var(--accent); }
+/* A dimmed moment is dimmed on its label and line (ContextStrip.js says why
+   not on the mark); its target is a sibling, so pointing at it restores them. */
+.bc-ctx-mark:has(.bc-ctx-mark-hit:is(:hover, :focus-visible)) .is-filter-dimmed { opacity: 1; filter: none; }
 /* A plugin's shaded window around a moment (a tide): a gradient strongest
    at the moment and gone at both edges (inline style), laid over the events
    so the window reads across them too; it never takes the pointer. The
@@ -2720,7 +2723,10 @@ body.bc-rescheduling { user-select: none; }
    transparent row, the tinted all-day pill and the solid bars and blocks
    alike, and it composes with hover, dimming and the active-now ring for
    free because it never touches box-shadow or background. */
-.is-highlighted :is(.bc-chip-title, .bc-band-label) {
+/* Context items take it by the same rule (lib/filtermarks.js, #72): a
+   token's value and time, the day sheet's row, a holiday's label. */
+.is-highlighted :is(.bc-chip-title, .bc-band-label, .bc-ctx-token-text, .bc-ctx-token-time, .bc-dayexpand-ctxtext),
+.bc-daylabel.is-highlighted {
   text-decoration: underline;
   text-decoration-color: var(--hl, var(--accent));
   text-decoration-thickness: 2px;
@@ -2733,6 +2739,16 @@ body.bc-rescheduling { user-select: none; }
    both themes: the fill and its white text are the same in dark). */
 :is(.bc-bar, .bc-block).is-highlighted .bc-chip-title {
   text-decoration-color: color-mix(in srgb, var(--hl, var(--accent)) 72%, white);
+}
+/* Context is quiet grey type, so an underline alone barely reads on it: a
+   highlighted token, day-sheet row or holiday label is also written in the
+   filter's colour. Last among the rules that colour them, so hover keeps it. */
+:is(.bc-ctx-token, .bc-dayexpand-ctxrow, .bc-daylabel).is-highlighted { color: var(--hl, var(--accent)); }
+/* A moment's label is filled with its calendar's colour and its text is
+   chosen for contrast with it, dark or white: the underline leans toward that
+   text, as a solid bar's leans toward its white. */
+.bc-ctx-mark-label.is-highlighted :is(.bc-ctx-token-text, .bc-ctx-token-time) {
+  text-decoration-color: color-mix(in srgb, var(--hl, var(--accent)) 72%, currentColor);
 }
 /* While the toolbar type-to-filter is active (.is-page-filtering on the app
    root, wired in App.js), every still-visible event gets the same highlight

@@ -6879,6 +6879,8 @@ console.log('--- a change for more than one occurrence goes through its plan, wh
 // The editor's repeat row, in the stand-in DOM with its own stand-in server:
 // after everything above, which shares the page's fetch.
 await import('./repeat-control.mjs');
+// Filters' marks on context items (#72), also in the stand-in DOM.
+await import('./filter-marks.mjs');
 
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

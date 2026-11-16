@@ -57,9 +57,9 @@ checkEq('google held: the master, one live record by its key, one cancelled reco
     'Sample weekly, renamed', ['2027-03-29 17:00:00'], ['2027-04-05 17:00:00'], ['2027-04-05 17:00:00'],
 ], [$held['master']['title'], array_keys($held['records']), array_keys($held['cancelled']), array_keys($held['skips'])]);
 
-$master = ['title' => 'Sample weekly, renamed', 'description' => null, 'location' => null, 'status' => 'confirmed', 'start_utc' => '2027-03-01 18:00:00', 'end_utc' => '2027-03-01 19:00:00', 'all_day' => 0, 'tzid' => $tz, 'url' => null, 'rrule' => 'FREQ=WEEKLY;COUNT=10'];
-$own = ['title' => 'Sample weekly, special', 'description' => null, 'location' => null, 'status' => 'confirmed', 'start_utc' => '2027-03-29 17:00:00', 'end_utc' => '2027-03-29 18:00:00', 'all_day' => 0, 'tzid' => $tz, 'url' => null, 'own' => ['title']];
-$moved = ['title' => 'Sample weekly, renamed', 'description' => null, 'location' => null, 'status' => 'confirmed', 'start_utc' => '2027-03-16 17:00:00', 'end_utc' => '2027-03-16 18:00:00', 'all_day' => 0, 'tzid' => $tz, 'url' => null, 'own' => ['date']];
+$master = ['title' => 'Sample weekly, renamed', 'description' => null, 'location' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'start_utc' => '2027-03-01 18:00:00', 'end_utc' => '2027-03-01 19:00:00', 'all_day' => 0, 'tzid' => $tz, 'url' => null, 'rrule' => 'FREQ=WEEKLY;COUNT=10'];
+$own = ['title' => 'Sample weekly, special', 'description' => null, 'location' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'start_utc' => '2027-03-29 17:00:00', 'end_utc' => '2027-03-29 18:00:00', 'all_day' => 0, 'tzid' => $tz, 'url' => null, 'own' => ['title']];
+$moved = ['title' => 'Sample weekly, renamed', 'description' => null, 'location' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'start_utc' => '2027-03-16 17:00:00', 'end_utc' => '2027-03-16 18:00:00', 'all_day' => 0, 'tzid' => $tz, 'url' => null, 'own' => ['date']];
 $target = ['uid' => 'smpl2weekly@google.com', 'googleId' => 'smpl2weekly', 'etag' => '"e7"', 'insert' => false, 'remove' => false, 'master' => $master,
     'exceptions' => ['2027-03-15 17:00:00' => $moved, '2027-03-29 17:00:00' => $own], 'skips' => ['2027-04-05 17:00:00', '2027-04-12 17:00:00'], 'singles' => []];
 $steps = GoogleSeries::stepsFor($target, $items);
@@ -109,7 +109,7 @@ checkEq('google outcome: a series Google no longer holds is said so, and nothing
 // series' own values are the same, and so is no day (the series' own difference says it); an edited day is as asked
 // only as a record with its fields. The inputs are three states and nothing else: no step is among them.
 $la = 'America/Los_Angeles';
-$wk0 = ['title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'start_utc' => '2027-01-04 18:00:00', 'end_utc' => '2027-01-04 19:00:00', 'all_day' => 0, 'tzid' => $la, 'url' => null, 'rrule' => 'FREQ=WEEKLY;COUNT=6'];
+$wk0 = ['title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'start_utc' => '2027-01-04 18:00:00', 'end_utc' => '2027-01-04 19:00:00', 'all_day' => 0, 'tzid' => $la, 'url' => null, 'rrule' => 'FREQ=WEEKLY;COUNT=6'];
 $dayKey = '2027-01-18 18:00:00';
 $zoned = static fn(string $utc): array => ['dateTime' => (new DateTimeImmutable($utc, new DateTimeZone('UTC')))->setTimezone(new DateTimeZone($la))->format('Y-m-d\TH:i:sP'), 'timeZone' => $la];
 // A day as each side can have it: [its title, its start, its end] where a day shows.
@@ -227,7 +227,7 @@ check('google chosen id: 26 characters of Google\'s alphabet', preg_match('/^[0-
 // ---- What a master write leaves at Google (afterMaster): identity, Google's own resets, and proof ----
 // Each expectation is written from the probe's report (research/google-series/probe-2026-11-07.md, group 3) or from
 // the ids alone, never from the function. Held state in held()'s shape.
-$gm = static fn(array $over = []): array => $over + ['title' => 'Sample weekly', 'description' => 'Sample notes', 'location' => 'Sample room 1', 'status' => 'confirmed',
+$gm = static fn(array $over = []): array => $over + ['title' => 'Sample weekly', 'description' => 'Sample notes', 'location' => 'Sample room 1', 'status' => 'confirmed', 'show_as' => 'busy',
     'start_utc' => '2027-03-01 18:00:00', 'end_utc' => '2027-03-01 19:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'url' => null, 'rrule' => 'FREQ=WEEKLY;COUNT=10'];
 $gh = static fn(array $master, array $records, array $cancelled, array $exdates = []): array => ['master' => $master, 'records' => $records,
     'cancelled' => array_fill_keys($cancelled, true), 'skips' => array_fill_keys(array_merge($cancelled, $exdates), true), 'etags' => []];
@@ -359,7 +359,7 @@ checkEq('google held: the same list read under the timed master holds the timed 
     $heldKeys(GoogleSeries::held([$daySkip, $timedRecord, $dayRecord, $timedM, $timedSkip], 'smpl3')));
 // The all-day target over each read: with the master in the date form, the lagging timed records are nothing, so the
 // edited day and the skip are sent to the date-form ids; a day Google lists is sent to the id it lists.
-$dayMaster = ['title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-05 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'url' => null, 'rrule' => 'FREQ=WEEKLY;COUNT=4'];
+$dayMaster = ['title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-05 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'url' => null, 'rrule' => 'FREQ=WEEKLY;COUNT=4'];
 $dayTarget = ['uid' => 'smpl3@google.com', 'googleId' => 'smpl3', 'etag' => '"e2"', 'insert' => false, 'remove' => false, 'master' => $dayMaster, 'singles' => [],
     'exceptions' => ['2027-01-11 00:00:00' => ['description' => 'Own notes for the day.', 'start_utc' => '2027-01-11 00:00:00', 'end_utc' => '2027-01-12 00:00:00', 'own' => ['description']] + $dayMaster], 'skips' => ['2027-01-18 00:00:00']];
 $sent = static fn(array $steps): array => array_map(static fn(array $s): array => [$s[0], $s[1]], $steps);
@@ -600,7 +600,7 @@ checkEq('google rebase: a drag that landed, the day the edited day moves onto de
 // 2026-11-13), so an edited day's record holding the series' link is as stored, and one left without it reads as
 // changed at Google.
 $linkUrl = 'https://example.test/sample';
-$linkMaster = ['id' => 1, 'uid' => 'smpl7@google.com', 'google_event_id' => 'smpl7', 'title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'url' => $linkUrl,
+$linkMaster = ['id' => 1, 'uid' => 'smpl7@google.com', 'google_event_id' => 'smpl7', 'title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'url' => $linkUrl,
     'start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-04 01:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=4', 'exdates_json' => null];
 $linkRow = ['id' => 2, 'recurrence_instance_utc' => '2027-01-11 00:00:00', 'description' => 'Own notes for the day.', 'url' => null, 'override_fields' => '["description"]',
     'start_utc' => '2027-01-11 00:00:00', 'end_utc' => '2027-01-11 01:00:00'] + $linkMaster;

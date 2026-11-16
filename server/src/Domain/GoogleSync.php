@@ -947,7 +947,7 @@ final class GoogleSync
                 'rrule' => $r['rrule'] !== null ? (string) $r['rrule'] : null,
                 'exdates' => $exdates,
                 'status' => (string) $r['status'],
-                'show_as' => (string) ($r['show_as'] ?? 'busy'),
+                'show_as' => (string) $r['show_as'],
                 'recurrence_instance_utc' => $r['recurrence_instance_utc'] !== null ? (string) $r['recurrence_instance_utc'] : null,
                 'reminders' => [],
                 'google_event_id' => isset($r['google_event_id']) && $r['google_event_id'] !== null ? (string) $r['google_event_id'] : null,

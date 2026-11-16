@@ -40,7 +40,7 @@ if (!function_exists('check')) {
 
 (static function (): void {
     $uid = 'abcde@google.com';
-    $base = ['uid' => $uid, 'title' => 'Sample weekly', 'description' => null, 'location' => null, 'url' => null, 'rrule' => 'FREQ=WEEKLY;COUNT=4', 'exdates' => [], 'status' => 'confirmed',
+    $base = ['uid' => $uid, 'title' => 'Sample weekly', 'description' => null, 'location' => null, 'url' => null, 'rrule' => 'FREQ=WEEKLY;COUNT=4', 'exdates' => [], 'status' => 'confirmed', 'show_as' => 'busy',
         'recurrence_instance_utc' => null, 'reminders' => [], 'google_event_id' => 'abcde'];
     // Weekly, four occurrences from Monday 4 January 2027: at 00:00 UTC, all-day, or at 10:00 Los Angeles (18:00 UTC in January).
     $timed = ['start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-04 01:00:00', 'all_day' => 0, 'tzid' => 'UTC'] + $base;

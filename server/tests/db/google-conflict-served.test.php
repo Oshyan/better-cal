@@ -46,7 +46,7 @@ return static function (Db $db): void {
         $id = (int) $e->create($u, ['calendarId' => $s->calendarId] + $in)['eventId'];
         $row = $e->get($u, $id);
         $served = $e->servedFields($row);
-        $over = ['title' => $served['title'], 'description' => $served['description'], 'location' => $served['location'], 'url' => $served['url'], 'status' => $served['status']] + $served['time'];
+        $over = ['title' => $served['title'], 'description' => $served['description'], 'location' => $served['location'], 'url' => $served['url'], 'status' => $served['status'], 'showAs' => $served['showAs']] + $served['time'];
         $back = GoogleConflict::mapOf(array_merge($row, $e->overColumns($u, $row, $over)));
         $own = GoogleConflict::mapOf($row);
         foreach (GoogleConflict::FIELDS as $field) {

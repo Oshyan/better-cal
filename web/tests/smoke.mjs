@@ -3497,9 +3497,9 @@ console.log('--- chronological ordering across timezone offsets ---');
 
   // The editor of a repeating event, and of one that doesn't repeat.
   put({ calendars: [
-    { id: 21, name: 'Sample home', editable: true, visible: true, kind: 'local' },
-    { id: 22, name: 'Sample work', editable: true, visible: true, kind: 'local' },
-    { id: 23, name: 'Sample club', editable: true, visible: true, kind: 'local' },
+    { id: 21, name: 'Sample home', editable: true, visible: true, kind: 'local', newShowAs: { timed: 'busy', allDay: 'busy' } },
+    { id: 22, name: 'Sample work', editable: true, visible: true, kind: 'local', newShowAs: { timed: 'busy', allDay: 'busy' } },
+    { id: 23, name: 'Sample club', editable: true, visible: true, kind: 'local', newShowAs: { timed: 'busy', allDay: 'busy' } },
   ], folders: [] });
   const { EditorDrawer } = await import('../src/app/EditorDrawer.js');
   const ed = dom.doc.createElement('div');
@@ -3573,6 +3573,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   await submitForm();
   const created = sent.find(([m, path]) => m === 'POST' && path.endsWith('/events'));
   eq('floating toggle: a new floating event is created with floating, and no zone of its own', [created && created[2].floating, created && 'tzid' in created[2] && created[2].tzid !== Intl.DateTimeFormat().resolvedOptions().timeZone], [true, false]);
+  eq('show as: a new event whose Show as was not picked sends none, so the server applies the same rule', created && 'showAs' in created[2], false);
   sent.length = 0;
   const floatingOcc = { instanceId: '63@1', eventId: 63, calendarId: 21, title: 'Sample stretch', recurring: false, floating: true, tzid: 'Asia/Tokyo', start: '2027-03-10T07:00:00-08:00', end: '2027-03-10T07:30:00-08:00', allDay: false, full: true };
   await open(floatingOcc);
@@ -3586,6 +3587,41 @@ console.log('--- chronological ordering across timezone offsets ---');
   sent.length = 0;
   await open({ ...floatingOcc, instanceId: '64@1', eventId: 64, floating: false, invite: { kind: 'invitation' } });
   eq('floating toggle: none for an invitation', floatBox(), null);
+
+  // Show as (#303): a new event shows what a save will store, its calendar's rule (served as newShowAs: on a Google
+  // calendar a new all-day event is free) until the person picks; a pick stays through the all-day box and a calendar.
+  put({ calendars: [...st.calendars.filter((c) => c.id !== 24), { id: 24, name: 'Sample team', editable: true, visible: true, kind: 'subscribed', provider: 'google', newShowAs: { timed: 'busy', allDay: 'free' } }] });
+  const showAsOn = () => (ed.querySelectorAll('.bc-ed-segbtn').find((b) => ['Busy', 'Free'].includes(b.textContent) && b.className.includes('is-on')) || null)?.textContent || null;
+  const showAsButton = (label) => ed.querySelectorAll('.bc-ed-segbtn').find((b) => b.textContent === label);
+  const allDayBox = () => ed.querySelectorAll('label.bc-check').find((l) => l.textContent.includes('All day')).querySelector('input');
+  const toggleAllDay = async (on) => { allDayBox().checked = on; allDayBox().dispatch('change'); await settle(); };
+  render(null, ed);
+  put({ editor: null });
+  await settle();
+  put({ editor: { mode: 'create', draft: { title: 'Sample retreat', calendarId: 24, allDay: true, start: '2027-03-12T00:00:00+00:00', end: '2027-03-13T00:00:00+00:00' } } });
+  render(html`<${EditorDrawer} />`, ed);
+  await settle();
+  const seen = [showAsOn()];
+  await toggleAllDay(false);
+  seen.push(showAsOn());
+  await toggleAllDay(true);
+  seen.push(showAsOn());
+  await calendar(21);
+  seen.push(showAsOn());
+  await calendar(24);
+  seen.push(showAsOn());
+  eq('show as: a new all-day event on a Google calendar reads Free, timed Busy, and follows the calendar', seen, ['Free', 'Busy', 'Free', 'Busy', 'Free']);
+  showAsButton('Busy').dispatch('click');
+  await settle();
+  await toggleAllDay(false);
+  await toggleAllDay(true);
+  await calendar(21);
+  await calendar(24);
+  eq('show as: a pick stays through the all-day box and a calendar change', showAsOn(), 'Busy');
+  sent.length = 0;
+  await submitForm();
+  const createdShow = sent.find(([m, path]) => m === 'POST' && path.endsWith('/events'));
+  eq('show as: the pick is what the create sends', createdShow && createdShow[2].showAs, 'busy');
   globalThis.fetch = editorFetch;
 
   // Activity: an entry the server says is not undoable, with a reason,

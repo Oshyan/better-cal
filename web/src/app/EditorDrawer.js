@@ -38,7 +38,7 @@ import { DateField, TimeField } from './WhenFields.js';
 import { useMarkerSuggest } from './MarkerSuggest.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
 import { editedWords, timeChange } from '../lib/changeline.js';
-import { changedFields, fieldLines, sameOpening, editorBase } from '../lib/editfields.js';
+import { changedFields, fieldLines, sameOpening, editorBase, newShowAsOf } from '../lib/editfields.js';
 import { openSeriesChange, cancelSeriesChange, seriesPlans } from './serieschange.js';
 import { SeriesDialog } from './SeriesDialog.js';
 import { creationLine } from '../lib/seriesplan.js';
@@ -143,6 +143,10 @@ function formInstants(form) {
 
 // A calendar's "New timed events keep their clock time in any zone" (#167): what a new event's toggle starts at.
 const calFloats = (calendarId) => !!(state.calendars.find((c) => c.id === Number(calendarId)) || {}).floatTimed;
+// Free or busy as a save will store it (#303): the person's choice, else, on a
+// new event, its calendar's rule for a new event of its kind, which follows the
+// calendar and the all-day setting until the person picks.
+const showAsOf = (fm) => (fm.showAsTouched ? fm.showAs : newShowAsOf(state.calendars.find((c) => c.id === Number(fm.calendarId)), !!fm.allDay));
 
 // The quiet zone control on the duration line. A link until clicked, because
 // almost every event is in the zone you are sitting in and a 420-entry select
@@ -241,8 +245,10 @@ function seedForm(occ, draft = {}, seriesRule = '') {
     isContainer: occ ? !!occ.isContainer : !!draft.isContainer,
     // Planned or Maybe, on my own calendars (status confirmed / tentative).
     rel: (occ ? occ.relationship : draft.relationship) === 'maybe' ? 'maybe' : 'planned',
-    // Whether it takes up time (#303): busy unless it is marked free.
-    showAs: (occ ? occ.showAs : draft.showAs) === 'free' ? 'free' : 'busy',
+    // Whether it takes up time (#303): an event's own value; a new event's
+    // follows its calendar's rule (showAsOf) until the person picks one.
+    showAs: occ ? (occ.showAs === 'free' ? 'free' : 'busy') : (draft.showAs === 'free' ? 'free' : 'busy'),
+    showAsTouched: !!occ || draft.showAs === 'free' || draft.showAs === 'busy',
     location: occ ? (occ.location || '') : (draft.location || ''),
     locationLat: occ ? (occ.locationLat != null ? occ.locationLat : null)
       : (draft.locationLat != null ? draft.locationLat : null),
@@ -316,7 +322,7 @@ function formFields(fm, occ, mine, shown = occ) {
     floating: !!fm.floating && !fm.allDay,
     // Planned or Maybe is the event's status on my own calendars.
     ...(mine ? { status: fm.rel === 'maybe' ? 'tentative' : 'confirmed' } : {}),
-    showAs: fm.showAs,
+    showAs: showAsOf(fm),
   };
   // A zone the owner picked becomes the event's own zone: it is what a
   // repeating event keeps its clock time in across DST changes. All-day
@@ -336,8 +342,7 @@ function formFields(fm, occ, mine, shown = occ) {
 
 // A new event's base for the fields that have a default: one left at its
 // default is not sent, and the server applies the same default.
-// Busy is not sent, so on a Google calendar Google's own default decides.
-const NEW_EVENT_BASE = { reminders: null, isContainer: false, floating: false, status: 'confirmed', showAs: 'busy' };
+const NEW_EVENT_BASE = { reminders: null, isContainer: false, floating: false, status: 'confirmed' };
 const sameValue = (a, b) => JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
 
 /**
@@ -376,6 +381,9 @@ function saveOf(editor, opened, form) {
   if (!editor.occ) {
     const fields = formFields(form, null, mine);
     for (const [k, v] of Object.entries(NEW_EVENT_BASE)) if (sameValue(fields[k], v)) delete fields[k];
+    // Free or busy goes only when the person picked it; else the server
+    // applies the rule the control showed (GoogleWriter::newShowAs).
+    if (!form.showAsTouched) delete fields.showAs;
     return { occ: null, fields, base: null, was: {} };
   }
   const base = baseOf(editor, opened);
@@ -1247,8 +1255,8 @@ export function EditorDrawer() {
             Show as
             <span class="bc-ed-seg" role="group" aria-label="Show as">
               ${[['busy', 'Busy'], ['free', 'Free']].map(([v, label]) => html`<button
-                key=${v} type="button" class=${'bc-ed-segbtn' + (form.showAs === v ? ' is-on' : '')}
-                aria-pressed=${form.showAs === v} onClick=${() => upd({ showAs: v })}
+                key=${v} type="button" class=${'bc-ed-segbtn' + (showAsOf(form) === v ? ' is-on' : '')}
+                aria-pressed=${showAsOf(form) === v} onClick=${() => upd({ showAs: v, showAsTouched: true })}
               >${label}</button>`)}
             </span>
           </span>

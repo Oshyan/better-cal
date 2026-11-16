@@ -1758,7 +1758,7 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
 {
     $rq = BetterCal\Domain\ReviewQueue::class;
     $stored = [
-        'id' => 40, 'title' => 'Planning dinner', 'status' => 'confirmed', 'all_day' => 0, 'tzid' => 'America/Los_Angeles',
+        'id' => 40, 'title' => 'Planning dinner', 'status' => 'confirmed', 'show_as' => 'busy', 'all_day' => 0, 'tzid' => 'America/Los_Angeles',
         'start_utc' => '2026-10-02 02:00:00', 'end_utc' => '2026-10-02 04:00:00', // Oct 1, 7-9 PM Pacific
         'location' => 'Example Cafe', 'description' => '<p>Bring the <b>deck</b>.</p>', 'rrule' => null,
     ];
@@ -2149,7 +2149,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     $weekly = ['title' => 'Weekly sync', 'start' => '2026-11-02T18:00:00+00:00', 'end' => '2026-11-02T19:00:00+00:00', 'rrule' => 'FREQ=WEEKLY'] + $fieldsA;
     $seriesId = (int) $queueA->accept(1, $queueA->holdNewInvitation(1, 'series-uid', $weekly, $cancelInvite, 'alice@example.test'))['eventId'];
     $occurrenceEv = ['uid' => 'series-uid', 'title' => 'Weekly sync', 'start_utc' => '2026-11-09 18:00:00', 'end_utc' => '2026-11-09 19:00:00',
-        'all_day' => false, 'tzid' => 'UTC', 'location' => 'Cafe', 'description' => null, 'rrule' => null, 'status' => 'confirmed',
+        'all_day' => false, 'tzid' => 'UTC', 'location' => 'Cafe', 'description' => null, 'rrule' => null, 'status' => 'confirmed', 'show_as' => 'busy',
         'recurrence_instance_utc' => '2026-11-09 18:00:00', 'invite' => ['method' => 'CANCEL', 'sequence' => 2] + $cancelInvite];
     $occMsg = ['messageId' => 'occ@example.test', 'subject' => 'Cancelled: Weekly sync', 'from' => 'alice@example.test'];
     $occCancel = $applyA->invoke($mailA, 1, 'CANCEL', $occurrenceEv, 'UTC', $occMsg);
@@ -2232,7 +2232,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     // The 16 Nov occurrence (Mondays 18:00 UTC), moved an hour earlier and
     // sent in another zone.
     $earlyOcc = ['uid' => 'early-uid', 'title' => 'Planning call', 'start_utc' => '2026-11-16 17:00:00', 'end_utc' => '2026-11-16 18:00:00',
-        'all_day' => false, 'tzid' => 'Europe/Berlin', 'location' => 'Cafe', 'description' => null, 'rrule' => null, 'status' => 'confirmed',
+        'all_day' => false, 'tzid' => 'Europe/Berlin', 'location' => 'Cafe', 'description' => null, 'rrule' => null, 'status' => 'confirmed', 'show_as' => 'busy',
         'recurrence_instance_utc' => '2026-11-16 18:00:00', 'invite' => $earlyInvite];
     $early = $applyA->invoke($mailA, 1, 'REQUEST', $earlyOcc, 'UTC', $earlyMsg);
     $earlyItem = (int) $adb->scalar("SELECT id FROM review_items WHERE kind = 'invite_new' AND source_key = 'early-uid' AND status = 'open'");
@@ -5132,11 +5132,11 @@ $calendar = Ics::buildCalendar('My Feed', 'This feed contains only events matchi
         'location' => 'Studio A', 'url' => 'https://example.com/e/1',
         'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00',
         'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY;BYDAY=SA',
-        'exdates_json' => json_encode(['2026-08-08 17:00:00']), 'status' => 'confirmed',
+        'exdates_json' => json_encode(['2026-08-08 17:00:00']), 'status' => 'confirmed', 'show_as' => 'busy',
     ],
     [
         'uid' => 'def-456', 'title' => 'All day thing', 'start_utc' => '2026-08-02 07:00:00',
-        'end_utc' => '2026-08-03 07:00:00', 'all_day' => 1, 'tzid' => 'America/Los_Angeles', 'status' => 'confirmed',
+        'end_utc' => '2026-08-03 07:00:00', 'all_day' => 1, 'tzid' => 'America/Los_Angeles', 'status' => 'confirmed', 'show_as' => 'busy',
     ],
 ]);
 check('vcal has calname', str_contains($calendar, 'X-WR-CALNAME:My Feed'));
@@ -5153,14 +5153,14 @@ $encodedDescription = Ics::unfold(Ics::buildObject([[
     'uid' => 'encoded-description', 'title' => 'Encoded',
     'description' => '&lt;img src=x onerror=alert(1)&gt;Visible',
     'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00',
-    'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+    'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed', 'show_as' => 'busy',
 ]]));
 check('export: entity-encoded markup is not emitted as active-looking DESCRIPTION', !str_contains($encodedDescription, 'DESCRIPTION:&lt;img'));
 check('export: entity-encoded markup keeps its inert text', str_contains($encodedDescription, 'DESCRIPTION:Visible'));
 $unsafeEventUrl = Ics::buildObject([[
     'uid' => 'unsafe-url', 'title' => 'Unsafe URL', 'url' => 'javascript:alert(1)',
     'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00',
-    'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+    'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed', 'show_as' => 'busy',
 ]]);
 check('export: legacy unsafe event URL is omitted', !str_contains($unsafeEventUrl, "\r\nURL:"));
 
@@ -5177,7 +5177,7 @@ checkEq('ics parse: a malformed event does not hide its valid sibling', ['One', 
 // Los Angeles stays 9:00 across the November change in any client, and a
 // CalDAV round trip keeps the zone instead of storing it back as UTC.
 $tzWeekly = ['uid' => 'tzw', 'title' => 'Sync', 'start_utc' => '2026-10-05 16:00:00', 'end_utc' => '2026-10-05 17:00:00',
-    'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY', 'status' => 'confirmed'];
+    'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY', 'status' => 'confirmed', 'show_as' => 'busy'];
 $tzObj = Ics::buildObject([$tzWeekly]);
 check('export: timed event keeps its zone', str_contains($tzObj, 'DTSTART;TZID=America/Los_Angeles:20261005T090000'));
 check('export: zone has a VTIMEZONE with both rules', str_contains($tzObj, "BEGIN:VTIMEZONE\r\nTZID:America/Los_Angeles") && str_contains($tzObj, 'BYMONTH=11;BYDAY=1SU') && str_contains($tzObj, 'BYMONTH=3;BYDAY=2SU'));
@@ -5192,8 +5192,8 @@ check('export: a southern zone has both rules', substr_count(Ics::buildObject([[
 // Audit #7: an occurrence of an all-day series made timed still names the
 // series' occurrence by date.
 $adTimedOv = Ics::buildObject([
-    ['uid' => 'ad7', 'title' => 'G', 'start_utc' => '2026-10-05 07:00:00', 'end_utc' => '2026-10-06 07:00:00', 'all_day' => 1, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY', 'status' => 'confirmed'],
-    ['uid' => 'ad7', 'title' => 'G', 'start_utc' => '2026-10-12 21:00:00', 'end_utc' => '2026-10-12 23:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'recurrence_instance_utc' => '2026-10-12 07:00:00', 'status' => 'confirmed'],
+    ['uid' => 'ad7', 'title' => 'G', 'start_utc' => '2026-10-05 07:00:00', 'end_utc' => '2026-10-06 07:00:00', 'all_day' => 1, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY', 'status' => 'confirmed', 'show_as' => 'busy'],
+    ['uid' => 'ad7', 'title' => 'G', 'start_utc' => '2026-10-12 21:00:00', 'end_utc' => '2026-10-12 23:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'recurrence_instance_utc' => '2026-10-12 07:00:00', 'status' => 'confirmed', 'show_as' => 'busy'],
 ]);
 check('export: override of an all-day series keeps a date RECURRENCE-ID', str_contains($adTimedOv, 'RECURRENCE-ID;VALUE=DATE:20261012') && str_contains($adTimedOv, 'DTSTART;TZID=America/Los_Angeles:20261012T140000'));
 }
@@ -5222,11 +5222,11 @@ check('export: override of an all-day series keeps a date RECURRENCE-ID', str_co
 $adSeries = [
     'uid' => 'ad-ser', 'title' => 'Garden', 'start_utc' => '2026-08-31 07:00:00', 'end_utc' => '2026-09-01 07:00:00',
     'all_day' => 1, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY;BYDAY=WE',
-    'exdates_json' => json_encode(['2026-09-09 07:00:00']), 'status' => 'confirmed',
+    'exdates_json' => json_encode(['2026-09-09 07:00:00']), 'status' => 'confirmed', 'show_as' => 'busy',
 ];
 $adOverride = [
     'uid' => 'ad-ser', 'title' => 'Garden (Thursday)', 'start_utc' => '2026-09-17 07:00:00', 'end_utc' => '2026-09-18 07:00:00',
-    'all_day' => 1, 'tzid' => 'America/Los_Angeles', 'recurrence_instance_utc' => '2026-09-16 07:00:00', 'status' => 'confirmed',
+    'all_day' => 1, 'tzid' => 'America/Los_Angeles', 'recurrence_instance_utc' => '2026-09-16 07:00:00', 'status' => 'confirmed', 'show_as' => 'busy',
 ];
 $adObj = Ics::buildObject([$adSeries, $adOverride]);
 check('all-day series exdate is a local date', str_contains($adObj, 'EXDATE;VALUE=DATE:20260909'));
@@ -5938,7 +5938,7 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the in
                     $rowZone = $allDay ? 'UTC' : $z;
                     $s = $allDay ? Time::parseAllDay($date, 'UTC') : (new DateTimeImmutable($date . ' ' . $when, $tz))->setTimezone(Time::utc());
                     $e = $allDay ? $s->modify('+1 day') : $s->modify('+1 hour');
-                    $master = ['id' => 1, 'uid' => 'rt', 'title' => 'Round trip', 'all_day' => $allDay ? 1 : 0, 'tzid' => $rowZone, 'start_utc' => Time::toDb($s), 'end_utc' => Time::toDb($e), 'rrule' => $rule, 'status' => 'confirmed', 'exdates_json' => null, 'recurrence_parent_id' => null];
+                    $master = ['id' => 1, 'uid' => 'rt', 'title' => 'Round trip', 'all_day' => $allDay ? 1 : 0, 'tzid' => $rowZone, 'start_utc' => Time::toDb($s), 'end_utc' => Time::toDb($e), 'rrule' => $rule, 'status' => 'confirmed', 'show_as' => 'busy', 'exdates_json' => null, 'recurrence_parent_id' => null];
                     $win = [$s->modify('-1 day'), $s->modify('+200 days')];
                     $occs = $rtRec->expand($master, [], $win[0], $win[1]);
                     if (count($occs) < 6) {
@@ -5958,7 +5958,7 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the in
                     $master['exdates_json'] = json_encode([$occs[$pick - 1]['instanceUtc']]);
                     $ovStart = Time::fromDb($occs[$pick]['instanceUtc'])->modify($allDay ? '+0 seconds' : '+60 minutes');
                     $override = ['id' => 2, 'uid' => 'rt', 'title' => 'Edited', 'all_day' => $master['all_day'], 'tzid' => $rowZone, 'start_utc' => Time::toDb($ovStart),
-                        'end_utc' => Time::toDb($ovStart->modify($allDay ? '+1 day' : '+1 hour')), 'rrule' => null, 'status' => 'confirmed', 'recurrence_parent_id' => 1, 'recurrence_instance_utc' => $occs[$pick]['instanceUtc']];
+                        'end_utc' => Time::toDb($ovStart->modify($allDay ? '+1 day' : '+1 hour')), 'rrule' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'recurrence_parent_id' => 1, 'recurrence_instance_utc' => $occs[$pick]['instanceUtc']];
                     $before = array_map($rtKey, $rtRec->expand($master, [$override], $win[0], $win[1]));
                     $rows = [];
                     foreach (Ics::parse(Ics::buildObject([$master, $override])) as $p) {
@@ -7537,12 +7537,12 @@ $davMaster = [
     'uid' => 'ev-1', 'title' => 'Weekly sync', 'description' => null, 'location' => null, 'url' => null,
     'start_utc' => '2026-08-03 17:00:00', 'end_utc' => '2026-08-03 18:00:00',
     'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY;BYDAY=MO',
-    'exdates_json' => json_encode(['2026-08-17 17:00:00']), 'status' => 'confirmed',
+    'exdates_json' => json_encode(['2026-08-17 17:00:00']), 'status' => 'confirmed', 'show_as' => 'busy',
 ];
 $davOverride = [
     'uid' => 'ev-1', 'title' => 'Weekly sync (moved)', 'start_utc' => '2026-08-10 18:00:00',
     'end_utc' => '2026-08-10 19:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles',
-    'recurrence_instance_utc' => '2026-08-10 17:00:00', 'status' => 'confirmed',
+    'recurrence_instance_utc' => '2026-08-10 17:00:00', 'status' => 'confirmed', 'show_as' => 'busy',
 ];
 $obj = DavIcs::buildObject($davMaster, [$davOverride]);
 checkEq('dav object one VCALENDAR', 1, substr_count($obj, 'BEGIN:VCALENDAR'));
@@ -7896,12 +7896,12 @@ foreach ([10, 90, 1440, 1500, 0, 360, 10080] as $m) {
 $valCal = Ics::buildCalendar('Rem', null, [
     [
         'uid' => 'r-1', 'title' => 'With override', 'start_utc' => '2026-08-07 19:00:00',
-        'end_utc' => '2026-08-07 20:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+        'end_utc' => '2026-08-07 20:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed', 'show_as' => 'busy',
         'reminders_json' => json_encode([['minutes' => 10], ['minutes' => 1440]]),
     ],
     [
         'uid' => 'r-2', 'title' => 'Inherited', 'start_utc' => '2026-08-08 19:00:00',
-        'end_utc' => '2026-08-08 20:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+        'end_utc' => '2026-08-08 20:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed', 'show_as' => 'busy',
         'reminders_json' => null,
     ],
 ]);
@@ -8319,12 +8319,12 @@ $richCal = Ics::buildCalendar('Rich', null, [
     [
         'uid' => 'rich-1', 'title' => 'Board meeting', 'description' => '<p>Agenda:</p><ul><li>budget</li></ul>',
         'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00',
-        'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+        'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed', 'show_as' => 'busy',
     ],
     [
         'uid' => 'rich-2', 'title' => 'Plain', 'description' => "Line1\nLine2",
         'start_utc' => '2026-08-02 17:00:00', 'end_utc' => '2026-08-02 18:00:00',
-        'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+        'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed', 'show_as' => 'busy',
     ],
 ]);
 $richUnfolded = Ics::unfold($richCal);
@@ -8341,7 +8341,7 @@ $hostile = '<p onclick="x()">Hi <img src=x onerror="fetch(\'//evil\')"><script>s
     . ' &lt;img src=x onerror=alert(2)&gt; &amp;lt;script&amp;gt;deep()&amp;lt;/script&amp;gt;</p>';
 $hostileCal = Ics::unfold(Ics::buildCalendar('Feed', null, [[
     'uid' => 'hostile-1', 'title' => 'Imported', 'description' => $hostile,
-    'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+    'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed', 'show_as' => 'busy',
 ]]));
 preg_match('/^X-ALT-DESC;FMTTYPE=text\/html:(.*)$/m', $hostileCal, $altM);
 preg_match('/^DESCRIPTION:(.*)$/m', $hostileCal, $txtM);
@@ -8550,12 +8550,12 @@ $tripCal = Ics::buildCalendar('Trips', null, [
     [
         'uid' => 'trip-1', 'title' => 'Hawaii Trip', 'start_utc' => '2026-06-01 07:00:00',
         'end_utc' => '2026-06-13 07:00:00', 'all_day' => 1, 'tzid' => 'America/Los_Angeles',
-        'status' => 'confirmed', 'related_children' => ['flight-out', 'flight-back'],
+        'status' => 'confirmed', 'show_as' => 'busy', 'related_children' => ['flight-out', 'flight-back'],
     ],
     [
         'uid' => 'flight-out', 'title' => 'Flight to HNL', 'start_utc' => '2026-06-01 16:00:00',
         'end_utc' => '2026-06-01 22:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles',
-        'status' => 'confirmed', 'related_parents' => ['trip-1'],
+        'status' => 'confirmed', 'show_as' => 'busy', 'related_parents' => ['trip-1'],
     ],
 ]);
 $tripUnfolded = Ics::unfold($tripCal);
@@ -8565,7 +8565,7 @@ check('trip ics child uid back', str_contains($tripUnfolded, 'RELATED-TO;RELTYPE
 checkEq('trip ics member parent line', 1, substr_count($tripUnfolded, 'RELATED-TO;RELTYPE=PARENT:trip-1'));
 check('trip ics undecorated rows write nothing', !str_contains(Ics::buildCalendar('X', null, [[
     'uid' => 'plain', 'title' => 'Plain', 'start_utc' => '2026-06-01 16:00:00',
-    'end_utc' => '2026-06-01 17:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+    'end_utc' => '2026-06-01 17:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed', 'show_as' => 'busy',
 ]]), 'RELATED-TO'));
 
 // DavIcs object builder threads relationship uids onto the master VEVENT.
@@ -9857,7 +9857,7 @@ require __DIR__ . '/plugins.php';
     check('uid: nothing usable left means a fresh one, never an empty uid', strlen(Ics::uidOrNew("\r\n")) > 10);
     $exported = Ics::buildObject([[
         'uid' => "evil\r\nX-BC-INJECTED:1", 'title' => 'T', 'start_utc' => '2026-10-01 10:00:00', 'end_utc' => '2026-10-01 11:00:00',
-        'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed', 'url' => "https://x.example/\r\nATTENDEE:mailto:a@b.c", 'rrule' => "FREQ=DAILY\r\nX-EVIL:1",
+        'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed', 'show_as' => 'busy', 'url' => "https://x.example/\r\nATTENDEE:mailto:a@b.c", 'rrule' => "FREQ=DAILY\r\nX-EVIL:1",
     ]]);
     check('export: a stored UID/URL/RRULE with a newline cannot add a property line (rows from before the fix)',
         preg_match('/^(X-BC-INJECTED|ATTENDEE|X-EVIL)/m', $exported) === 0);
@@ -9892,7 +9892,7 @@ require __DIR__ . '/plugins.php';
 
     $calendarRow = [
         'uid' => 'sample-1', 'title' => 'Sample event', 'start_utc' => '2026-10-01 10:00:00',
-        'end_utc' => '2026-10-01 11:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+        'end_utc' => '2026-10-01 11:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed', 'show_as' => 'busy',
     ];
     $calendarText = Ics::buildCalendar('Sample calendar', null, [$calendarRow]);
     checkEq('outfeed output: exact serialized byte budget is admitted', strlen($calendarText),
@@ -12387,7 +12387,7 @@ use BetterCal\Infra\Secrets;
         $ofSeries(GoogleSync::applyChanges($snapshot, [['cancelled' => true, 'uid' => 'r1@google.com', 'recurrence_instance_utc' => null], $exception, $series], true)));
 
     // GoogleSeries: a link is a value like every other field Google holds, compared on the read-back, sent where it differs, cleared where the plan has none.
-    $gm = ['title' => 'Sample weekly', 'description' => null, 'location' => null, 'status' => 'confirmed', 'start_utc' => '2027-03-01 18:00:00', 'end_utc' => '2027-03-01 19:00:00',
+    $gm = ['title' => 'Sample weekly', 'description' => null, 'location' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'start_utc' => '2027-03-01 18:00:00', 'end_utc' => '2027-03-01 19:00:00',
         'all_day' => 0, 'tzid' => 'UTC', 'url' => 'https://example.test/series', 'rrule' => 'FREQ=WEEKLY'];
     $cleared = BetterCal\Domain\GoogleSeries::masterBody($gm, ['url' => null] + $gm);
     check('google series: a link removed from the series is cleared at Google (source null)', array_key_exists('source', $cleared) && $cleared['source'] === null);
@@ -12429,7 +12429,7 @@ use BetterCal\Infra\Secrets;
     $rows = GoogleSync::rowsToParsed([[
         'uid' => 'r1@google.com', 'title' => 'Standup', 'description' => null, 'location' => null, 'url' => null,
         'start_utc' => '2026-09-21 08:00:00', 'end_utc' => '2026-09-21 08:15:00', 'all_day' => '0', 'tzid' => 'Europe/Lisbon',
-        'rrule' => 'FREQ=WEEKLY;BYDAY=MO', 'exdates_json' => '["2026-09-28 08:00:00"]', 'status' => 'confirmed', 'recurrence_instance_utc' => null,
+        'rrule' => 'FREQ=WEEKLY;BYDAY=MO', 'exdates_json' => '["2026-09-28 08:00:00"]', 'status' => 'confirmed', 'show_as' => 'busy', 'recurrence_instance_utc' => null,
     ]]);
     checkEq('rows->parsed: exdates decoded', ['2026-09-28 08:00:00'], $rows[0]['exdates']);
     checkEq('rows->parsed: all_day is an int', 0, $rows[0]['all_day']);
@@ -12451,7 +12451,7 @@ use BetterCal\Infra\Secrets;
     $etagBack = GoogleSync::rowsToParsed([[
         'uid' => 'probe1a2b3c@google.com', 'title' => 'Sample standup', 'description' => null, 'location' => null, 'url' => null,
         'start_utc' => '2027-03-01 18:00:00', 'end_utc' => '2027-03-01 18:30:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles',
-        'rrule' => 'FREQ=WEEKLY;COUNT=10', 'exdates_json' => null, 'status' => 'confirmed', 'recurrence_instance_utc' => null,
+        'rrule' => 'FREQ=WEEKLY;COUNT=10', 'exdates_json' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'recurrence_instance_utc' => null,
         'google_event_id' => 'probe1a2b3c', 'google_etag' => '"3400000000000000"',
     ]]);
     checkEq('google rows->parsed: the stored etag rides an incremental merge', '"3400000000000000"', $etagBack[0]['google_etag']);
@@ -12505,7 +12505,7 @@ use BetterCal\Domain\GoogleWriter;
 
 {
     $timed = GoogleWriter::body([
-        'title' => 'Dinner', 'description' => 'Table for four', 'location' => 'Example Cafe', 'status' => 'confirmed',
+        'title' => 'Dinner', 'description' => 'Table for four', 'location' => 'Example Cafe', 'status' => 'confirmed', 'show_as' => 'busy',
         'start_utc' => '2026-09-21 18:00:00', 'end_utc' => '2026-09-21 20:00:00', 'all_day' => 0, 'tzid' => 'Europe/Lisbon',
         'rrule' => null, 'exdates_json' => null,
     ]);
@@ -12516,14 +12516,14 @@ use BetterCal\Domain\GoogleWriter;
     check('google body: attendees and reminders are never sent', !isset($timed['attendees']) && !isset($timed['reminders']));
 
     // All-day rows created here hold midnight in the event zone (07:00 UTC for Pacific); Google wants the date.
-    $allDay = GoogleWriter::body(['title' => 'Conference', 'start_utc' => '2026-03-09 07:00:00', 'end_utc' => '2026-03-13 07:00:00', 'all_day' => 1, 'tzid' => 'America/Los_Angeles']);
+    $allDay = GoogleWriter::body(['title' => 'Conference', 'start_utc' => '2026-03-09 07:00:00', 'end_utc' => '2026-03-13 07:00:00', 'all_day' => 1, 'tzid' => 'America/Los_Angeles', 'show_as' => 'busy']);
     checkEq('google body: all-day dates from the event zone', [['date' => '2026-03-09'], ['date' => '2026-03-13']], [$allDay['start'], $allDay['end']]);
-    $allDayUtc = GoogleWriter::body(['title' => 'Retreat', 'start_utc' => '2026-03-12 00:00:00', 'end_utc' => '2026-03-15 00:00:00', 'all_day' => 1, 'tzid' => 'UTC']);
+    $allDayUtc = GoogleWriter::body(['title' => 'Retreat', 'start_utc' => '2026-03-12 00:00:00', 'end_utc' => '2026-03-15 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'show_as' => 'busy']);
     checkEq('google body: all-day dates for a Google-origin row (UTC midnight)', [['date' => '2026-03-12'], ['date' => '2026-03-15']], [$allDayUtc['start'], $allDayUtc['end']]);
 
     $series = GoogleWriter::body([
         'title' => 'Standup', 'start_utc' => '2026-09-21 08:00:00', 'end_utc' => '2026-09-21 08:15:00', 'all_day' => 0, 'tzid' => 'Europe/Lisbon',
-        'rrule' => 'FREQ=WEEKLY;BYDAY=MO', 'exdates_json' => '["2026-09-28 08:00:00"]', 'status' => 'tentative',
+        'rrule' => 'FREQ=WEEKLY;BYDAY=MO', 'exdates_json' => '["2026-09-28 08:00:00"]', 'status' => 'tentative', 'show_as' => 'busy',
     ]);
     checkEq('google body: recurrence carries RRULE and zoned EXDATE', ['RRULE:FREQ=WEEKLY;BYDAY=MO', 'EXDATE;TZID=Europe/Lisbon:20260928T090000'], $series['recurrence']);
     checkEq('google body: tentative survives', 'tentative', $series['status']);
@@ -12557,7 +12557,7 @@ use BetterCal\Domain\GoogleWriter;
     }
 
     // Moving a calendar to Google (0.9.4, #55).
-    $linked = ['uid' => 'evt-1@better-cal', 'title' => 'Bake sale', 'url' => 'https://partiful.com/e/abc', 'start_utc' => '2026-10-10 17:00:00', 'end_utc' => '2026-10-10 19:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY'];
+    $linked = ['uid' => 'evt-1@better-cal', 'title' => 'Bake sale', 'url' => 'https://partiful.com/e/abc', 'start_utc' => '2026-10-10 17:00:00', 'end_utc' => '2026-10-10 19:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY', 'show_as' => 'busy'];
     $imp = GoogleWriter::importBody($linked);
     checkEq('google move: import keeps our UID', 'evt-1@better-cal', $imp['iCalUID']);
     checkEq('google move: the event link travels as source', ['url' => 'https://partiful.com/e/abc', 'title' => 'partiful.com'], $imp['source']);
@@ -12583,7 +12583,7 @@ use BetterCal\Domain\GoogleWriter;
     checkEq('google->parsed: a guest list from someone else is an invitation to answer', 'NEEDS-ACTION', json_decode((string) $guest['invite_json'], true)['myPartstat']);
     $own = GoogleSync::toParsed(['organizer' => ['email' => 'me@gmail.com', 'self' => true]] + $sourcedItem);
     check('google->parsed: my own meeting clears the block', array_key_exists('invite_json', $own) && $own['invite_json'] === null);
-    $back = GoogleSync::rowsToParsed([['uid' => 'u', 'title' => 't', 'description' => null, 'location' => null, 'url' => null, 'start_utc' => '2026-10-10 17:00:00', 'end_utc' => '2026-10-10 18:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'rrule' => null, 'exdates_json' => null, 'status' => 'confirmed', 'recurrence_instance_utc' => null, 'google_event_id' => 'g2', 'invite_json' => $guest['invite_json']]]);
+    $back = GoogleSync::rowsToParsed([['uid' => 'u', 'title' => 't', 'description' => null, 'location' => null, 'url' => null, 'start_utc' => '2026-10-10 17:00:00', 'end_utc' => '2026-10-10 18:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'rrule' => null, 'exdates_json' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'recurrence_instance_utc' => null, 'google_event_id' => 'g2', 'invite_json' => $guest['invite_json']]]);
     checkEq('google rows->parsed: the invitation rides an incremental merge', $guest['invite_json'], $back[0]['invite_json']);
 
     $cal = ['provider' => 'google', 'google_calendar_id' => 'x@group.calendar.google.com', 'google_account_id' => 1, 'google_access_role' => 'writer'];

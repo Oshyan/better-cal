@@ -235,7 +235,7 @@ return static function (Db $db): void {
         $calendar = $db->one('SELECT * FROM calendars WHERE id = ?', [$calendarId]);
         $ev = static fn(string $title, ?string $key, string $start, string $loc = 'Sample Hall'): array => ['uid' => 'sample-feed-series', 'title' => $title, 'description' => null,
             'location' => $loc, 'url' => null, 'start_utc' => $start, 'end_utc' => substr($start, 0, 11) . '19:00:00', 'all_day' => 0, 'tzid' => 'UTC',
-            'rrule' => $key === null ? 'FREQ=WEEKLY;BYDAY=TU' : null, 'exdates' => [], 'status' => 'confirmed', 'recurrence_instance_utc' => $key];
+            'rrule' => $key === null ? 'FREQ=WEEKLY;BYDAY=TU' : null, 'exdates' => [], 'status' => 'confirmed', 'show_as' => 'busy', 'recurrence_instance_utc' => $key];
         $feedOwn = static fn() => json_decode((string) $db->scalar("SELECT override_fields FROM events WHERE calendar_id = ? AND recurrence_instance_utc = '2027-01-12 18:00:00'", [$calendarId]), true);
         $feeds->sync($calendar, [$ev('Choir', null, '2027-01-05 18:00:00'), $ev('Rehearsal', '2027-01-12 18:00:00', '2027-01-12 18:00:00')]);
         checkEq('sync: an edited day never seen, by equality', ['title'], $feedOwn());
@@ -679,7 +679,7 @@ return static function (Db $db): void {
         $calendar = $db->one('SELECT * FROM calendars WHERE id = ?', [$calendarId]);
         $ev = static fn(string $uid, ?string $key, string $start, string $end, string $tzid = 'UTC'): array => ['uid' => $uid, 'title' => 'Sample recital', 'description' => null,
             'location' => null, 'url' => null, 'start_utc' => $start, 'end_utc' => $end, 'all_day' => 0, 'tzid' => $tzid,
-            'rrule' => $key === null ? 'FREQ=WEEKLY;BYDAY=TU' : null, 'exdates' => [], 'status' => 'confirmed', 'recurrence_instance_utc' => $key];
+            'rrule' => $key === null ? 'FREQ=WEEKLY;BYDAY=TU' : null, 'exdates' => [], 'status' => 'confirmed', 'show_as' => 'busy', 'recurrence_instance_utc' => $key];
         $feedOwn = static fn(string $uid) => json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_parent_id IS NOT NULL', [$calendarId, $uid]), true);
         $master = static fn(string $uid): array => $ev($uid, null, '2027-01-05 19:00:00', '2027-01-05 20:30:00');
         $feedDay = static function (string $uid, string $start, string $end, string $tzid = 'UTC') use ($feeds, $calendar, $ev, $master): void {

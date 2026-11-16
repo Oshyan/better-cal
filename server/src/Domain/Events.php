@@ -1713,10 +1713,11 @@ final class Events
                 ? self::encodeReminders(Reminders::validateEventReminders($in['reminders']))
                 : null,
             'status' => $this->statusOrDefault($in['status'] ?? null),
-            // Busy (the column's default) unless asked otherwise; on a Google
-            // calendar busy sends nothing, so Google's own default decides
+            // As the request says, else the calendar's rule for a new event
+            // (GoogleWriter::newShowAs: free for an all-day event on a Google
+            // calendar, else busy). On Google free is sent and busy is not
             // (GoogleWriter::body).
-            ...(array_key_exists('showAs', $in) && $in['showAs'] !== null ? ['show_as' => self::showAs($in['showAs'])] : []),
+            'show_as' => array_key_exists('showAs', $in) && $in['showAs'] !== null ? self::showAs($in['showAs']) : GoogleWriter::newShowAs($calendar, $allDay),
             'source' => 'local',
             'created_via' => ActivityContext::get(),
             'created_at' => Time::nowDb(),

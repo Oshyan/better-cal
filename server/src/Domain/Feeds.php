@@ -756,7 +756,7 @@ final class Feeds
             'location' => $series['location'],
             'url' => $series['url'],
             'status' => $series['status'],
-            'show_as' => $series['show_as'] ?? 'busy',
+            'show_as' => $series['show_as'],
             'all_day' => $allDay ? 1 : 0,
             'tzid' => $series['tzid'],
         ];

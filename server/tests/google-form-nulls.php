@@ -45,7 +45,7 @@ if (!function_exists('check')) {
     $rule = 'FREQ=WEEKLY;COUNT=10';
     // A target's master (GoogleSeries::stateOf's shape): the series as stored, and as the change leaves it.
     $master = static fn(string $start, string $end, int $allDay, string $tz): array => [
-        'title' => 'Sample form', 'description' => null, 'location' => null, 'status' => 'confirmed',
+        'title' => 'Sample form', 'description' => null, 'location' => null, 'status' => 'confirmed', 'show_as' => 'busy',
         'start_utc' => $start, 'end_utc' => $end, 'all_day' => $allDay, 'tzid' => $tz, 'url' => null, 'rrule' => $rule,
     ];
     $timedLa = $master('2027-03-01 18:00:00', '2027-03-01 19:00:00', 0, $la);
@@ -68,7 +68,7 @@ if (!function_exists('check')) {
 
     // A single event: its row as stored and as the edit leaves it, through patchOf as Events builds the body.
     $row = static fn(string $start, string $end, int $allDay, string $tz): array => [
-        'title' => 'Sample single', 'description' => 'Sample notes', 'location' => 'Sample room', 'status' => 'confirmed', 'url' => null,
+        'title' => 'Sample single', 'description' => 'Sample notes', 'location' => 'Sample room', 'status' => 'confirmed', 'show_as' => 'busy', 'url' => null,
         'start_utc' => $start, 'end_utc' => $end, 'all_day' => $allDay, 'tzid' => $tz, 'rrule' => null, 'exdates_json' => null,
     ];
     $singleTimed = $row('2027-03-01 18:00:00', '2027-03-01 19:00:00', 0, $la);

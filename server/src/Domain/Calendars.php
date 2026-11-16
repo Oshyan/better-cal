@@ -689,6 +689,9 @@ final class Calendars
             // user's connected account); local calendars carry ics by default
             // and the client ignores it for them.
             'provider' => (string) ($c['provider'] ?? 'ics'),
+            // What a new event here is when the person does not say whether
+            // it takes up time (#303; GoogleWriter::newShowAs, the one rule).
+            'newShowAs' => ['timed' => GoogleWriter::newShowAs($c, false), 'allDay' => GoogleWriter::newShowAs($c, true)],
             // mine: events are planned unless marked maybe; opportunities:
             // available until picked; context: information, drawn quietly.
             'role' => (string) ($c['role'] ?? 'mine'),

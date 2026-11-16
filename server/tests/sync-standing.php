@@ -13,7 +13,7 @@ declare(strict_types=1);
 
 use BetterCal\Domain\Feeds;
 
-$ssSeries = static fn(array $over): array => $over + ['id' => 1, 'title' => 'Sample practice', 'description' => null, 'location' => null, 'url' => null, 'status' => 'confirmed',
+$ssSeries = static fn(array $over): array => $over + ['id' => 1, 'title' => 'Sample practice', 'description' => null, 'location' => null, 'url' => null, 'status' => 'confirmed', 'show_as' => 'busy',
     'rrule' => 'FREQ=DAILY;COUNT=10', 'exdates_json' => null, 'deleted_at' => null];
 $ssTimed = static fn(string $zone, string $startUtc, array $over = []): array => $ssSeries($over + ['all_day' => 0, 'tzid' => $zone, 'start_utc' => $startUtc,
     'end_utc' => (new DateTimeImmutable($startUtc, new DateTimeZone('UTC')))->modify('+1 hour')->format('Y-m-d H:i:s')]);

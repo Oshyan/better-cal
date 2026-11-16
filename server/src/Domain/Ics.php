@@ -584,10 +584,10 @@ final class Ics
             $out .= self::line('STATUS', $status);
         }
         // An event that takes up no time (#303); OPAQUE, taking up time, is
-        // iCalendar's default, so a busy event writes nothing, as a row
-        // built without the column does (every stored row has it, and each
-        // projection that feeds this names it: OutFeeds::SOURCE_PROJECTION).
-        if (($ev['show_as'] ?? 'busy') === 'free') {
+        // iCalendar's default, so a busy event writes nothing. Every row has
+        // it (every projection that feeds this names it:
+        // OutFeeds::SOURCE_PROJECTION).
+        if ((string) $ev['show_as'] === 'free') {
             $out .= self::line('TRANSP', 'TRANSPARENT');
         }
         // Explicit per-event reminder overrides export as display VALARMs;

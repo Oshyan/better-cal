@@ -159,7 +159,7 @@ final class GoogleSeries
             'description' => $row['description'] ?? null,
             'location' => $row['location'] ?? null,
             'status' => (string) ($row['status'] ?? 'confirmed') === 'tentative' ? 'tentative' : 'confirmed',
-            'show_as' => (string) ($row['show_as'] ?? 'busy') === 'free' ? 'free' : 'busy',
+            'show_as' => (string) $row['show_as'],
             'start_utc' => (string) $row['start_utc'],
             'end_utc' => (string) $row['end_utc'],
             'all_day' => (int) ($row['all_day'] ?? 0),
@@ -1365,7 +1365,7 @@ final class GoogleSeries
     {
         return [
             'title' => $cols['title'], 'description' => $cols['description'], 'location' => $cols['location'], 'status' => $cols['status'],
-            'show_as' => $cols['show_as'] ?? 'busy', 'start_utc' => $cols['start_utc'], 'end_utc' => $cols['end_utc'], 'all_day' => $cols['all_day'], 'tzid' => $cols['tzid'],
+            'show_as' => $cols['show_as'], 'start_utc' => $cols['start_utc'], 'end_utc' => $cols['end_utc'], 'all_day' => $cols['all_day'], 'tzid' => $cols['tzid'],
             'url' => $cols['url'] ?? null, 'rrule' => $rrule, 'exdates_json' => null,
         ];
     }
@@ -1409,7 +1409,7 @@ final class GoogleSeries
             // The link as Google's source; null clears one (a PATCH leaves out what it doesn't name).
             $body['source'] = $full['source'] ?? null;
         }
-        if ($before !== null && (string) ($before['show_as'] ?? 'busy') !== (string) ($after['show_as'] ?? 'busy')) {
+        if ($before !== null && (string) $before['show_as'] !== (string) $after['show_as']) {
             // Free as `transparent`; busy as null, which clears it to Google's default. A new series sends nothing for busy.
             $body['transparency'] = $full['transparency'] ?? null;
         } elseif ($before === null && isset($full['transparency'])) {
@@ -1663,7 +1663,7 @@ final class GoogleSeries
             'description' => Sanitize::description(isset($r['description']) && $r['description'] !== '' ? (string) $r['description'] : null) ?? '',
             'location' => trim((string) ($r['location'] ?? '')),
             'status' => (string) ($r['status'] ?? 'confirmed') === 'tentative' ? 'tentative' : 'confirmed',
-            'show_as' => (string) ($r['show_as'] ?? 'busy') === 'free' ? 'free' : 'busy',
+            'show_as' => (string) $r['show_as'],
             'start_utc' => (string) $r['start_utc'],
             'end_utc' => (string) $r['end_utc'],
             'all_day' => $allDay,
@@ -1828,10 +1828,6 @@ final class GoogleSeries
         // A link set is written into every kept record, as a title is (3.32, 2026-11-10; 3.52, 2026-11-13).
         if (array_key_exists('source', $body)) {
             $set['url'] = $new['url'] ?? null;
-        }
-        // Free or busy predicted as a title is: not yet probed (#303); a read-back that differs sends the day again.
-        if (array_key_exists('transparency', $body)) {
-            $set['show_as'] = $new['show_as'] ?? 'busy';
         }
         // A series with no notes at Google, written without them: Google clears every kept record's own notes (probe
         // 2026-11-13, 3.52 to 3.57; with notes of its own the records keep theirs, 3.58 to 3.60). Predicted here only

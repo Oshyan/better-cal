@@ -159,7 +159,7 @@ return static function (Db $db): void {
         $feeds = new Feeds($db);
         $calendar = static fn(): array => $db->one('SELECT * FROM calendars WHERE id = ?', [$g->calendarId]);
         $shape = static fn(array $over): array => $over + ['uid' => 'smplform@google.com', 'description' => null, 'location' => null, 'url' => null, 'tzid' => 'UTC', 'all_day' => 1,
-            'rrule' => null, 'exdates' => [], 'status' => 'confirmed', 'recurrence_instance_utc' => null, 'reminders' => []];
+            'rrule' => null, 'exdates' => [], 'status' => 'confirmed', 'show_as' => 'busy', 'recurrence_instance_utc' => null, 'reminders' => []];
         $feeds->sync($calendar(), [$shape(['title' => 'Sample class, special', 'google_event_id' => 'smplform_20270107T000000Z', 'recurrence_instance_utc' => $key,
             'all_day' => 0, 'tzid' => 'America/New_York', 'start_utc' => '2027-01-07 01:00:00', 'end_utc' => '2027-01-07 02:00:00'])]);
         $held = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$g->calendarId]);

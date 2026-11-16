@@ -91,7 +91,7 @@ return static function (Db $db): void {
     });
 
     // EXDATE lines as other clients write them, put at the stand-in as an import leaves a series, then renamed for all events.
-    $row = ['uid' => 'sample-probe-series@example.test', 'title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'url' => null,
+    $row = ['uid' => 'sample-probe-series@example.test', 'title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'url' => null,
         'start_utc' => '2027-01-04 18:00:00', 'end_utc' => '2027-01-04 19:00:00', 'all_day' => 0, 'tzid' => $la, 'rrule' => 'FREQ=WEEKLY;COUNT=6', 'exdates_json' => null];
     foreach ([
         'a UTC line' => ['EXDATE:20270118T180000Z'],

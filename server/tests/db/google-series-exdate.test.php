@@ -97,7 +97,7 @@ return static function (Db $db): void {
         $d = domains($db);
         $s = GoogleStand::make($db, $d->undo, $u);
         // The body GoogleMove::move imports (GoogleWriter::importBody), put at the stand-in as Google takes an import.
-        $row = ['uid' => 'sample-moved-series@example.test', 'title' => 'Sample moved', 'description' => null, 'location' => null, 'status' => 'confirmed', 'url' => null,
+        $row = ['uid' => 'sample-moved-series@example.test', 'title' => 'Sample moved', 'description' => null, 'location' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'url' => null,
             'start_utc' => '2027-01-04 18:00:00', 'end_utc' => '2027-01-04 19:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY;COUNT=6',
             'exdates_json' => json_encode([$third, $fifth])];
         $s->fake->seed(['id' => 'smplmoved1'] + GoogleWriter::importBody($row));

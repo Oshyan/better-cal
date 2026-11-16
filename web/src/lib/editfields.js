@@ -43,6 +43,15 @@ export const EDIT_FIELDS = [
   { keys: ['rrule'], label: 'Repeat', words: () => null },
 ];
 
+/**
+ * Whether a new event on `cal` takes up time when the person has not said
+ * (#303): the server's one rule (GoogleWriter::newShowAs), served on each
+ * calendar as `newShowAs` {timed, allDay}, so the editor shows the value a
+ * save will store. No calendar (none loaded yet) is busy, as on any calendar
+ * not on Google.
+ */
+export const newShowAsOf = (cal, allDay) => (cal ? cal.newShowAs[allDay ? 'allDay' : 'timed'] : 'busy');
+
 const ROW_OF = new Map(EDIT_FIELDS.flatMap((row) => row.keys.map((k) => [k, row])));
 /** Whether the table has a row for a request field, so the panel can name it. */
 export const editField = (key) => ROW_OF.get(key) || null;

@@ -2179,7 +2179,11 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-login-error { color: var(--danger); font-size: 13px; }
 
 /* Management pages share a scroll surface with a centered content column. */
-.bc-page { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; padding: 20px 24px 32px; }
+/* Room for the toasts at the bottom of the screen (--toast-room): below the
+   last row, so it can scroll clear of them, and as scroll padding, so an
+   inline confirm revealed as it opens (PageShell.js, revealConfirm) stops
+   above them. */
+.bc-page { --toast-room: 64px; flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; padding: 20px 24px calc(32px + var(--toast-room)); scroll-padding-bottom: var(--toast-room); }
 .bc-page-col { max-width: 680px; margin: 0 auto; }
 /* Breadcrumb-style back link: above the title, link-colored with a left
    arrow, so it never reads as an action button. */
@@ -2403,6 +2407,9 @@ body.bc-dragging * { cursor: grabbing !important; }
   margin: 0; padding: 0 0 0 21px; list-style: none;
 }
 .bc-tag-item { min-width: 0; border-bottom: 1px solid var(--border); }
+/* Renaming, or asking to merge or delete: the row takes the list's whole
+   width, so the field shows a long name with Save and Cancel beside it. */
+.bc-tag-item.is-wide { grid-column: 1 / -1; }
 .bc-tag-line { display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 3px 0; }
 .bc-tag-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .bc-tag-line .bc-org-count, .bc-tag-line .bc-org-note { flex: none; white-space: nowrap; }
@@ -3738,6 +3745,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
    the choices sit beside the message or under it is one rule at every width
    (.bc-toast-acts; Toasts.js fitToast). */
 @media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
+  .bc-page { --toast-room: 84px; }
   .bc-toasts { left: 12px; right: 12px; transform: none; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
   .bc-toast { max-width: 100%; }
 }

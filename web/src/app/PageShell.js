@@ -22,6 +22,16 @@ export function PageShell({ title, note, children, back = null }) {
   </div>`;
 }
 
+// A page's inline confirm (Delete folder, Delete tag, Merge) as it opens:
+// scrolled fully into view, clear of the toasts at the bottom of the screen.
+// The page keeps room for them below its content and as its scroll padding
+// (.bc-page, --toast-room), so `nearest` stops above them. Pass as the
+// confirm's ref: one function, so it runs when the confirm mounts, not on
+// every render.
+export function revealConfirm(el) {
+  if (el && el.scrollIntoView) requestAnimationFrame(() => el.isConnected && el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+}
+
 // Loading placeholder shaped like what is coming: a few shimmering lines of
 // varying width. Same wall time as "Loading…", read differently: text says
 // "wait", a shape says "almost".

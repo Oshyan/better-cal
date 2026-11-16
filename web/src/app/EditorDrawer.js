@@ -1245,7 +1245,7 @@ export function EditorDrawer() {
             ${availWarn.map((c) => html`<span key=${c.id}><${Icon} name="warning" size=${12} /> ${c.name} is ${c.kind} then${c.note ? ' (' + c.note + ')' : ''}</span>`)}
           </div>`}
         </div>
-        ${lab('Tags')}
+        ${lab('Tags', ' is-top')}
         <div class=${'bc-ed-ctl' + flash('tags')}>
           <input placeholder="Comma separated" aria-label="Tags, comma separated" aria-invalid=${badTags.length > 0 ? 'true' : 'false'} value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
           ${badTags.length > 0 && html`<div class="bc-ed-sub bc-ed-err" role="alert">${badTags.map((n) => '"' + n + '"').join(', ')} can't be ${badTags.length === 1 ? 'a new tag' : 'new tags'}. ${TAG_NAME_HINT}</div>`}

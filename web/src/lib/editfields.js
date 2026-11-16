@@ -39,7 +39,7 @@ export const EDIT_FIELDS = [
   { keys: ['isContainer'], label: 'Trip', field: 'isContainer', words: (a, b) => (a.isContainer ? 'yes' : 'no') + ', now ' + (b.isContainer ? 'yes' : 'no') },
   // Floating (#167): the same clock time in any zone, the series' value for
   // every event, as the trip flag is.
-  { keys: ['floating'], label: 'Floating', field: 'floating', words: (a, b) => (a.floating ? 'yes' : 'no') + ', now ' + (b.floating ? 'yes' : 'no') },
+  { keys: ['floating'], label: 'Same clock time in any zone', field: 'floating', words: (a, b) => (a.floating ? 'yes' : 'no') + ', now ' + (b.floating ? 'yes' : 'no') },
   { keys: ['rrule'], label: 'Repeat', words: () => null },
 ];
 

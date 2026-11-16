@@ -186,7 +186,7 @@ export function CommandPalette() {
 
   const indexOf = (row) => flat.indexOf(row);
 
-  return html`<div class="bc-overlay bc-palette-overlay" onClick=${(e) => { if (e.target === e.currentTarget) close(); }}>
+  return html`<div class="bc-overlay bc-palette-overlay" data-layer="" onClick=${(e) => { if (e.target === e.currentTarget) close(); }}>
     <div class="bc-palette" ref=${panelRef} role="dialog" aria-modal="true" aria-label="Command palette">
       <div class="bc-palette-top">
         ${prompt && html`<span class="bc-palette-crumb">${prompt.label}</span>`}

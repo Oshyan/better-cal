@@ -946,7 +946,7 @@ export function TimeGrid({
       scrollEl: scrollRef.current,
       hScrollEl: infinite ? hscrollRef.current : null,
       copyable: () => !isFeed && !occ.isContainer && !(ext && ext.kind === 'person'),
-      onLift: () => src.classList.add('is-drag-source'),
+      source: src,
       onMove: (pt) => {
         if (extKinds) {
           ext = externalDropTarget(pt, extKinds);
@@ -966,7 +966,6 @@ export function TimeGrid({
         showPreview(previewRef, previewGeom(), keyOfEpochDay(day), target - dayStart, span.dur);
       },
       onDrop: (pt) => {
-        src.classList.remove('is-drag-source');
         hidePreview(previewRef);
         setDropRowHighlight(null);
         if (ext) {
@@ -979,7 +978,7 @@ export function TimeGrid({
         if (parseISO(r.newStart).getTime() === parseISO(occ.start).getTime()) return;
         onMoveEvent({ instanceId: occ.instanceId, ...r, at: pt });
       },
-      onCancel: () => { src.classList.remove('is-drag-source'); hidePreview(previewRef); setDropRowHighlight(null); },
+      onCancel: () => { hidePreview(previewRef); setDropRowHighlight(null); },
     });
   }, [pointToSlot, infinite, previewGeom, onMoveEvent, onDropToCalendar, onDropToPerson, calendars]);
 
@@ -1014,7 +1013,7 @@ export function TimeGrid({
       makeGhost: () => cloneAsGhost(src),
       ...dayScroll(),
       copyable: () => !isFeed && !(ext && ext.kind === 'person'),
-      onLift: () => src.classList.add('is-drag-source'),
+      source: src,
       onMove: (pt) => {
         if (extKinds) {
           ext = externalDropTarget(pt, extKinds);
@@ -1027,7 +1026,6 @@ export function TimeGrid({
         setDraft({ mode: 'days', startKey: keyOfEpochDay(target), endKey: keyOfEpochDay(target + span) });
       },
       onDrop: (pt) => {
-        src.classList.remove('is-drag-source');
         setDraft(null);
         setDropRowHighlight(null);
         if (ext) {
@@ -1040,7 +1038,7 @@ export function TimeGrid({
         if (delta === 0) return;
         onMoveEvent({ instanceId: occ.instanceId, ...shiftOccurrenceDays(occ, delta), at: pt });
       },
-      onCancel: () => { src.classList.remove('is-drag-source'); setDraft(null); setDropRowHighlight(null); },
+      onCancel: () => { setDraft(null); setDropRowHighlight(null); },
     });
   }, [pointToSlot, infinite, vstack, calendars, onMoveEvent, onDropToCalendar, onDropToPerson]); // eslint-disable-line
   const dragResizeBar = useCallback((occ, edge, ev) => {

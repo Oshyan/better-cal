@@ -1,4 +1,4 @@
-// Activity log: latest-first feed of every change — manual and automated —
+// Activity log: latest-first feed of every change, manual and automated,
 // with source filters, a live quick filter, jump-to-event, and per-entry
 // undo inside the 7-day snapshot window (docs/api-contract.md#activity).
 
@@ -165,7 +165,7 @@ export function ActivityPage() {
     </div>
 
     ${entries === null && html`<${Skeleton} rows=${6} />`}
-    ${entries !== null && entries.length === 0 && html`<${EmptyState} text=${q || sel ? 'Nothing matches these filters.' : 'No activity yet — changes you or your automations make will appear here.'} />`}
+    ${entries !== null && entries.length === 0 && html`<${EmptyState} text=${q || sel ? 'Nothing matches these filters.' : 'No activity yet. Changes you or your automations make show up here.'} />`}
     ${entries !== null && entries.length > 0 && html`<ul class="bc-activity-list">
       ${entries.map((en) => html`<li key=${en.id} class="bc-activity-row${en.undone ? ' is-undone' : ''}${en.op === 'refuse' ? ' is-refused' : ''}">
         <span class="bc-activity-when" title=${en.at}>${fmtWhen(en.at)}</span>

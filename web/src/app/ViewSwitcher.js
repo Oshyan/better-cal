@@ -113,7 +113,7 @@ export function ViewSwitcher() {
       ${active && modified && html`<span class="bc-views-dot" role="img" aria-label="View modified" title="View modified"></span>`}
       <span class="bc-views-caret" aria-hidden="true"><${Icon} name="chevronDown" size=${12} /></span>
     </button>
-    ${open && html`<div class="bc-views-pop" ref=${panelRef} role="dialog" aria-label="Saved views">
+    ${open && html`<div class="bc-views-pop" data-layer="" ref=${panelRef} role="dialog" aria-label="Saved views">
       <button type="button" class="bc-views-item bc-views-default" title="Month, today, no filters (0). Mark a saved view as default in Manage views." onClick=${picker.selectDefault}>
         <span class="bc-views-label">Default view${picker.defaultView ? ': ' + picker.defaultView.name : ''}</span>
         <kbd class="bc-ov-key">0</kbd>

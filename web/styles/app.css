@@ -1086,7 +1086,6 @@ button.bc-hidden-mark { cursor: pointer; }
 .bc-block-handle { position: absolute; left: 0; right: 0; height: 6px; cursor: ns-resize; }
 .bc-block-handle.t { top: 0; }
 .bc-block-handle.b { bottom: 0; }
-.bc-block.is-drag-source { opacity: 0.4; }
 
 .bc-flash { animation: bc-flash 0.7s ease 3; }
 @keyframes bc-flash {
@@ -1101,10 +1100,13 @@ button.bc-hidden-mark { cursor: pointer; }
   pointer-events: none; opacity: 0.85; box-shadow: var(--shadow);
   will-change: transform;
 }
-/* Option/Alt-drag copies (DragController): the original stays as it is,
-   the cursor says copy, and the ghost carries a +. */
+/* The original of an event being moved (DragController marks it, whatever
+   its kind: a block, a bar, a chip, a band) fades, over any resting style
+   and pointing at it. Option/Alt-drag copies: DragController takes the mark
+   off, so the original stays as it is, the cursor says copy, and the ghost
+   carries a +. */
+.is-drag-source { opacity: 0.4 !important; }
 body.bc-drag-copy, body.bc-drag-copy * { cursor: copy !important; }
-body.bc-drag-copy .is-drag-source { opacity: 1; }
 body.bc-drag-copy .bc-drag-ghost::after {
   content: '+'; position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; border-radius: 50%;
   background: var(--accent); color: var(--accent-fg); font: 700 13px/16px system-ui, sans-serif; text-align: center;
@@ -5081,4 +5083,3 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-block:is(.is-past, .is-context)::after { opacity: 0.45; }
 .bc-block.is-past.is-filter-dimmed::after { opacity: 0.58; }
 .bc-block:not(.is-drag-source):is(:hover, :focus-visible)::after { opacity: 0; }
-body:not(.bc-drag-copy) .bc-block.is-drag-source:is(.is-past, :hover, :focus-visible) { opacity: 0.4; }

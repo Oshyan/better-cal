@@ -82,7 +82,7 @@ export function ConfirmHost() {
   useEffect(() => { if (ask && cancelRef.current) cancelRef.current.focus(); }, [ask]);
   if (!ask) return null;
   const finish = (yes) => ask.resolve(yes);
-  return html`<div class="bc-stepup-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) finish(false); }}
+  return html`<div class="bc-stepup-backdrop" data-layer="top" onClick=${(e) => { if (e.target === e.currentTarget) finish(false); }}
     onKeyDown=${(e) => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); finish(false); } }}>
     <div class="bc-stepup" role="alertdialog" aria-modal="true" aria-labelledby="bc-confirm-title" aria-describedby=${ask.body ? 'bc-confirm-body' : undefined}>
       <h2 id="bc-confirm-title">${ask.title}</h2>

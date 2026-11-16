@@ -123,7 +123,7 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
     style = `left:${p.left}px;top:${p.top}px;width:${w}px;max-height:${maxH}px`;
   }
 
-  return html`<div class=${'bc-overlay' + (dragging ? ' is-dragging-out' : '')} onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
+  return html`<div class=${'bc-overlay' + (dragging ? ' is-dragging-out' : '')} data-layer="" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
     <div
       class="bc-dayexpand${mobile ? ' bc-sheet' : ''}"
       style=${style}

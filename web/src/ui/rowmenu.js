@@ -34,7 +34,7 @@ export function useLongPress(onLong) {
 export function RowMenu({ head, color, cal = null, items, onClose }) {
   const ref = useRef(null);
   useEffect(() => onOutsidePress(insideAny(ref), onClose), []); // eslint-disable-line
-  return html`<div class="bc-es-menu is-phone bc-rowmenu" role="menu" ref=${ref}>
+  return html`<div class="bc-es-menu is-phone bc-rowmenu" data-layer="" role="menu" ref=${ref}>
     <div class="bc-es-mh" role="presentation">${cal ? html`<${CalDot} cal=${cal} />` : color && html`<i style=${'background:' + color}></i>`}${head}</div>
     ${items.filter(Boolean).map(([icon, label, fn]) => html`<button key=${label} type="button" role="menuitem" class="bc-es-mi" onClick=${() => { onClose(); fn(); }}>
       <${Icon} name=${icon} size=${18} /><span>${label}</span>

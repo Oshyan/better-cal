@@ -55,7 +55,7 @@ export function usePasswordStepUp() {
     }
   };
 
-  const prompt = pending && html`<div class="bc-stepup-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) cancel(); }}>
+  const prompt = pending && html`<div class="bc-stepup-backdrop" data-layer="top" onClick=${(e) => { if (e.target === e.currentTarget) cancel(); }}>
     <form class="bc-stepup" role="dialog" aria-modal="true" aria-labelledby="bc-stepup-title" onSubmit=${submit}>
       <h2 id="bc-stepup-title">Confirm it’s you</h2>
       <p>Enter your Better-Cal password to ${pending.label}. You won’t be asked again for ten minutes.</p>

@@ -81,7 +81,7 @@ function SeriesPanel({ sc }) {
     return attachScrollRail(el);
   }, []);
 
-  return html`<div class="bc-sd-lane"><div class="bc-sd" ref=${rootRef} role="dialog" aria-label=${view.heading} tabIndex="-1">
+  return html`<div class="bc-sd-lane" data-layer=""><div class="bc-sd" ref=${rootRef} role="dialog" aria-label=${view.heading} tabIndex="-1">
     <div class="bc-sd-head">
       <div class="bc-sd-head-row">
         <span class="bc-sd-title">${view.title}</span>

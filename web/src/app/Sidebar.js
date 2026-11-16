@@ -235,7 +235,7 @@ function ModeMenu({ mode, tip, ariaName, customDisabled, onPick }) {
       aria-haspopup="menu" aria-expanded=${open}
       onClick=${() => setOpen(!open)}
     ><${Icon} name=${MODE_ICONS[mode]} size=${13} /></button>
-    ${open && html`<div class="bc-ov-menu" role="menu" aria-label=${ariaName}>
+    ${open && html`<div class="bc-ov-menu" data-layer="" role="menu" aria-label=${ariaName}>
       ${['all', 'none', 'custom'].map((m) => html`<button
         key=${m} type="button" role="menuitemradio"
         aria-checked=${mode === m}

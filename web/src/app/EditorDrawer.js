@@ -1097,7 +1097,7 @@ export function EditorDrawer() {
     ${own.length > 1 && html`<button type="button" class="bc-link-btn" onClick=${() => giveBack(own)}>Use series values</button>`}
   </div>`;
 
-  return html`<div class="bc-drawer-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) requestClose(); }}>
+  return html`<div class="bc-drawer-backdrop" data-layer="" onClick=${(e) => { if (e.target === e.currentTarget) requestClose(); }}>
     <form class="bc-drawer bc-editor" ref=${panelRef} onSubmit=${submit} onKeyDown=${onFormKeyDown} role="dialog" aria-modal="true" aria-label=${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}>
       <div class="bc-drawer-head">
         <button type="button" class="bc-icon-btn bc-ed-x" aria-label="Close" onClick=${requestClose}><${Icon} name="close" size=${phoneOpen ? 20 : 15} /></button>

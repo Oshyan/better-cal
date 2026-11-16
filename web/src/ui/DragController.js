@@ -58,6 +58,9 @@ window.addEventListener('pointerdown', (ev) => {
 //   hScrollEl: Element | null     auto-scrolled near its left/right edges
 //   copyable: bool              Option/Alt held at the drop makes it a copy:
 //                                 onDrop gets pt.copy = true
+//   source: Element | null        the event being moved: marked
+//                                 is-drag-source (faded) while it is lifted
+//                                 and the drop would move it, not copy it
 //   onLift(pt), onMove(pt), onDrop(pt), onCancel(), onTap?()
 //   pt = {x, y} in client coordinates
 // }
@@ -92,7 +95,13 @@ export function startPointerDrag(e, opts) {
   // copyable may be a function, asked as the pointer moves: over a person
   // or a trip, Option links or attaches the original, so no copy badge (#184).
   const canCopy = () => (typeof opts.copyable === 'function' ? !!opts.copyable() : !!opts.copyable);
-  const showCopy = () => document.body.classList.toggle('bc-drag-copy', lifted && copyKey && canCopy());
+  // The original fades while a drop would move it; a copy leaves it as it is.
+  // One mark for every kind of event (block, bar, chip, band), set here.
+  const showCopy = () => {
+    const copying = lifted && copyKey && canCopy();
+    document.body.classList.toggle('bc-drag-copy', copying);
+    if (opts.source) opts.source.classList.toggle('is-drag-source', lifted && !copying && !done);
+  };
 
   // Edge auto-scroll is armed once the pointer is clear of every edge zone.
   // A drag lifted inside one glided off before it had been moved: an
@@ -245,6 +254,7 @@ export function startPointerDrag(e, opts) {
     if (ghost) ghost.remove();
     document.body.classList.remove('bc-dragging');
     document.body.classList.remove('bc-drag-copy');
+    if (opts.source) opts.source.classList.remove('is-drag-source');
     window.removeEventListener('keyup', onKey, true);
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);

@@ -14,8 +14,17 @@
 //   the flag, so a press that never became a click (a scroll) leaves nothing
 //   armed.
 //
-// Full-screen modals (search, the editor, the command palette) don't need
-// this: their own backdrop receives the click.
+// What the rule is for: a press on what lies behind a surface (the
+// calendar, the page) closes it and is used up, so it does not also act
+// there. What it is not for: a layer stacked above the surface (search, the
+// command palette, quick add, a dialog, a drawer, a menu, a toast) is not
+// behind it. A layer's root carries data-layer; its presses are its own and
+// act on the first press, and a surface on the page below it stays as it
+// was (#305). Between two layers the order is not known, so a layer's own
+// surfaces (a menu in the editor, the series panel beside it) still close
+// on a press in another layer, except in a top layer (data-layer="top":
+// toasts, a confirm or password step-up), which is above everything. Full-screen modals don't use this for
+// themselves: their own backdrop receives the click.
 
 let swallowNextClick = false;
 let armedAt = 0;
@@ -54,18 +63,28 @@ export function swallowClickOfThisPress() {
   armedAt = performance.now();
 }
 
+// A press inside a layer stacked above this surface. The surface is named
+// by isInside.refs (insideAny gives them); one with none is on the page.
+function inLayerAbove(target, isInside) {
+  const layer = target && target.closest ? target.closest('[data-layer]') : null;
+  if (!layer) return false;
+  const own = (isInside.refs || []).map((r) => r && r.current).find(Boolean);
+  if (own && layer.contains(own)) return false;
+  if (layer.getAttribute('data-layer') === 'top') return true;
+  return !(own && own.closest('[data-layer]'));
+}
+
 // Listen for presses outside a surface while it is open. isInside(target)
-// says whether the press belongs to the surface (its panel, its trigger).
+// says whether the press belongs to the surface (its panel, its trigger);
+// made by insideAny, it also names the surface for the layer rule above.
 // Returns the function that stops listening, for a useEffect cleanup.
 export function onOutsidePress(isInside, onOutside) {
   const handler = (e) => {
     if (isInside(e.target)) return;
-    // Toasts float above every surface and answer for themselves: Undo on a
-    // toast must undo, not first close the sheet the change was made in. So
-    // does a confirm or password step-up asked from inside the surface: its
-    // buttons are outside the panel, and taking the press would close the
-    // panel under the dialog and swallow the click.
-    if (e.target && e.target.closest && e.target.closest('.bc-toasts, .bc-stepup-backdrop')) return;
+    // Toasts, a confirm or password step-up, search over the panel: a layer
+    // above answers its own press. Undo on a toast must undo, not first
+    // close the sheet the change was made in.
+    if (inLayerAbove(e.target, isInside)) return;
     consumeOutsidePress(e);
     onOutside(e);
   };
@@ -88,5 +107,7 @@ export function opensEvent(target) {
 
 // The common case: inside means within any of these elements.
 export function insideAny(...refs) {
-  return (target) => refs.some((r) => r && r.current && r.current.contains(target));
+  const inside = (target) => refs.some((r) => r && r.current && r.current.contains(target));
+  inside.refs = refs;
+  return inside;
 }

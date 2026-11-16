@@ -86,11 +86,17 @@ const cases = [
   ["a phone month's holiday flag", html`<${DayLabel} occs=${[others[78]]} onOpen=${onOpen} flag=${true} />`, '.bc-daylabel', '78@1'],
 ];
 
+// A press as the browser sends it: pointerdown at the window, then the
+// click, which the window's capture listener may swallow (ui/outside.js);
+// only a click let through reaches the element.
 const press = async (el) => {
-  const ev = { type: 'pointerdown', target: el, cancelable: true, preventDefault() {}, stopPropagation() {} };
-  for (const fn of [...(dom.win.listeners.pointerdown || [])]) fn(ev);
+  const down = { type: 'pointerdown', target: el, cancelable: true, preventDefault() {}, stopPropagation() {} };
+  for (const fn of [...(dom.win.listeners.pointerdown || [])]) fn(down);
   const stillOpen = !!state.popover;
-  el.click();
+  let swallowed = false;
+  const up = { type: 'click', target: el, preventDefault() {}, stopPropagation() { swallowed = true; }, stopImmediatePropagation() { swallowed = true; } };
+  for (const fn of [...(dom.win.listeners.click || [])]) fn(up);
+  if (!swallowed) el.click();
   await settle();
   return [stillOpen, state.popover && state.popover.instanceId];
 };
@@ -142,6 +148,103 @@ const plain = surfaces.querySelector('.bc-sample-plain');
 plain.click = () => {};
 assert.deepEqual(await press(plain), [false, null], 'a press on something else closes the panel');
 render(null, surfaces);
+await settle();
+
+// A layer stacked above the panel (search, the command palette, quick add,
+// a dialog, a drawer, a menu, a toast) is not behind it: its presses are
+// its own and act the first time, and the panel stays open under it.
+const { CommandPalette } = await import('../src/app/CommandPalette.js');
+const { ConfirmHost, askConfirm } = await import('../src/app/ConfirmDialog.js');
+const { Toasts } = await import('../src/app/Toasts.js');
+const { DayExpand } = await import('../src/ui/DayExpand.js');
+const { toast } = await import('../src/app/store.js');
+let layers = 0;
+for (const phone of [false, true]) {
+  const where = phone ? 'phone sheet' : 'desktop panel';
+  dom.win.matchMedia = () => ({ matches: phone, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
+
+  set({ tags: [{ id: 5, name: 'sample' }] });
+  render(html`<${SearchOverlay} />`, surfaces);
+  await openOn(opened);
+  set({ searchOpen: true });
+  await settle();
+  const seg = (label) => surfaces.querySelectorAll('.bc-seg-btn').find((b) => b.textContent === label);
+  assert.deepEqual(await press(seg('Past')), [true, '70@1'], `${where}, search's Past: the panel stays`);
+  assert.equal(seg('Past').getAttribute('aria-pressed'), 'true', `${where}, search's Past: picked on the first press`);
+  const tag = surfaces.querySelector('.bc-tag-chip-btn');
+  assert.deepEqual(await press(tag), [true, '70@1'], `${where}, a tag chip in search: the panel stays`);
+  assert.equal(surfaces.querySelector('.bc-search-input').value, '#sample', `${where}, a tag chip in search: searched on the first press`);
+  assert.deepEqual(await press(surfaces.querySelector('.bc-search-input')), [true, '70@1'], `${where}, the search box: the panel stays`);
+  assert.deepEqual(await press(surfaces.querySelector('.bc-search-close')), [true, '70@1'], `${where}, search's close: the panel stays under it`);
+  assert.equal(state.searchOpen, false, `${where}, search's close: closed on the first press, the event still open`);
+  render(null, surfaces);
+  await settle();
+  layers += 4;
+
+  render(html`<${CommandPalette} />`, surfaces);
+  set({ paletteOpen: true });
+  await settle();
+  const row = surfaces.querySelectorAll('.bc-palette-row').find((r) => r.textContent.includes('Search all events'));
+  assert.deepEqual(await press(row), [true, '70@1'], `${where}, a command palette row: the panel stays`);
+  assert.deepEqual([state.paletteOpen, state.searchOpen], [false, true], `${where}, a command palette row: it ran on the first press`);
+  set({ searchOpen: false });
+  render(null, surfaces);
+  await settle();
+  layers++;
+
+  await openOn(opened);
+  render(html`<${ConfirmHost} />`, surfaces);
+  const asked = askConfirm({ title: 'Sample question', confirmLabel: 'Go on' });
+  await settle();
+  const cancel = surfaces.querySelector('.bc-stepup').querySelectorAll('.bc-btn').find((b) => b.textContent === 'Cancel');
+  assert.deepEqual(await press(cancel), [true, '70@1'], `${where}, a confirm dialog's Cancel: the panel stays`);
+  assert.equal(await asked, false, `${where}, a confirm dialog's Cancel: answered on the first press`);
+  render(null, surfaces);
+  await settle();
+  layers++;
+
+  set({ toasts: [] });
+  render(html`<${Toasts} />`, surfaces);
+  toast('Sample saved');
+  await settle();
+  assert.deepEqual(await press(surfaces.querySelector('.bc-toast-x')), [true, '70@1'], `${where}, a toast's dismiss: the panel stays`);
+  assert.equal(state.toasts.length, 0, `${where}, a toast's dismiss: dismissed on the first press`);
+  render(null, surfaces);
+  await settle();
+  layers++;
+
+  let dayClosed = 0;
+  render(html`<${DayExpand} dayKey="2027-05-03" anchorRect=${null} occurrences=${[]} calendars=${{}} onClose=${() => { dayClosed++; }} />`, surfaces);
+  await settle();
+  assert.deepEqual(await press(surfaces.querySelector('.bc-dayexpand').querySelector('[aria-label="Close"]')), [true, '70@1'], `${where}, the day sheet's close: the panel stays`);
+  assert.equal(dayClosed, 1, `${where}, the day sheet's close: closed on the first press`);
+  render(null, surfaces);
+  await settle();
+  layers++;
+}
+
+// Between layers: a surface inside a layer (a menu in the editor) still
+// closes on a press elsewhere in that layer and in another layer; only a
+// top layer (a toast, a confirm) is above everything.
+{
+  const { onOutsidePress, insideAny } = await import('../src/ui/outside.js');
+  const { createRef } = await import('../vendor/index.js');
+  const menu = createRef();
+  render(html`<div><div class="bc-sample-editor" data-layer=""><div class="bc-sample-menu" ref=${menu}>Menu</div><button type="button" class="bc-sample-field">Field</button></div><div class="bc-sample-other" data-layer=""><button type="button">Other</button></div><div class="bc-sample-top" data-layer="top"><button type="button">Top</button></div></div>`, surfaces);
+  await settle();
+  let closed = 0;
+  const stop = onOutsidePress(insideAny(menu), () => { closed++; });
+  const down = (el) => { for (const fn of [...(dom.win.listeners.pointerdown || [])]) fn({ type: 'pointerdown', target: el, cancelable: true, preventDefault() {}, stopPropagation() {} }); };
+  down(surfaces.querySelector('.bc-sample-top').querySelector('button'));
+  assert.equal(closed, 0, 'a menu in a layer stays open on a press in a top layer');
+  down(surfaces.querySelector('.bc-sample-field'));
+  assert.equal(closed, 1, 'a menu in a layer closes on a press elsewhere in its layer');
+  down(surfaces.querySelector('.bc-sample-other').querySelector('button'));
+  assert.equal(closed, 2, 'and on a press in another layer');
+  stop();
+  render(null, surfaces);
+  await settle();
+}
 render(null, panelHost);
 await settle();
 
@@ -155,4 +258,4 @@ if (savedDebounce === undefined) delete options.debounceRendering; else options.
 dom.restore();
 if (hadHistory) globalThis.history = savedHistory; else delete globalThis.history;
 if (hadMatchMedia) globalThis.matchMedia = savedMatchMedia; else delete globalThis.matchMedia;
-console.log(`Opening an event over the open panel: ${checked} surfaces on a desktop and a phone, one press each`);
+console.log(`Opening an event over the open panel: ${checked} surfaces on a desktop and a phone, one press each; ${layers} presses on layers above it acted the first time`);

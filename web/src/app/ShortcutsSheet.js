@@ -25,7 +25,7 @@ export function ShortcutsSheet() {
 
   const close = () => set({ shortcutsOpen: false });
 
-  return html`<div class="bc-overlay bc-shortcuts-overlay" onClick=${(e) => { if (e.target === e.currentTarget) close(); }}>
+  return html`<div class="bc-overlay bc-shortcuts-overlay" data-layer="" onClick=${(e) => { if (e.target === e.currentTarget) close(); }}>
     <div class="bc-shortcuts" ref=${panelRef} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" tabindex="-1">
       <div class="bc-shortcuts-head">
         <h2>Keyboard shortcuts</h2>

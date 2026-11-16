@@ -86,7 +86,7 @@ function ViewMenu({ view, narrow }) {
       title="Change view (v cycles, 1-6 direct)"
       onClick=${() => setOpen(!open)}
     >${label}<span class="bc-viewmenu-caret" aria-hidden="true"><${Icon} name="chevronDown" size=${11} /></span></button>
-    ${open && html`<div class="bc-ov-menu bc-viewmenu-drop" role="menu" aria-label="Calendar view">
+    ${open && html`<div class="bc-ov-menu bc-viewmenu-drop" data-layer="" role="menu" aria-label="Calendar view">
       ${items.map(([k, l]) => html`<button
         key=${k} type="button" role="menuitemradio"
         aria-checked=${currentKey === k}
@@ -131,7 +131,7 @@ function RelFilter() {
 }
 
 function RelMenu({ showRel, all }) {
-  return html`<div class="bc-ov-menu bc-relfilter-drop" role="menu" aria-label="What to show">
+  return html`<div class="bc-ov-menu bc-relfilter-drop" data-layer="" role="menu" aria-label="What to show">
       ${REL_ORDER.map((k) => html`<button
         key=${k} type="button" role="menuitemcheckbox"
         aria-checked=${showRel[k] !== false}
@@ -314,7 +314,7 @@ function NewMenu() {
       aria-label="More things to create" aria-expanded=${open} aria-haspopup="menu"
       onClick=${() => setOpen(!open)}
     ><${Icon} name="chevronDown" size=${11} /></button>
-    ${open && html`<div class="bc-newmenu-drop" role="menu">
+    ${open && html`<div class="bc-newmenu-drop" data-layer="" role="menu">
       ${items.map(([label, fn]) => html`<button key=${label} type="button" role="menuitem" class="bc-newmenu-item" onClick=${go(fn)}>${label}</button>`)}
     </div>`}
   </span>`;

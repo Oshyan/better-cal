@@ -245,7 +245,7 @@ export function SearchOverlay() {
   const calOptions = [...(calendars || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   const scopeWord = when === 'upcoming' ? 'upcoming ' : when === 'past' ? 'past ' : '';
 
-  return html`<div class="bc-overlay bc-search-overlay" onClick=${(e) => { if (e.target === e.currentTarget) set({ searchOpen: false }); }}>
+  return html`<div class="bc-overlay bc-search-overlay" data-layer="" onClick=${(e) => { if (e.target === e.currentTarget) set({ searchOpen: false }); }}>
     <div class="bc-search" ref=${panelRef} role="dialog" aria-modal="true" aria-label="Search events">
       <div class="bc-search-top">
         <input

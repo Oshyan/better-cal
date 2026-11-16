@@ -7144,6 +7144,8 @@ await import('./repeat-control.mjs');
 await import('./filter-marks.mjs');
 // One press on anything that opens an event, with the panel open (#305).
 await import('./opens-event.mjs');
+// The original of an event being moved fades, whatever its kind.
+await import('./drag-source.mjs');
 
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

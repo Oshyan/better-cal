@@ -107,8 +107,8 @@ function Sheet({ label, onClose, children }) {
     if (ref.current) ref.current.style.transform = '';
     if (dy > 60) onClose();
   };
-  return html`<div class="bc-bsheet-scrim" onPointerDown=${(e) => { consumeOutsidePress(e); onClose(); }}></div>
-    <div class="bc-bsheet" role="dialog" aria-modal="true" aria-label=${label} tabindex="-1" ref=${ref}>
+  return html`<div class="bc-bsheet-scrim" data-layer="" onPointerDown=${(e) => { consumeOutsidePress(e); onClose(); }}></div>
+    <div class="bc-bsheet" data-layer="" role="dialog" aria-modal="true" aria-label=${label} tabindex="-1" ref=${ref}>
       <div class="bc-bsheet-grip"
         onPointerDown=${onHandleDown} onPointerMove=${onHandleMove} onPointerUp=${onHandleUp} onPointerCancel=${onHandleUp}
       ><span aria-hidden="true"></span></div>

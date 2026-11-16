@@ -44,6 +44,8 @@ final class Reminders
     public const FOLLOW_DEFAULTS = 'defaults';
     public const MAX_MINUTES = 40320; // 4 weeks
     public const MAX_DAYS_BEFORE = 28;
+    /** How much of the description a reminder carries: two or three lines on a phone, expanded. */
+    public const EXCERPT_CHARS = 160;
 
     /** Occurrence-start lookahead for the scan; covers the max lead time (4 weeks + margin). */
     private const SCAN_LOOKAHEAD = 'P35D';
@@ -762,6 +764,7 @@ final class Reminders
      * in Los Angeles)". Without a view zone it reads on the event's zone,
      * unless that is UTC (imported events with no zone of their own). An
      * all-day event names its own date. $h24: the 24-hour clock setting.
+     * A description adds its excerpt() as the body's second line.
      */
     public static function payload(array $row, \DateTimeImmutable $startUtc, bool $allDay, ?string $viewTz = null, bool $h24 = false): array
     {
@@ -785,6 +788,13 @@ final class Reminders
         if (!empty($row['location'])) {
             $body .= ' · ' . mb_substr((string) $row['location'], 0, 120);
         }
+        // The description's start on a line of its own (#26): a phone shows
+        // the first line collapsed and the rest when the notification is
+        // expanded, and the email shows it under the time.
+        $excerpt = self::excerpt(isset($row['description']) ? (string) $row['description'] : null);
+        if ($excerpt !== '') {
+            $body .= "\n" . $excerpt;
+        }
         $instanceId = Recurrence::instanceId((int) $row['id'], $startUtc);
         // &at= carries the occurrence start so the click handler can load a
         // window guaranteed to contain it (contract: docs/api-contract.md).
@@ -795,6 +805,29 @@ final class Reminders
             'url' => '/?event=' . rawurlencode($instanceId) . '&at=' . rawurlencode($at),
             'tag' => $instanceId,
         ] + array_filter(self::links($row), static fn($v) => $v !== null);
+    }
+
+    /**
+     * The start of a description as one line of plain text, for a reminder
+     * (#26): flattened by Sanitize::toText, the function every text-only
+     * rendering of a description uses, its line breaks and runs of spaces
+     * made single spaces, and cut at the last whole word within $max
+     * characters with an ellipsis. One word longer than that is cut inside
+     * it. Empty when there is no description or nothing in it but markup.
+     */
+    public static function excerpt(?string $description, int $max = self::EXCERPT_CHARS): string
+    {
+        $text = Sanitize::toText($description);
+        $text = trim(preg_replace('/\s+/u', ' ', $text) ?? $text);
+        if (mb_strlen($text) <= $max) {
+            return $text;
+        }
+        // One character past the limit, so a space just after the last
+        // whole word that fits counts as its end.
+        $head = mb_substr($text, 0, $max + 1);
+        $space = mb_strrpos($head, ' ');
+        $cut = $space !== false && $space > 0 ? mb_substr($head, 0, $space) : mb_substr($text, 0, $max);
+        return rtrim($cut, ' ,;:.-') . '…';
     }
 
     /**

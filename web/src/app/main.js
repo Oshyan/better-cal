@@ -11,6 +11,7 @@ import { restoreResume, recordStart } from './resume.js';
 import { takeHandoff, runHandoff } from './handoff.js';
 import { QA_WINDOW_KEY } from './QuickAddWindow.js';
 import { markBooted, reportStalledStart } from './bootlog.js';
+import { handleEventLink, receiveEventLink } from './push.js';
 import { startHoverCards } from '../ui/HoverCard.js';
 import { applySidebarWidth, readSidebarWidth, followScreen } from '../lib/sidebarwidth.js';
 import './install.js'; // keeps the browser's one-time install prompt for the welcome
@@ -63,6 +64,11 @@ async function boot() {
   // step that does nothing.
   try { if (history.state && history.state.bcDrawer) history.replaceState(null, ''); } catch { /* fine */ }
   if (authed && !handoff) restoreResume();
+  // A tapped notification's event opens before the app first draws (#26):
+  // its window loads and the event is open in the same frame the calendar
+  // first appears in, so the calendar never shows on its own first. Until
+  // then the loading frame stays up.
+  if (authed && !qaWindow) await handleEventLink().catch(() => { /* best-effort */ });
   set({ booted: true, pendingHandoff: authed ? null : handoff });
   if (authed) startSession(handoff);
   // A start that never finished (a white screen) goes to the server log once.
@@ -140,6 +146,8 @@ if ('serviceWorker' in navigator) {
     .then((reg) => { if (reg && reg.active) firstInstall = false; })
     .catch(() => { /* unknown: treat as a first visit */ });
   navigator.serviceWorker.addEventListener('message', (e) => {
+    // A notification tapped with this window open (sw.js): open its event here.
+    if (e.data && e.data.type === 'open-event') { receiveEventLink(e.data.url); return; }
     if (!e.data || e.data.type !== 'sw-updated') return;
     if (firstInstall) { firstInstall = false; return; }
     set({ appUpdateReady: true });

@@ -9,7 +9,7 @@ const OFFERED_KEY = 'bc-push-offered';
 const markOff = (off) => { try { if (off) localStorage.setItem(OFF_KEY, '1'); else localStorage.removeItem(OFF_KEY); } catch { /* private mode */ } };
 
 import { api, ensureRangeLoaded } from './api.js';
-import { state, toast, insertOccurrence } from './store.js';
+import { state, set, toast, insertOccurrence } from './store.js';
 import { openDetail } from './actions.js';
 import { deepLinkWindows } from '../lib/deeplink.js';
 
@@ -226,10 +226,14 @@ export function sendTestEmail() {
   return api('/push/test-email', { method: 'POST' });
 }
 
-// Notification clicks open /?event=instanceId&at=ISO. After boot, load a
-// window covering the occurrence (&at= from the server; older notifications
-// fall back to the instanceId timestamp), open the event's detail view, and
-// strip the query so refreshes do not reopen it.
+// Notification clicks open /?event=instanceId&at=ISO. Load a window covering
+// the occurrence (&at= from the server; older notifications fall back to the
+// instanceId timestamp), open the event's detail view on the calendar, and
+// strip the query so refreshes do not reopen it. The address is the one place
+// a link waits: boot runs this before the app first draws (main.js), so the
+// event is what a tap opens onto, never the calendar first; signing in runs
+// it again (session.js), and a link that arrived meanwhile is still there.
+// The query is taken off at once, so a second call finds nothing to do.
 export async function handleEventLink() {
   const params = new URLSearchParams(window.location.search);
   const instanceId = params.get('event');
@@ -238,8 +242,26 @@ export async function handleEventLink() {
   params.delete('event');
   params.delete('at');
   const rest = params.toString();
-  window.history.replaceState(null, '', window.location.pathname + (rest ? '?' + rest : ''));
+  window.history.replaceState(window.history.state, '', window.location.pathname + (rest ? '?' + rest : '') + window.location.hash);
+  if (state.route !== 'calendar') set({ route: 'calendar' });
   await openOccurrence(instanceId, at);
+}
+
+// A notification tapped while the app is open (sw.js brings this window
+// forward and posts the link instead of reloading it, #26). The link goes in
+// the address, where boot and sign-in look for it; a running session opens it
+// now, over whatever is on screen. Only this origin's /?event= links count.
+export function receiveEventLink(url) {
+  let link;
+  try { link = new URL(url, window.location.origin); } catch { return; }
+  const instanceId = link.searchParams.get('event');
+  if (link.origin !== window.location.origin || !instanceId) return;
+  const params = new URLSearchParams(window.location.search);
+  params.set('event', instanceId);
+  const at = link.searchParams.get('at');
+  if (at) params.set('at', at); else params.delete('at');
+  window.history.replaceState(window.history.state, '', window.location.pathname + '?' + params.toString() + window.location.hash);
+  if (state.booted && state.authed && !state.quickAddWindow) handleEventLink().catch(() => { /* best-effort */ });
 }
 
 // Open one occurrence's detail view wherever it is on the calendar: load a

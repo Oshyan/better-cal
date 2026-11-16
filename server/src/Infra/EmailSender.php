@@ -70,7 +70,7 @@ final class EmailSender
             . 'max-width:480px;margin:0 auto;padding:24px 16px;color:#1c1e22">'
             . '<p style="margin:0 0 4px;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;color:#8a8f98">Reminder</p>'
             . '<h2 style="margin:0 0 6px;font-size:19px;line-height:1.3">' . $h($title) . '</h2>'
-            . ($body !== '' ? '<p style="margin:0 0 20px;font-size:14px;color:#555b64">' . $h($body) . '</p>' : '')
+            . ($body !== '' ? '<p style="margin:0 0 20px;font-size:14px;color:#555b64">' . nl2br($h($body), false) . '</p>' : '')
             . '<p style="margin:0 0 24px"><a href="' . $h($link) . '" '
             . 'style="display:inline-block;background:#5b7fd4;color:#ffffff;text-decoration:none;'
             . 'padding:10px 18px;border-radius:8px;font-size:14px">' . $h($action) . '</a></p>'

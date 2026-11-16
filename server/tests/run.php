@@ -12615,6 +12615,16 @@ use BetterCal\Domain\GoogleWriter;
     checkEq('google body: all-day dates from the event zone', [['date' => '2026-03-09'], ['date' => '2026-03-13']], [$allDay['start'], $allDay['end']]);
     $allDayUtc = GoogleWriter::body(['title' => 'Retreat', 'start_utc' => '2026-03-12 00:00:00', 'end_utc' => '2026-03-15 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'show_as' => 'busy']);
     checkEq('google body: all-day dates for a Google-origin row (UTC midnight)', [['date' => '2026-03-12'], ['date' => '2026-03-15']], [$allDayUtc['start'], $allDayUtc['end']]);
+    // GoogleWriter::SET_ONLY is exactly the keys body() leaves out when a row has no value for them, so a body said
+    // whole (GoogleWriter::whole) clears every one of them and no other.
+    $setAll = GoogleWriter::body(['title' => 'Retreat', 'start_utc' => '2026-03-12 00:00:00', 'end_utc' => '2026-03-15 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'show_as' => 'free', 'url' => 'https://example.test/retreat']);
+    $setNone = GoogleWriter::body(['title' => 'Retreat', 'start_utc' => '2026-03-12 00:00:00', 'end_utc' => '2026-03-15 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'show_as' => 'busy', 'url' => null]);
+    $leftOut = array_values(array_diff(array_keys($setAll), array_keys($setNone)));
+    sort($leftOut);
+    $setOnly = GoogleWriter::SET_ONLY;
+    sort($setOnly);
+    checkEq('google body: the keys left out of an empty row are SET_ONLY, and whole() names each as null', [$setOnly, array_fill_keys($setOnly, null)],
+        [$leftOut, array_intersect_key(GoogleWriter::whole($setNone), array_flip($setOnly))]);
 
     $series = GoogleWriter::body([
         'title' => 'Standup', 'start_utc' => '2026-09-21 08:00:00', 'end_utc' => '2026-09-21 08:15:00', 'all_day' => 0, 'tzid' => 'Europe/Lisbon',

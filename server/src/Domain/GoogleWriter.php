@@ -555,6 +555,30 @@ final class GoogleWriter
     }
 
     /**
+     * The body keys body() sends only when the row has a value for them (a
+     * link as `source`, free as `transparency`), so that a new event follows
+     * Google's own default. Over a resource Google already holds, a key left
+     * out of a PATCH is left as Google has it, so a body that says a row
+     * whole names each of these as null when the row has none (whole).
+     */
+    public const SET_ONLY = ['source', 'transparency'];
+
+    /**
+     * A body that says its row whole over a resource Google already holds:
+     * each SET_ONLY key the row has no value for, as null, which clears it.
+     * The one rule for every write that sends an event or a day whole
+     * rather than what changed (patchOf): a day of a series sent again, a
+     * master written over, a moved calendar's edited days. Pure.
+     */
+    public static function whole(array $body): array
+    {
+        foreach (self::SET_ONLY as $key) {
+            $body[$key] ??= null;
+        }
+        return $body;
+    }
+
+    /**
      * A changed occurrence of a series, as the body of a patch to its
      * instance id: the series' recurrence never goes on an instance.
      */

@@ -8,14 +8,14 @@ namespace BetterCal\Domain;
  * The comparison of a change to one Google event with what Google holds now
  * (docs/design/google-conflict-choice.md, the page "1.5.7, Slice 1"): the
  * base the person was shown, Google's value now, and what the change wants,
- * field by field over the six fields a row and Google both hold. Pure: no
+ * field by field over the seven fields a row and Google both hold. Pure: no
  * database, no request. Every single-event write with the setting on asks it
  * (Events::googleChoice, Rsvp), and nothing else compares.
  */
 final class GoogleConflict
 {
     /** The fields, in the order they are listed and named. */
-    public const FIELDS = ['title', 'description', 'location', 'url', 'status', 'time'];
+    public const FIELDS = ['title', 'description', 'location', 'url', 'status', 'showAs', 'time'];
 
     /** The row's columns each field is. */
     public const COLUMNS = [
@@ -24,6 +24,7 @@ final class GoogleConflict
         'location' => ['location'],
         'url' => ['url'],
         'status' => ['status'],
+        'showAs' => ['show_as'],
         'time' => ['start_utc', 'end_utc', 'all_day'],
     ];
 
@@ -38,7 +39,7 @@ final class GoogleConflict
      * client's fieldNoun), and whether it is plural; null for Planned or
      * Maybe, which a sentence says by its value, never by a name.
      */
-    private const NOUNS = ['title' => ['title', false], 'description' => ['notes', true], 'location' => ['location', false], 'url' => ['link', false], 'status' => null, 'time' => ['time', false]];
+    private const NOUNS = ['title' => ['title', false], 'description' => ['notes', true], 'location' => ['location', false], 'url' => ['link', false], 'status' => null, 'showAs' => ['free or busy setting', false], 'time' => ['time', false]];
 
     /** Text this long is cut where two values are set side by side (the client's TEXT_MAX). */
     private const TEXT_MAX = 80;
@@ -77,7 +78,7 @@ final class GoogleConflict
     }
 
     /**
-     * A row's six fields (a row in the columns' shape: a stored row, a parsed
+     * A row's seven fields (a row in the columns' shape: a stored row, a parsed
      * Google resource, a row with a request's columns over it).
      *
      * @return array<string,mixed>
@@ -232,6 +233,9 @@ final class GoogleConflict
         if ($field === 'status') {
             return $v === 'tentative' ? 'a Maybe' : 'Planned';
         }
+        if ($field === 'showAs') {
+            return $v === 'free' ? 'Free' : 'Busy';
+        }
         $o = self::isEmpty($field, $other) ? null : self::plainOf($field, $other);
         return self::quoted(self::cut(self::plainOf($field, $v), $o));
     }
@@ -349,7 +353,7 @@ final class GoogleConflict
      */
     private static function normal(string $field, mixed $value): mixed
     {
-        $row = ['title' => '', 'description' => null, 'location' => '', 'url' => null, 'status' => 'confirmed', 'start_utc' => '', 'end_utc' => '', 'all_day' => 0, 'tzid' => 'UTC'];
+        $row = ['title' => '', 'description' => null, 'location' => '', 'url' => null, 'status' => 'confirmed', 'show_as' => 'busy', 'start_utc' => '', 'end_utc' => '', 'all_day' => 0, 'tzid' => 'UTC'];
         if ($field === 'time') {
             if (!is_array($value) || !array_key_exists('start_utc', $value) || !array_key_exists('end_utc', $value) || !array_key_exists('all_day', $value)) {
                 return ['shape' => $value];
@@ -360,6 +364,7 @@ final class GoogleConflict
         if ($value !== null && !is_string($value)) {
             return ['shape' => $value];
         }
-        return GoogleSeries::fieldsOf(array_merge($row, [$field => $value]))[$field];
+        $column = self::COLUMNS[$field][0];
+        return GoogleSeries::fieldsOf(array_merge($row, [$column => $value]))[$column];
     }
 }

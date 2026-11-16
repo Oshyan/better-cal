@@ -41,6 +41,7 @@ Each promise names its test: a **row** of the exhaustive `threeWay(base, now, wa
 | `location` | `location` | trimmed strings equal; coordinates never compared |
 | `url` | `url` | `Ics::webUrl` of each equal; null equals empty |
 | `status` | `status` | both tentative or both not |
+| `showAs` (1.5.8, #303) | `show_as` | both free or both not; two values, so like `status` it never asks, only sends or keeps |
 | `time` | `start_utc`, `end_utc`, `all_day` | all three equal; the zone is not compared |
 
 The check writes its own equalities from this table and calls nothing in `server/src`.

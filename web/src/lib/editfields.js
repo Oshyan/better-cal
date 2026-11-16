@@ -31,6 +31,8 @@ export const EDIT_FIELDS = [
   { keys: ['personIds'], label: 'People', words: (a, b, ctx) => (ctx.personName ? was_now((a.personIds || []).map(ctx.personName).join(', '), (b.personIds || []).map(ctx.personName).join(', ')) : null) },
   { keys: ['url'], label: 'Link', words: (a, b) => was_now(a.url, b.url) },
   { keys: ['status'], label: 'For me', words: (a, b) => (b.status === 'tentative' ? 'now Maybe' : 'now Planned') },
+  // Whether it takes up time (#303).
+  { keys: ['showAs'], label: 'Show as', words: (a, b) => (a.showAs === 'free' ? 'Free' : 'Busy') + ', now ' + (b.showAs === 'free' ? 'Free' : 'Busy') },
   { keys: ['description'], label: 'Notes', words: (a, b) => (b.description ? 'changed' : 'removed') },
   // The trip flag: the series' value for every event. The plan says when
   // the days differed (seriesplan.js reads its `field`).

@@ -497,7 +497,7 @@ trait SeriesPlans
             $edit['rrule'] = ($in['rrule'] === null || $in['rrule'] === '') ? null : (string) $in['rrule'];
         }
         // The trip flag and floating ride along as series columns (Model::SERIES_COLUMNS): no edited day owns them.
-        $content = array_intersect_key($in, array_flip(['title', 'description', 'location', 'url', 'locationLat', 'locationLng', 'locationSource', 'locationProvider', 'status', 'reminders', 'isContainer', 'floating']));
+        $content = array_intersect_key($in, array_flip(['title', 'description', 'location', 'url', 'locationLat', 'locationLng', 'locationSource', 'locationProvider', 'status', 'showAs', 'reminders', 'isContainer', 'floating']));
         $edit['columns'] = $content === [] ? [] : $this->columnPatch($master, $content);
         $ids = array_merge([$id], array_map(static fn(array $r): int => (int) $r['id'], $rows));
         $labels = $this->labels->forEvents($ids);
@@ -1446,7 +1446,7 @@ trait SeriesPlans
         $out = OwnFields::changedFields($before, $after);
         // A content field sent is the day's own, even typed equal to the
         // series' value: the person chose it (the editor sends only what changed).
-        foreach (['title' => 'title', 'location' => 'location', 'description' => 'description', 'url' => 'url', 'reminders' => 'reminders', 'status' => 'status', 'icon' => 'icon'] as $key => $field) {
+        foreach (['title' => 'title', 'location' => 'location', 'description' => 'description', 'url' => 'url', 'reminders' => 'reminders', 'status' => 'status', 'showAs' => 'showAs', 'icon' => 'icon'] as $key => $field) {
             if (array_key_exists($key, $in)) {
                 $out[] = $field;
             }

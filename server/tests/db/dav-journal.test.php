@@ -89,4 +89,29 @@ return static function (Db $db): void {
         $d->events->create($u, eventAt($home, 'Sample refused', '2027-03-08'));
         checkEq('dav journal: with the journal writable again, the same create is saved and journaled', [1, $was + 1], [$count(), $token($home)]);
     });
+
+    // #289: a file imported into a calendar a client already syncs.
+    scenario('dav journal: a file imported into an existing calendar, and its undo', function () use ($db, $d, $u, $home, $token, $told): void {
+        $vevent = static fn(string $uid, string $start, string $extra = ''): string => "BEGIN:VEVENT\r\nUID:$uid\r\nDTSTAMP:20270101T000000Z\r\nDTSTART:{$start}Z\r\nDTEND:"
+            . substr($start, 0, 9) . '23' . substr($start, 11) . "Z\r\n{$extra}SUMMARY:Sample imported\r\nEND:VEVENT\r\n";
+        $file = static fn(string $events): string => "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Sample//Export//EN\r\n{$events}END:VCALENDAR\r\n";
+        $import = static fn(string $ics): array => (new BetterCal\Domain\CalendarImport($db, $d->calendars))->importIcs($u, $ics, 'ignored', null, $home);
+        // A series the calendar already has, which a later file gives an edited day.
+        $import($file($vevent('sample-import-series', '20270310T090000', "RRULE:FREQ=DAILY;COUNT=3\r\n")));
+        $was = $token($home);
+        $import($file($vevent('sample-import-one', '20270311T120000') . $vevent('sample-import-series', '20270311T100000', "RECURRENCE-ID:20270311T090000Z\r\n")));
+        $after = $token($home);
+        $ops = static fn(array $rows): array => array_map(static fn(array $r): array => [$r[0], $r[1]], $rows);
+        checkEq('dav journal: the import is an addition of the new event and a modification of the series it gave a day, the token two higher',
+            [[['sample-import-one.ics', 1], ['sample-import-series.ics', 2]], $was + 2], [$ops($told($home, $was)), $after]);
+        $d->undo->undoById($u, lastEntry($db, $u));
+        $undone = $ops($told($home, $after));
+        sort($undone);
+        // An undo journals every object it restores as changed (Undo::restore); one no longer there is read as gone.
+        checkEq('dav journal: its undo tells the client both objects changed',
+            [['sample-import-one.ics', 2], ['sample-import-series.ics', 2]], $undone);
+        checkEq('dav journal: and the new event is gone, the series has no edited day', [0, 0],
+            [(int) $db->scalar("SELECT COUNT(*) FROM events WHERE calendar_id = ? AND uid = 'sample-import-one' AND deleted_at IS NULL", [$home]),
+             (int) $db->scalar("SELECT COUNT(*) FROM events WHERE calendar_id = ? AND uid = 'sample-import-series' AND recurrence_instance_utc IS NOT NULL AND deleted_at IS NULL", [$home])]);
+    });
 };

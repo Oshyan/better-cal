@@ -4499,6 +4499,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-ed-chip.is-on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong)); }
 .bc-ed-flags { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
 .bc-ed-seg { display: inline-flex; height: 28px; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
+.bc-ed-showas { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--fg-muted); }
 .bc-ed-segbtn {
   display: inline-flex; align-items: center; gap: 4px; padding: 0 11px;
   border: none; border-right: 1px solid var(--border); background: none;

@@ -57,7 +57,7 @@ final class GoogleWriter
     /** Waits between busy retries; tests set it to record instead of sleep. */
     public ?\Closure $sleep = null;
     /** Event columns Google owns; everything else on a row is local metadata. */
-    public const GOOGLE_COLUMNS = ['title', 'description', 'location', 'url', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule', 'exdates_json', 'status'];
+    public const GOOGLE_COLUMNS = ['title', 'description', 'location', 'url', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule', 'exdates_json', 'status', 'show_as'];
 
     public function __construct(
         private readonly Db $db,
@@ -444,6 +444,13 @@ final class GoogleWriter
             // tentative ↔ "maybe" on my calendar (Events::relationship); Google shows it hatched
             'status' => (string) ($row['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed',
         ];
+        // An event that takes up no time is `transparent` ("Show as: Free").
+        // A busy one sends nothing, which is Google's default (`opaque`) for
+        // timed and all-day events alike: an insert follows Google's own
+        // default, and a patch from free sends null, which clears it.
+        if ((string) ($row['show_as'] ?? 'busy') === 'free') {
+            $body['transparency'] = 'transparent';
+        }
         // The event's link (a Partiful or Luma page, say) travels as Google's
         // `source`, which GoogleSync reads back, so a write never trades it
         // for Google's own event page (0.9.4).
@@ -552,6 +559,7 @@ final class GoogleWriter
     private const BODY_KEYS = [
         'date' => ['start', 'end'], 'time' => ['start', 'end'], 'length' => ['start', 'end'], 'allDay' => ['start', 'end'],
         'title' => ['summary'], 'location' => ['location'], 'description' => ['description'], 'url' => ['source'], 'status' => ['status'],
+        'showAs' => ['transparency'],
     ];
 
     /**

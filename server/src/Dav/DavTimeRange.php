@@ -185,7 +185,7 @@ final class DavTimeRange
      * served: each occurrence in the range as its own VEVENT, with its
      * RECURRENCE-ID and no RRULE or EXDATE, every date-time in UTC and all-day
      * dates kept as dates. The occurrences are the expander's, read from the
-     * object as a PUT of it is read (Ics::parse, DavIcs::eventColumns), and an
+     * object as a PUT of it is read (Ics::parse, Feeds::columnsOf), and an
      * edited day carries its own VEVENT's properties.
      *
      * A parsed object has no stored id, so the budget charges its series
@@ -199,7 +199,7 @@ final class DavTimeRange
         $master = null;
         $overrides = [];
         foreach (Ics::parse($data, 'UTC') as $parsed) {
-            $cols = DavIcs::eventColumns($parsed) + ['id' => 0];
+            $cols = \BetterCal\Domain\Feeds::columnsOf($parsed, null, \BetterCal\Domain\Feeds::FROM_CALDAV) + ['id' => 0];
             if ($cols['recurrence_instance_utc'] === null) {
                 $master ??= $cols + ['series_key' => $seriesKey ?? 'uid:' . (string) ($parsed['uid'] ?? '')];
             } else {

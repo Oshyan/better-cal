@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Dav\ChangeLog;
 use BetterCal\Domain\Series\OwnFields;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
@@ -95,6 +96,7 @@ final class CalendarImport
                 ?? (int) $this->calendars->create($userId, ['name' => $name] + ($color !== null ? ['color' => $color] : []))['id'];
             $imported = 0;
             $importedIds = [];
+            $importedUids = [];
             $days = []; // master id => the edited days imported under it
             // An import never brings back what was deleted here: a record
             // of the file whose event, or whose series, the calendar holds
@@ -144,38 +146,25 @@ final class CalendarImport
                         continue;
                     }
                 }
+                $parentId = $ev['recurrence_instance_utc'] !== null ? ($masterIdByUid[(string) $ev['uid']] ?? null) : null;
+                // The one mapping of every source (Feeds::columnsOf): the
+                // file's alarms become the event's own reminders (none
+                // follows the calendar's defaults), a day's against its
+                // series' alarms; its times float as the calendar's preset
+                // says.
+                $master = $parentId === null ? null : ($importedMasters[(string) $ev['uid']] ?? $this->db->one('SELECT * FROM events WHERE id = ?', [$parentId]));
                 $cols = [
                     'user_id' => $userId,
                     'calendar_id' => $calendarId,
                     'created_via' => 'import',
                     'uid' => $ev['uid'],
-                    'title' => $ev['title'],
-                    'description' => Sanitize::description($ev['description']),
-                    'location' => $ev['location'],
-                    'url' => $ev['url'],
-                    'start_utc' => $ev['start_utc'],
-                    'end_utc' => $ev['end_utc'],
-                    'all_day' => $ev['all_day'],
-                    'tzid' => $ev['tzid'],
-                    'floating' => (int) $ev['all_day'] !== 1 && (($ev['floating'] ?? 0) === 1 || $floatTimed) ? 1 : 0,
-                    'rrule' => $ev['rrule'],
-                    'exdates_json' => $ev['exdates'] === [] ? null : json_encode($ev['exdates']),
-                    // VALARM reminders become explicit overrides; none = inherit defaults.
-                    'reminders_json' => ($ev['reminders'] ?? []) === [] ? null : json_encode($ev['reminders']),
-                    'status' => $ev['status'],
-                    'recurrence_instance_utc' => $ev['recurrence_instance_utc'],
-                    'recurrence_parent_id' => $ev['recurrence_instance_utc'] !== null
-                        ? ($masterIdByUid[(string) $ev['uid']] ?? null)
-                        : null,
                     'source' => 'local',
-                ];
+                ] + Feeds::columnsOf($ev, $parentId, Feeds::FROM_IMPORT, $master, $floatTimed);
                 if ($cols['recurrence_parent_id'] !== null) {
                     // An edited day never seen before: its own fields by
                     // equality with its master, every field compared (Rows
                     // from Elsewhere), whether the master came in with this
                     // file or was in the calendar already. Never left null.
-                    $master = $importedMasters[(string) $ev['uid']]
-                        ?? $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $cols['recurrence_parent_id']]);
                     // What an imported row has for the fields a file doesn't carry.
                     $row = $cols + ['icon' => null, 'attendance' => 'none'];
                     $cols['override_fields'] = OwnFields::encode($master === null ? [] : OwnFields::infer($row, $master));
@@ -189,6 +178,7 @@ final class CalendarImport
                     $importedMasters[(string) $ev['uid']] = $cols + ['icon' => null, 'attendance' => 'none'];
                 }
                 $importedIds[] = $id;
+                $importedUids[(string) $ev['uid']] = true;
                 $imported++;
             }
             // A file carries no tags or people: an edited day it brings in
@@ -196,6 +186,19 @@ final class CalendarImport
             // series already in the calendar with its tags included.
             foreach ($days as $masterId => $ids) {
                 OwnFields::follow($this->db, $masterId, $ids);
+            }
+            // CalDAV clients are told in this transaction, as every writer
+            // tells them (ChangeLog; decisions, "Every CalDAV journal row is
+            // written with its change"): an object the file brought is added,
+            // one the calendar had that gained an edited day is changed.
+            // Before, a phone holding a sync token for the calendar learned
+            // of nothing until something else changed it (#289).
+            $objects = [ChangeLog::OP_ADD => [], ChangeLog::OP_MODIFY => []];
+            foreach (array_keys($importedUids) as $uid) {
+                $objects[isset($importedMasters[$uid]) ? ChangeLog::OP_ADD : ChangeLog::OP_MODIFY][] = (string) $uid;
+            }
+            foreach ($objects as $op => $uids) {
+                ChangeLog::recordMany($this->db, $calendarId, $uids, $op);
             }
             // Undoable: undone, the events it brought in go (and an undo of
             // the calendar's making knows they're in it), with the links

@@ -756,6 +756,7 @@ final class Feeds
             'location' => $series['location'],
             'url' => $series['url'],
             'status' => $series['status'],
+            'show_as' => $series['show_as'] ?? 'busy',
             'all_day' => $allDay ? 1 : 0,
             'tzid' => $series['tzid'],
         ];
@@ -941,14 +942,48 @@ final class Feeds
     }
 
     /**
-     * The event columns a parsed VEVENT (Ics::parse's shape, which Google's
-     * sync and CalDAV produce too) writes, with $parentId as an edited
-     * day's master. The one mapping from the parsed shape to a row, for the
-     * sync and for a writer that makes a row the sync would have (an edited
-     * day of a Google series that holds only local things). Pure.
+     * Where a parsed event comes from, and what each source writes beyond
+     * what every source does: whether its alarms are the event's reminders.
+     * A feed's and Google's are not: reminders on their events are held
+     * here (like tags), and a feed's VALARMs must not overwrite them on
+     * every poll. A CalDAV client's and an imported file's are: an alarm set
+     * in a phone's calendar app becomes the event's own reminder, as an
+     * import's does (#287).
      */
-    public static function columnsOf(array $ev, ?int $parentId): array
+    public const FROM_FEED = 'feed';
+    public const FROM_CALDAV = 'caldav';
+    public const FROM_IMPORT = 'import';
+    private const SOURCES = [
+        self::FROM_FEED => ['reminders' => false],
+        self::FROM_CALDAV => ['reminders' => true],
+        self::FROM_IMPORT => ['reminders' => true],
+    ];
+
+    /**
+     * The event columns a parsed VEVENT (Ics::parse's shape, which Google's
+     * sync produces too) writes, with $parentId as an edited day's master.
+     * The one mapping from the parsed shape to a row, for every source
+     * (SOURCES): a feed's or Google's poll, a CalDAV client's PUT, a file
+     * imported, and a writer that makes a row the sync would have (an
+     * edited day of a Google series that holds only local things). Pure.
+     *
+     * $shown is the row as the source last had it: the stored row a record
+     * is for, else, for a day with no row, its series, else null (a new
+     * event). A source whose alarms are reminders writes them only where
+     * they differ from the ones that row is written out with (Ics::
+     * buildEvent: its own list, or none for a row that follows the
+     * calendar's defaults or has none), since a client sends back what it
+     * was given: equal alarms leave the row's own value, so a row that
+     * follows the calendar's defaults keeps following them. Different
+     * alarms are the event's own list, and none at all is an explicit none.
+     *
+     * $floatTimed is the calendar's preset for new timed events (an import
+     * into it): a timed event floats where it has no zone, or where the
+     * preset says so.
+     */
+    public static function columnsOf(array $ev, ?int $parentId, string $from = self::FROM_FEED, ?array $shown = null, bool $floatTimed = false): array
     {
+        $source = self::SOURCES[$from] ?? throw new \LogicException("no such source of events: $from");
         $columns = [
             'title' => $ev['title'],
             // Cleaned on the way in like every other source (#58):
@@ -963,21 +998,50 @@ final class Feeds
             'rrule' => $ev['rrule'],
             'exdates_json' => $ev['exdates'] === [] ? null : json_encode($ev['exdates']),
             'status' => $ev['status'],
+            'show_as' => $ev['show_as'],
             'recurrence_instance_utc' => $ev['recurrence_instance_utc'],
             'recurrence_parent_id' => $ev['recurrence_instance_utc'] !== null ? $parentId : null,
         ];
         if (array_key_exists('google_event_id', $ev)) {
             $columns['google_event_id'] = $ev['google_event_id'];
         }
-        // A feed's time with no zone floats (#167). Google's rows carry
-        // no flag, so a Google sync keeps the one set here.
-        if (array_key_exists('floating', $ev)) {
-            $columns['floating'] = (int) $ev['floating'];
+        // A time with no zone floats (#167), and one given a zone no longer
+        // does. Google's rows carry no flag, so a Google sync keeps the one
+        // set here.
+        if (array_key_exists('floating', $ev) || $floatTimed) {
+            $columns['floating'] = (int) $ev['all_day'] !== 1 && ((int) ($ev['floating'] ?? 0) === 1 || $floatTimed) ? 1 : 0;
         }
         if (array_key_exists('invite_json', $ev)) {
             $columns['invite_json'] = $ev['invite_json'];
         }
+        if ($source['reminders'] && array_key_exists('reminders', $ev)) {
+            $alarms = self::alarmMinutes($ev['reminders']);
+            $columns['reminders_json'] = $shown !== null && $alarms === self::alarmMinutes(Reminders::decode($shown['reminders_json'] ?? null) ?? [])
+                ? ($shown['reminders_json'] ?? null)
+                : ($alarms === [] && $shown === null ? null : json_encode(array_map(static fn(int $m): array => ['minutes' => $m], $alarms)));
+        }
         return $columns;
+    }
+
+    /**
+     * The alarms a list of reminders is written out and read back as: each
+     * one's minutes before the start, once, in order, as Ics::parse reads
+     * the VALARMs Ics::buildEvent writes. Pure.
+     *
+     * @param list<mixed> $reminders
+     * @return list<int>
+     */
+    private static function alarmMinutes(array $reminders): array
+    {
+        $out = [];
+        foreach ($reminders as $r) {
+            if (is_array($r) && isset($r['minutes']) && is_numeric($r['minutes']) && (int) $r['minutes'] >= 0 && (int) $r['minutes'] <= Reminders::MAX_MINUTES) {
+                $out[(int) $r['minutes']] = true;
+            }
+        }
+        $out = array_keys($out);
+        sort($out);
+        return $out;
     }
 
     /**
@@ -1308,7 +1372,7 @@ final class Feeds
             if ($pm['recurrence_instance_utc'] === null) {
                 $parsedMasters[(string) $pm['uid']] = ['title' => $pm['title'], 'description' => Sanitize::description($pm['description']), 'location' => $pm['location'],
                     'url' => $pm['url'], 'start_utc' => $pm['start_utc'], 'end_utc' => $pm['end_utc'], 'all_day' => $pm['all_day'], 'tzid' => $pm['tzid'], 'status' => $pm['status'],
-                    'invite_json' => $pm['invite_json'] ?? null];
+                    'show_as' => $pm['show_as'], 'invite_json' => $pm['invite_json'] ?? null];
             }
         }
         // A record of one day is named under its series (Ics::keysUnder):

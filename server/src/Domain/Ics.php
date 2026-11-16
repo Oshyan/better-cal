@@ -583,6 +583,13 @@ final class Ics
         if (in_array($status, ['CONFIRMED', 'TENTATIVE', 'CANCELLED'], true)) {
             $out .= self::line('STATUS', $status);
         }
+        // An event that takes up no time (#303); OPAQUE, taking up time, is
+        // iCalendar's default, so a busy event writes nothing, as a row
+        // built without the column does (every stored row has it, and each
+        // projection that feeds this names it: OutFeeds::SOURCE_PROJECTION).
+        if (($ev['show_as'] ?? 'busy') === 'free') {
+            $out .= self::line('TRANSP', 'TRANSPARENT');
+        }
         // Explicit per-event reminder overrides export as display VALARMs;
         // inherited defaults (NULL) and explicit-none ([]) write nothing.
         if (!empty($ev['reminders_json'])) {
@@ -661,7 +668,7 @@ final class Ics
      * create or mutate event_links rows.
      *
      * @return list<array<string,mixed>> keys: uid, title, description, location, url,
-     *   start_utc, end_utc, all_day, tzid, rrule, exdates (list), status,
+     *   start_utc, end_utc, all_day, tzid, rrule, exdates (list), status, show_as,
      *   recurrence_instance_utc, reminders (list of {minutes} from display VALARMs)
      */
     public static function parse(string $ics, ?string $floatingTzid = null, ?array &$skipped = null): array
@@ -1201,6 +1208,9 @@ final class Ics
         if (!in_array($status, ['confirmed', 'tentative', 'cancelled'], true)) {
             $status = 'confirmed';
         }
+        // Whether it takes up time (#303): TRANSPARENT does not; OPAQUE,
+        // the default, and anything else does.
+        $showAs = strtoupper(trim((string) ($vevent->TRANSP ?? ''))) === 'TRANSPARENT' ? 'free' : 'busy';
 
         // Display alarms with before-start relative triggers map to reminder
         // offsets; audio/email alarms, absolute triggers and RELATED=END are
@@ -1250,6 +1260,7 @@ final class Ics
             'rrule' => $rrule,
             'exdates' => Recurrence::validateExdates($exdates),
             'status' => $status,
+            'show_as' => $showAs,
             'recurrence_instance_utc' => $recurrenceInstance,
             // The RECURRENCE-ID as written, and the zone an all-day VEVENT
             // sent as zoned midnights was written in: what a key is read

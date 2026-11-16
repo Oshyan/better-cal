@@ -4543,6 +4543,39 @@ $before = $fallback->calls;
 $chain->candidates('harbor light example bay', 45.52, -122.68, 6, null);
 checkEq('fallback: an answer without every typed word (things in the town, not the venue) hands over', [1, 'Fallback'], [$fallback->calls - $before, $chain->credits()[0]['label']]);
 
+// An answer whose passing rows are all far from the person settles nothing
+// while another service may know one nearby (#230): the next is asked too,
+// and its rows and the far ones are merged, near first. A row named exactly
+// what was typed (a pin: a town, a city) is the answer wherever it is.
+$nearFallback = new class implements \BetterCal\Domain\PlaceProvider {
+    public int $calls = 0;
+    public ?array $rows = [];
+    public function candidates(string $q, ?float $biasLat, ?float $biasLng, int $limit, ?string $language): ?array { $this->calls++; return $this->rows; }
+    public function distanceCap(): ?float { return null; }
+    public function credits(): array { return [['label' => 'Fallback', 'url' => 'https://fallback.example']]; }
+};
+$farChain = new \BetterCal\Domain\FallbackPlaces($primary, $nearFallback);
+$primary->rows = [$row('Harbor Light Cinema', 40.0, -100.0), $row('Harbor Light Cinema', 30.0, -90.0)];
+$nearFallback->rows = [$row('Harbor Light Cinema', 45.53, -122.69), $row('Harbor Lights Diner', 45.54, -122.70)];
+$merged = $farChain->candidates('harbor light cinema', 45.52, -122.68, 6, null);
+checkEq('fallback: passing rows all far ask the next service; near rows first, the far ones kept after them, both credited',
+    [1, [false, false, true, true], ['Fallback', 'Primary']],
+    [$nearFallback->calls, array_column($merged, 'far'), array_column($farChain->credits(), 'label')]);
+$nearFallback->rows = null;
+$kept = $farChain->candidates('harbor light cinema', 45.52, -122.68, 6, null);
+checkEq('fallback: when the next service fails, the far rows still stand', [2, 2, ['Primary']],
+    [$nearFallback->calls, count($kept ?? []), array_column($farChain->credits(), 'label')]);
+$nearFallback->rows = [];
+$primary->rows = [$row('Harbor Light Cinema', 45.53, -122.69), $row('Harbor Light Cinema', 40.0, -100.0)];
+$farChain->candidates('harbor light cinema', 45.52, -122.68, 6, null);
+checkEq('fallback: one near passing row settles it', 2, $nearFallback->calls);
+$primary->rows = [$row('Exampleburg', 48.0, 11.0) + ['pin' => true]];
+$farChain->candidates('exampleburg', 45.52, -122.68, 6, null);
+checkEq('fallback: a far place named exactly what was typed settles it', 2, $nearFallback->calls);
+$primary->rows = [$row('Harbor Light Cinema', 40.0, -100.0)];
+$farChain->candidates('harbor light cinema', null, null, 6, null);
+checkEq('fallback: without knowing where the person is, nothing is far', 2, $nearFallback->calls);
+
 // The word rule: a result must contain every typed word, whichever service
 // and request it came from. Street words match their short forms, a number
 // is whole, the last word may be partial, a trailing state or postal code
@@ -6533,6 +6566,60 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
         $epQa->run(1, 'Dinner tomorrow 7pm', 'UTC', false, null);
         return count($fetched);
     })());
+
+    // A link as shared carries extras (#221). Tracking parameters come off
+    // before anything is read, cached or kept as the event's link; a page
+    // that shows no event at the address given but names its own address
+    // (rel=canonical) is read there, whatever the extra was.
+    checkEq('event page: tracking parameters come off a link, everything else stays as it was', [
+        'https://events.example.test/e/abc',
+        'https://events.example.test/e/abc?id=7&lang=en#when',
+        'https://events.example.test/e/abc?invite=SAMPLE7',
+        'https://events.example.test/e/abc?',
+    ], [
+        $EP::address('https://events.example.test/e/abc?utm_source=share&utm_medium=social&fbclid=SAMPLE0123abc_aem_xyz'),
+        $EP::address('https://events.example.test/e/abc?id=7&gclid=SAMPLE&lang=en&mc_eid=SAMPLE#when'),
+        $EP::address('https://events.example.test/e/abc?invite=SAMPLE7&UTM_Campaign=fall'),
+        $EP::address('https://events.example.test/e/abc?'),
+    ]);
+    checkEq('event page: the address a page names for itself, when it is another http(s) one', [
+        'https://events.example.test/e/abc', null, null, 'https://events.example.test/e/abc', null,
+    ], [
+        $EP::canonicalIn('<head><link rel="canonical" href="https://events.example.test/e/abc"></head>', 'https://events.example.test/e/abc?invite=SAMPLE7'),
+        $EP::canonicalIn('<link rel="canonical" href="https://events.example.test/e/abc">', 'https://events.example.test/e/abc'),
+        $EP::canonicalIn('<link rel="canonical" href="javascript:alert(1)">', 'https://events.example.test/e/abc?invite=SAMPLE7'),
+        $EP::canonicalIn('<link href="/e/abc" data-x="" rel="canonical"/>', 'https://events.example.test/e/abc?invite=SAMPLE7'),
+        $EP::canonicalIn('<html><body>no head</body></html>', 'https://events.example.test/e/abc?invite=SAMPLE7'),
+    ]);
+    $gcalPage = '<a href="https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=Sample+Talk&amp;dates=20261110T180000Z/20261110T190000Z">Add to Google</a>';
+    $epExtras = new QuickAdd($epdb, new LlmGateway([]), (new ReflectionClass(Events::class))->newInstanceWithoutConstructor(), new Settings($epdb),
+        null, null, new BetterCal\Domain\EventPage($epdb, new LlmGateway([]), function (string $url) use (&$fetched, $page, $gcalPage): array {
+            $fetched[] = $url;
+            return match ($url) {
+                'https://events.example.test/e/abc' => ['status' => 200, 'body' => $page],
+                'https://talks.example.test/t/1' => ['status' => 200, 'body' => $gcalPage],
+                // The same event behind an invitation code: no event data on
+                // the page, which names its own address.
+                'https://events.example.test/e/abc?invite=SAMPLE7' => ['status' => 200,
+                    'body' => '<html><head><link rel="canonical" href="https://events.example.test/e/abc"></head><body>Sign up</body></html>'],
+                default => throw new RuntimeException('refused'),
+            };
+        }));
+    $fetched = [];
+    $r = $epExtras->run(1, 'https://events.example.test/e/abc?utm_source=share&utm_medium=social&fbclid=SAMPLE0123abc_aem_xyz', 'America/Los_Angeles', false, null);
+    checkEq('event page quick add: a link with tracking parameters finds its event, and only the clean address is asked',
+        ['Sample & Co Social', 'page-markup', ['https://events.example.test/e/abc']], [$r['draft']['title'] ?? null, $r['draft']['source'] ?? null, $fetched]);
+    $r = $epExtras->run(1, 'https://talks.example.test/t/1?utm_campaign=fall&gclid=SAMPLE', 'UTC', false, null);
+    checkEq('event page quick add: the event keeps the link without the tracking', ['Sample Talk', 'https://talks.example.test/t/1'],
+        [$r['draft']['title'] ?? null, $r['draft']['url'] ?? null]);
+    $d = $EP::fromHtml($ld(['@type' => 'Event', 'name' => 'Sample Social', 'startDate' => '2026-11-20T19:00:00Z',
+        'url' => 'https://events.example.test/e/xyz?utm_source=feed&lang=en']), 'https://events.example.test/e/xyz', 'UTC', $epNow);
+    checkEq('event page: the link a page\'s own data gives goes through the same normalisation', 'https://events.example.test/e/xyz?lang=en', $d['url']);
+    $fetched = [];
+    $r = $epExtras->run(1, 'https://events.example.test/e/abc?invite=SAMPLE7', 'America/Los_Angeles', false, null);
+    checkEq('event page quick add: a page with no event that names its own address is read there',
+        ['Sample & Co Social', ['https://events.example.test/e/abc?invite=SAMPLE7', 'https://events.example.test/e/abc']],
+        [$r['draft']['title'] ?? null, $fetched]);
 }
 
 // Quick add markers (#86): /calendar, #tag, @person, "literal title".
@@ -6778,13 +6865,27 @@ checkEq('pe sweep window years', [2, 3], [PromptEval::WINDOW_YEARS_PAST, PromptE
 checkEq('geo normalize trims + collapses whitespace', 'Example Cafe, Portland', Geocode::normalize("  Example   Cafe,\n Portland  "));
 checkEq('geo normalize caps length', Geocode::MAX_QUERY_LENGTH, mb_strlen(Geocode::normalize(str_repeat('a', 600))));
 // Easier forms of a decorated address, tried when the full text finds nothing.
-checkEq('geo variants drop a trailing parenthetical', ['450 Elm St, Portland, OR 97205, USA'], Geocode::variants('450 Elm St, Portland, OR 97205, USA (The Lounge)'));
-checkEq('geo variants drop brackets anywhere', ['5 Main St, Denver, CO'], Geocode::variants('[Upstairs] 5 Main St (rear door), Denver, CO'));
-checkEq('geo variants start at the street number after a venue name', ['450 Elm St, Portland, OR'], Geocode::variants('The Lounge, 450 Elm St, Portland, OR'));
-checkEq('geo variants: both, in order', ['The Lounge, 450 Elm St, Portland', '450 Elm St, Portland'], Geocode::variants('The Lounge (2nd floor), 450 Elm St, Portland'));
-checkEq('geo variants: nothing to simplify', [], Geocode::variants('Example Cafe, Portland'));
+// Each form comes with the part a pin for it must hold, or null when the
+// form keeps the text's start (#150).
+checkEq('geo variants drop a trailing parenthetical', [['450 Elm St, Portland, OR 97205, USA', null]], Geocode::variants('450 Elm St, Portland, OR 97205, USA (The Lounge)'));
+checkEq('geo variants drop brackets anywhere', [['5 Main St, Denver, CO', null]], Geocode::variants('[Upstairs] 5 Main St (rear door), Denver, CO'));
+checkEq('geo variants start at the street number after a venue name', [['450 Elm St, Portland, OR', '450 Elm St']], Geocode::variants('The Lounge, 450 Elm St, Portland, OR'));
+checkEq('geo variants: both, in order', [['The Lounge, 450 Elm St, Portland', null], ['450 Elm St, Portland', '450 Elm St']], Geocode::variants('The Lounge (2nd floor), 450 Elm St, Portland'));
+checkEq('geo variants: after a name, from the part after the first comma', [['Example Town', 'Example Town']], Geocode::variants('Example Cafe, Example Town'));
 checkEq('geo variants: a leading street number is already the address', [], Geocode::variants('1680 Elm St, Portland'));
-checkEq('geo variants: range numbers count', ['12-14 Rue Oberkampf, Paris'], Geocode::variants('Le Bar, 12-14 Rue Oberkampf, Paris'));
+checkEq('geo variants: range numbers count', [['12-14 Rue Oberkampf, Paris', '12-14 Rue Oberkampf']], Geocode::variants('Le Bar, 12-14 Rue Oberkampf, Paris'));
+checkEq('geo variants: a pier or a building after the name', [['Pier 3, Example Town', 'Pier 3']], Geocode::variants('Example Pavilion, Pier 3, Example Town'));
+checkEq('geo variants: the street number first, then the part after the first comma', [['12 Sample St, Example Town', '12 Sample St'], ['Suite 5, 12 Sample St, Example Town', 'Suite 5']],
+    Geocode::variants('Example Hall, Suite 5, 12 Sample St, Example Town'));
+checkEq('geo variants: nothing to simplify', [], Geocode::variants('Example Cafe'));
+// What a form that leaves the name out may keep: a spot holding the part it
+// starts with, never a town or an area.
+checkEq('geo form keeps: a spot with the part, not a town, not a near-miss number, anything for a form that keeps the start', [true, false, false, true, false],
+    [Geocode::keeps('Pier 3', ['lat' => 1.0, 'display' => 'Pier 3, Example Town', 'kind' => 'pier']),
+     Geocode::keeps('Example Town', ['lat' => 1.0, 'display' => 'Example Town, Example State', 'kind' => 'city']),
+     Geocode::keeps('Pier 3', ['lat' => 1.0, 'display' => 'Pier 30, Example Town', 'kind' => 'pier']),
+     Geocode::keeps(null, ['lat' => 1.0, 'display' => 'Example Town', 'kind' => 'city']),
+     Geocode::keeps(null, ['lat' => null, 'display' => null, 'kind' => null])]);
 checkEq('geo hash whitespace-insensitive', Geocode::queryHash('Example  Cafe'), Geocode::queryHash(' Example Cafe '));
 checkEq('geo hash case-insensitive', Geocode::queryHash('EXAMPLE CAFE'), Geocode::queryHash('example cafe'));
 check('geo hash differs for different queries', Geocode::queryHash('Example Cafe') !== Geocode::queryHash('Corner Bistro'));

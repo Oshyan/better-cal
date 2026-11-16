@@ -237,23 +237,45 @@ final class PlaceSearch
     }
 
     /**
-     * Whether any candidate would survive search()'s rules for this query:
-     * every typed word must be in it (containingAllWords), the leading house
-     * number among them, and with a bias a bare number is never a far place.
-     * A provider whose answer would all be filtered out hasn't answered, so
-     * the next one is asked (FallbackPlaces): a service that reads "250" as a
-     * prefix and offers 2500 and 2507 leaves nothing, and so does one that
-     * answers "<venue> <town>" with things in the town. Pure.
+     * Whether an answer settles the search: one of its candidates holds every
+     * typed word (containingAllWords), the leading house number among them,
+     * and, when where the person is is known, is near them or is named
+     * exactly what was typed (a pin: a town or a city is what was asked for
+     * wherever it is).
+     *
+     * This is the dropdown's side of the rule both lookups share: ask again
+     * before giving up. An answer that doesn't settle passes the search to
+     * the next way of asking, here the next service (FallbackPlaces), whose
+     * rows go first; the background lookup's side is Geocode::keeps. A
+     * service that reads "250" as a prefix and offers 2500 and 2507 has not
+     * answered, nor has one that answers "<venue> <town>" with things in the
+     * town, nor one whose only matches are hundreds of kilometres away while
+     * a service behind it may know one nearby (#230). Pure.
      *
      * @param list<array<string,mixed>> $candidates
      */
     public static function usable(string $q, array $candidates, bool $biased): bool
     {
-        $kept = self::containingAllWords($q, self::matchingNumber($q, $candidates));
-        if ($biased && self::houseNumber($q) !== null && !self::hasWord($q)) {
-            $kept = array_filter($kept, static fn(array $c): bool => empty($c['far']));
+        foreach (self::containingAllWords($q, self::matchingNumber($q, $candidates)) as $c) {
+            if (!$biased || empty($c['far']) || !empty($c['pin'])) {
+                return true;
+            }
         }
-        return $kept !== [];
+        return false;
+    }
+
+    /**
+     * Near candidates first, then far ones, each in the order given. Stable.
+     * Pure.
+     *
+     * @param list<array<string,mixed>> $candidates
+     * @return list<array<string,mixed>>
+     */
+    public static function nearFirst(array $candidates): array
+    {
+        $near = array_values(array_filter($candidates, static fn(array $c): bool => empty($c['far'])));
+        $far = array_values(array_filter($candidates, static fn(array $c): bool => !empty($c['far'])));
+        return [...$near, ...$far];
     }
 
     /** A query word of three or more letters (not just numbers). Pure. */
@@ -419,14 +441,19 @@ final class PlaceSearch
     }
 
     /**
-     * Kinds of row that name a town or an area a trailing word can narrow
-     * to: a city, town, county, state or region, in each service's own words
-     * (Photon's city, LocationIQ's administrative boundary, MapTiler's
-     * municipality, Stadia's locality and so on).
+     * Kinds of row that name a town or an area rather than a spot, from a
+     * country down to a neighbourhood or a postal code, in each service's
+     * own words (Photon's city and district, LocationIQ's administrative
+     * boundary, MapTiler's municipality and place, Stadia's locality and so
+     * on). A trailing word can narrow the dropdown's search to one
+     * (areaNamed); the background lookup never pins a venue's address at one
+     * (Geocode::keeps).
      */
     public const AREA_KINDS = [
-        'city', 'town', 'municipality', 'joint_municipality', 'locality', 'localadmin',
-        'county', 'subregion', 'state', 'province', 'region', 'macroregion', 'administrative',
+        'country', 'dependency', 'state', 'province', 'region', 'macroregion', 'subregion', 'administrative',
+        'county', 'macrocounty', 'city', 'town', 'village', 'hamlet', 'municipality', 'joint_municipality',
+        'municipal_district', 'locality', 'localadmin', 'place', 'borough', 'district', 'suburb', 'quarter',
+        'neighbourhood', 'island', 'postcode', 'postal_code', 'postalcode',
     ];
 
     /**
@@ -651,8 +678,8 @@ final class PlaceSearch
 
     /**
      * Every service's rows are held to the word rule (containingAllWords); a
-     * service whose rows all fail it has not answered, and the next is asked
-     * (FallbackPlaces). When nothing matches the whole query and it reads as
+     * service whose rows all fail it, or whose passing rows are all far, has
+     * not settled the search, and the next is asked (usable, FallbackPlaces). When nothing matches the whole query and it reads as
      * "<what> <where>" with the where a town or an area (narrowings,
      * areaNamed), the what is searched again around that place: once, and
      * never for an address.

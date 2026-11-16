@@ -44,12 +44,18 @@ final class Geocode
     /**
      * Easier forms of a location to try when the full text finds nothing.
      * Feeds decorate addresses: "450 Elm St, Portland, OR 97205, USA
-     * (The Lounge)", "[Upstairs] 5 Main St", or a venue name ahead of the
-     * street: "The Lounge, 450 Elm St, Portland". In order: without the
-     * bracketed parts; then, if a later comma-separated part starts with a
-     * street number, from that part on. Never the original, never empty.
+     * (The Lounge)", "[Upstairs] 5 Main St", or a name ahead of the address,
+     * often a venue the map data doesn't have: "The Lounge, 450 Elm St,
+     * Portland", "Example Pavilion, Pier 3, Example Town". In order: without
+     * the bracketed parts; then, after a leading name, from the first later
+     * part that starts with a street number; then from the part after the
+     * first comma. Never the original, never empty.
      *
-     * @return list<string>
+     * Each form comes with the part a pin for it must hold (keeps()): null
+     * for a form that keeps the text's start, else the part the form starts
+     * with, since a form without the name is only right where that part is.
+     *
+     * @return list<array{0:string,1:?string}> [form, part to hold]
      */
     public static function variants(string $q): array
     {
@@ -59,27 +65,57 @@ final class Geocode
         $bare = trim(preg_replace('/\s{2,}/u', ' ', $bare) ?? $bare, " ,;-\t");
         $bare = preg_replace('/\s+,/u', ',', $bare) ?? $bare;
         if ($bare !== '' && $bare !== $q) {
-            $out[] = $bare;
+            $out[] = [$bare, null];
         }
         $base = $bare !== '' ? $bare : $q;
-        $parts = array_map('trim', explode(',', $base));
-        for ($i = 1, $n = count($parts); $i < $n; $i++) {
-            if (preg_match('/^\d+[a-z]?(?:-\d+)?\s+\S/iu', $parts[$i])) {
-                $out[] = implode(', ', array_slice($parts, $i));
-                break;
+        $parts = array_values(array_filter(array_map('trim', explode(',', $base)), static fn(string $p): bool => $p !== ''));
+        $street = static fn(string $p): bool => preg_match('/^\d+[a-z]?(?:-\d+)?\s+\S/iu', $p) === 1;
+        // A text that starts with a street number is already its address.
+        if (count($parts) > 1 && !$street($parts[0])) {
+            for ($i = 1, $n = count($parts); $i < $n; $i++) {
+                if ($street($parts[$i])) {
+                    $out[] = [implode(', ', array_slice($parts, $i)), $parts[$i]];
+                    break;
+                }
             }
+            $out[] = [implode(', ', array_slice($parts, 1)), $parts[1]];
         }
         $seen = [];
         $result = [];
         foreach ($out as $v) {
-            $k = mb_strtolower($v);
-            if ($v === '' || $k === mb_strtolower($q) || isset($seen[$k])) {
+            $k = mb_strtolower($v[0]);
+            if ($v[0] === '' || $k === mb_strtolower($q) || isset($seen[$k])) {
                 continue;
             }
             $seen[$k] = true;
             $result[] = $v;
         }
         return $result;
+    }
+
+    /**
+     * Whether the lookup keeps a pin found for one of its forms (variants()).
+     * A form that keeps the text's start keeps any pin. A form without the
+     * leading name keeps one only when it is a spot holding the part the
+     * form starts with (PlaceSearch's word rule): never a town or an area
+     * (PlaceSearch::AREA_KINDS), since "Venue, Example Town" placed at the
+     * town is a wrong pin, and a wrong pin is worse than none. Pure.
+     *
+     * @param ?string $part the part to hold, or null
+     * @param array{lat:?float,display:?string,kind?:?string} $pin
+     */
+    public static function keeps(?string $part, array $pin): bool
+    {
+        if (($pin['lat'] ?? null) === null) {
+            return false;
+        }
+        if ($part === null) {
+            return true;
+        }
+        if (in_array(mb_strtolower((string) ($pin['kind'] ?? '')), PlaceSearch::AREA_KINDS, true)) {
+            return false;
+        }
+        return PlaceSearch::hasAllWords($part, ['name' => (string) ($pin['display'] ?? '')]);
     }
 
     /**
@@ -460,17 +496,18 @@ final class Geocode
             unset($result['transport']);
             return $result;
         }
-        // Nothing for the full text: try its easier forms (variants()). Each
-        // is looked up and cached in its own right, so a form already tried
-        // costs one cache read, and one that works becomes the answer for the
-        // full text as well. This also revisits misses cached before the
-        // easier forms existed.
-        foreach (self::variants($normalized) as $v) {
+        // Nothing for the full text: ask again before giving up, with its
+        // easier forms (variants()), until one finds a pin the lookup keeps
+        // (keeps()). Each is looked up and cached in its own right, so a form
+        // already tried costs one cache read, and one that is kept becomes
+        // the answer for the full text as well. This also revisits misses
+        // cached before the easier forms existed.
+        foreach (self::variants($normalized) as [$v, $part]) {
             $alt = $this->lookupExact($v, $biasLat, $biasLng);
             if (!empty($alt['transport'])) {
                 break;
             }
-            if ($alt['lat'] !== null) {
+            if (self::keeps($part, $alt)) {
                 $this->db->run(
                     'UPDATE geocode_cache SET lat = ?, lng = ?, display = ?, kind = ?, provider = ? WHERE query_hash = ?',
                     [$alt['lat'], $alt['lng'], $alt['display'], $alt['kind'] ?? null, $alt['provider'] ?? null, self::queryHash($normalized, $biasLat, $biasLng)]

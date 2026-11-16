@@ -6481,6 +6481,60 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
         $epQa->run(1, 'Dinner tomorrow 7pm', 'UTC', false, null);
         return count($fetched);
     })());
+
+    // A link as shared carries extras (#221). Tracking parameters come off
+    // before anything is read, cached or kept as the event's link; a page
+    // that shows no event at the address given but names its own address
+    // (rel=canonical) is read there, whatever the extra was.
+    checkEq('event page: tracking parameters come off a link, everything else stays as it was', [
+        'https://events.example.test/e/abc',
+        'https://events.example.test/e/abc?id=7&lang=en#when',
+        'https://events.example.test/e/abc?invite=SAMPLE7',
+        'https://events.example.test/e/abc?',
+    ], [
+        $EP::address('https://events.example.test/e/abc?utm_source=share&utm_medium=social&fbclid=SAMPLE0123abc_aem_xyz'),
+        $EP::address('https://events.example.test/e/abc?id=7&gclid=SAMPLE&lang=en&mc_eid=SAMPLE#when'),
+        $EP::address('https://events.example.test/e/abc?invite=SAMPLE7&UTM_Campaign=fall'),
+        $EP::address('https://events.example.test/e/abc?'),
+    ]);
+    checkEq('event page: the address a page names for itself, when it is another http(s) one', [
+        'https://events.example.test/e/abc', null, null, 'https://events.example.test/e/abc', null,
+    ], [
+        $EP::canonicalIn('<head><link rel="canonical" href="https://events.example.test/e/abc"></head>', 'https://events.example.test/e/abc?invite=SAMPLE7'),
+        $EP::canonicalIn('<link rel="canonical" href="https://events.example.test/e/abc">', 'https://events.example.test/e/abc'),
+        $EP::canonicalIn('<link rel="canonical" href="javascript:alert(1)">', 'https://events.example.test/e/abc?invite=SAMPLE7'),
+        $EP::canonicalIn('<link href="/e/abc" data-x="" rel="canonical"/>', 'https://events.example.test/e/abc?invite=SAMPLE7'),
+        $EP::canonicalIn('<html><body>no head</body></html>', 'https://events.example.test/e/abc?invite=SAMPLE7'),
+    ]);
+    $gcalPage = '<a href="https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=Sample+Talk&amp;dates=20261110T180000Z/20261110T190000Z">Add to Google</a>';
+    $epExtras = new QuickAdd($epdb, new LlmGateway([]), (new ReflectionClass(Events::class))->newInstanceWithoutConstructor(), new Settings($epdb),
+        null, null, new BetterCal\Domain\EventPage($epdb, new LlmGateway([]), function (string $url) use (&$fetched, $page, $gcalPage): array {
+            $fetched[] = $url;
+            return match ($url) {
+                'https://events.example.test/e/abc' => ['status' => 200, 'body' => $page],
+                'https://talks.example.test/t/1' => ['status' => 200, 'body' => $gcalPage],
+                // The same event behind an invitation code: no event data on
+                // the page, which names its own address.
+                'https://events.example.test/e/abc?invite=SAMPLE7' => ['status' => 200,
+                    'body' => '<html><head><link rel="canonical" href="https://events.example.test/e/abc"></head><body>Sign up</body></html>'],
+                default => throw new RuntimeException('refused'),
+            };
+        }));
+    $fetched = [];
+    $r = $epExtras->run(1, 'https://events.example.test/e/abc?utm_source=share&utm_medium=social&fbclid=SAMPLE0123abc_aem_xyz', 'America/Los_Angeles', false, null);
+    checkEq('event page quick add: a link with tracking parameters finds its event, and only the clean address is asked',
+        ['Sample & Co Social', 'page-markup', ['https://events.example.test/e/abc']], [$r['draft']['title'] ?? null, $r['draft']['source'] ?? null, $fetched]);
+    $r = $epExtras->run(1, 'https://talks.example.test/t/1?utm_campaign=fall&gclid=SAMPLE', 'UTC', false, null);
+    checkEq('event page quick add: the event keeps the link without the tracking', ['Sample Talk', 'https://talks.example.test/t/1'],
+        [$r['draft']['title'] ?? null, $r['draft']['url'] ?? null]);
+    $d = $EP::fromHtml($ld(['@type' => 'Event', 'name' => 'Sample Social', 'startDate' => '2026-11-20T19:00:00Z',
+        'url' => 'https://events.example.test/e/xyz?utm_source=feed&lang=en']), 'https://events.example.test/e/xyz', 'UTC', $epNow);
+    checkEq('event page: the link a page\'s own data gives goes through the same normalisation', 'https://events.example.test/e/xyz?lang=en', $d['url']);
+    $fetched = [];
+    $r = $epExtras->run(1, 'https://events.example.test/e/abc?invite=SAMPLE7', 'America/Los_Angeles', false, null);
+    checkEq('event page quick add: a page with no event that names its own address is read there',
+        ['Sample & Co Social', ['https://events.example.test/e/abc?invite=SAMPLE7', 'https://events.example.test/e/abc']],
+        [$r['draft']['title'] ?? null, $fetched]);
 }
 
 // Quick add markers (#86): /calendar, #tag, @person, "literal title".

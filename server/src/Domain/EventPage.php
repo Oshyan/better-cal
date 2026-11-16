@@ -22,6 +22,13 @@ use BetterCal\Support\Time;
  * text has a date in it. The draft fills quick add's strip to be checked;
  * nothing here saves it.
  *
+ * A link as shared carries extras: what a site adds to say where it was
+ * shared from, and sometimes an invitation or referral code that makes the
+ * site serve a page without the event's data (#221). Every link goes through
+ * one normalisation before anything reads it (address(): tracking
+ * parameters off), and a page that shows no event at that address but names
+ * its own (canonicalIn) is read there once. No site gets a rule of its own.
+ *
  * The page is fetched with the feeds' policied client: http(s) only,
  * resolved before connecting, private and metadata addresses refused, no
  * cookies or credentials, size and time capped. A page behind a sign-in
@@ -41,6 +48,16 @@ final class EventPage
      */
     private const CACHE_SECONDS = 900;
     private const CACHE_PREFIX = 'event-page:';
+
+    /**
+     * Query parameters that only record where a link was shared or clicked
+     * from (ad and newsletter click ids), never which page it is; any
+     * parameter starting utm_ is one too. Names compared case aside.
+     */
+    public const TRACKING_PARAMS = [
+        'fbclid', 'gclid', 'gclsrc', 'dclid', 'gbraid', 'wbraid', 'msclkid', 'twclid', 'ttclid', 'li_fat_id', 'yclid',
+        'igshid', 'igsh', 'mc_cid', 'mc_eid', '_hsenc', '_hsmi', 'mkt_tok', '_ga', '_gl',
+    ];
 
     /** @param ?\Closure(string):array{status:int,body:string} $fetch for tests */
     public function __construct(
@@ -74,6 +91,66 @@ final class EventPage
             return null;
         }
         return $url;
+    }
+
+    /**
+     * The link as the page it names: its tracking parameters (TRACKING_PARAMS,
+     * utm_*) dropped, every other parameter kept as written and in order,
+     * the fragment kept. A link with nothing to drop comes back unchanged.
+     * Pure.
+     */
+    public static function address(string $url): string
+    {
+        $hash = strpos($url, '#');
+        $fragment = $hash === false ? '' : substr($url, $hash);
+        $rest = $hash === false ? $url : substr($url, 0, $hash);
+        $q = strpos($rest, '?');
+        if ($q === false) {
+            return $url;
+        }
+        $pairs = explode('&', substr($rest, $q + 1));
+        $kept = array_values(array_filter($pairs, static function (string $pair): bool {
+            $name = strtolower(urldecode(explode('=', $pair, 2)[0]));
+            return !str_starts_with($name, 'utm_') && !in_array($name, self::TRACKING_PARAMS, true);
+        }));
+        if (count($kept) === count($pairs)) {
+            return $url;
+        }
+        return substr($rest, 0, $q) . ($kept === [] ? '' : '?' . implode('&', $kept)) . $fragment;
+    }
+
+    /**
+     * The address a page names for itself (<link rel="canonical">), through
+     * address(), when it is an http(s) address other than the one read; a
+     * path alone is taken on the page's own host. Null otherwise. Pure.
+     */
+    public static function canonicalIn(string $html, string $pageUrl): ?string
+    {
+        if (preg_match_all('~<link\b[^>]*>~i', $html, $tags) < 1) {
+            return null;
+        }
+        foreach ($tags[0] as $tag) {
+            if (preg_match('~\brel\s*=\s*["\']?canonical\b~i', $tag) !== 1
+                || preg_match('~\bhref\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+))~i', $tag, $m) !== 1) {
+                continue;
+            }
+            $href = trim(html_entity_decode(implode('', array_slice($m, 1)), ENT_QUOTES | ENT_HTML5));
+            if (str_starts_with($href, '/') && !str_starts_with($href, '//')) {
+                $scheme = parse_url($pageUrl, PHP_URL_SCHEME);
+                $host = parse_url($pageUrl, PHP_URL_HOST);
+                $port = parse_url($pageUrl, PHP_URL_PORT);
+                if (!is_string($scheme) || !is_string($host)) {
+                    return null;
+                }
+                $href = $scheme . '://' . $host . ($port !== null ? ':' . $port : '') . $href;
+            }
+            if (preg_match('~^https?://~i', $href) !== 1 || !is_string(parse_url($href, PHP_URL_HOST)) || strlen($href) > 2048) {
+                return null;
+            }
+            $href = self::address($href);
+            return $href !== self::address($pageUrl) ? $href : null;
+        }
+        return null;
     }
 
     /**
@@ -174,6 +251,7 @@ final class EventPage
      */
     public function read(int $userId, string $url, string $tz, \DateTimeImmutable $now, bool $modelAllowed, ?ModelAdmission $admission = null, ?int $tokenId = null): array
     {
+        $url = self::address($url);
         $key = hash('sha256', self::CACHE_PREFIX . $userId . '|' . $tz . '|' . $url);
         $cached = $this->cached($key);
         if ($cached !== null) {
@@ -209,6 +287,22 @@ final class EventPage
         }
 
         $draft = self::fromHtml($html, $url, $tz, $now);
+        // No event at the address given, but the page names its own: read
+        // that once, and go on with it (the model reads it too).
+        $own = $draft === null ? self::canonicalIn($html, $url) : null;
+        if ($own !== null) {
+            try {
+                $c = $this->get($own, 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5');
+                $status = (int) ($c['status'] ?? 0);
+                $body = (string) ($c['body'] ?? '');
+                if ($status >= 200 && $status < 300 && stripos($body, '<') !== false) {
+                    [$url, $html] = [$own, $body];
+                    $draft = self::fromHtml($html, $url, $tz, $now);
+                }
+            } catch (\RuntimeException) {
+                // The page as given stands.
+            }
+        }
         $note = null;
         if ($draft === null && $modelAllowed && $this->llm->isConfigured()) {
             $text = self::textForModel($html);
@@ -252,7 +346,7 @@ final class EventPage
         [$start, $end, $allDay, $zone] = $when;
         $z = Time::zone($zone);
         $clean = static fn(?string $s, int $max): ?string => ($s = trim(html_entity_decode((string) $s, ENT_QUOTES | ENT_HTML5))) !== '' ? mb_substr($s, 0, $max) : null;
-        $own = is_string($c['url'] ?? null) && preg_match('~^https?://~i', $c['url']) === 1 ? $c['url'] : $pageUrl;
+        $own = is_string($c['url'] ?? null) && preg_match('~^https?://~i', $c['url']) === 1 ? self::address($c['url']) : $pageUrl;
         return [
             'title' => $clean($c['title'] ?? null, 300) ?? 'New event',
             'start' => Time::iso($start->setTimezone($z)),

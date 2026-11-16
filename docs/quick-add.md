@@ -71,12 +71,14 @@ These are the links it handles on purpose, and how each was last checked:
 
 | Site | Link looks like | Read from | Last checked |
 |---|---|---|---|
-| Luma | `lu.ma/…`, `luma.com/…` | the event data on the page | 2026-10-27 |
+| Luma | `lu.ma/…`, `luma.com/…` | the event data on the page | 2026-11-15 |
 | Partiful | `partiful.com/e/…` | the event data on the page | 2026-10-27 |
 | Eventbrite | `eventbrite.com/e/…` | the event data on the page | 2026-10-27 |
 | Meetup | `meetup.com/<group>/events/…` | the event data on the page | 2026-10-27 |
 | Pie | `plan.getpie.app/plans/…` | Pie's public details for the plan (its pages carry no date) | 2026-10-27 |
 | Google Calendar | `calendar.google.com/calendar/render?action=TEMPLATE…` | the link itself, including repeats | 2026-10-27 |
+
+A link can be pasted as it was shared, extras and all. Tracking parameters (`utm_…`, `fbclid`, `gclid` and the like) come off before the page is read, and the event keeps the link without them. When a page shows no event at the address as shared (an invitation or referral code can make a site serve a different page) but names its own address, Better-Cal reads it there.
 
 Any other page works the same way when it publishes standard event data (schema.org `Event`, which most ticketing and events sites do) or has an "Add to Google Calendar" link on it. When it has neither and an AI model is set up, the model reads the page's text, but only if there's a date in it. A page behind a sign-in has nothing to read, and the card says so.
 

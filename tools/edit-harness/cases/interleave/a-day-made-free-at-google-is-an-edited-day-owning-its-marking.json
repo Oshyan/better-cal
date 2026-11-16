@@ -1,0 +1,30 @@
+{
+    "about": "One day of a busy series marked free at Google by another client, then a poll: the day is an edited day that owns its marking (Rows from Elsewhere), the rows agree with Google, and a rename for all events after keeps the day free (x-agree, x-own, x-write-asked).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "r-free",
+            "pick": 0.9
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.1
+        },
+        {
+            "do": "w-all",
+            "pick": 0.1,
+            "what": "title"
+        }
+    ]
+}

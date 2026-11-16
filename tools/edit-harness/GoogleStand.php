@@ -354,7 +354,7 @@ final class GoogleStand
             }
         }
         $series = [(string) ($m['summary'] ?? ''), $utc($m['start']), $utc($m['end']), (string) ($m['status'] ?? 'confirmed'), $allDay ? 1 : 0,
-            (string) ($m['description'] ?? ''), (string) ($m['location'] ?? ''), (string) ($m['source']['url'] ?? '')];
+            (string) ($m['description'] ?? ''), (string) ($m['location'] ?? ''), (string) ($m['source']['url'] ?? ''), self::showAsOf($m)];
         $records = [];
         foreach ($this->fake->records($googleId) as $r) {
             $k = $utc($r['originalStartTime']);
@@ -363,7 +363,7 @@ final class GoogleStand
                 continue;
             }
             $rec = [(string) ($r['summary'] ?? ''), $utc($r['start']), $utc($r['end']), (string) ($r['status'] ?? 'confirmed'), isset($r['start']['date']) ? 1 : 0,
-                (string) ($r['description'] ?? ''), (string) ($r['location'] ?? ''), (string) ($r['source']['url'] ?? '')];
+                (string) ($r['description'] ?? ''), (string) ($r['location'] ?? ''), (string) ($r['source']['url'] ?? ''), self::showAsOf($r)];
             if (!self::plainAt($rec, $series, $k)) {
                 $records[$k] = $rec;
             }
@@ -418,7 +418,7 @@ final class GoogleStand
             ? Clock::db(new \DateTimeImmutable($when['date'] . ' 00:00:00', Clock::utc()))
             : Clock::db(new \DateTimeImmutable((string) $when['dateTime']));
         $series = [(string) ($m['summary'] ?? ''), $utc($m['start']), $utc($m['end']), (string) ($m['status'] ?? 'confirmed'), $allDay ? 1 : 0,
-            (string) ($m['description'] ?? ''), (string) ($m['location'] ?? ''), (string) ($m['source']['url'] ?? '')];
+            (string) ($m['description'] ?? ''), (string) ($m['location'] ?? ''), (string) ($m['source']['url'] ?? ''), self::showAsOf($m)];
         $heldRecords = [];
         $heldSkips = [];
         foreach ((array) ($m['recurrence'] ?? []) as $line) {
@@ -446,14 +446,14 @@ final class GoogleStand
                 continue;
             }
             $rec = [(string) ($r['summary'] ?? ''), $utc($r['start']), $utc($r['end']), (string) ($r['status'] ?? 'confirmed'), isset($r['start']['date']) ? 1 : 0,
-                (string) ($r['description'] ?? ''), (string) ($r['location'] ?? ''), (string) ($r['source']['url'] ?? '')];
+                (string) ($r['description'] ?? ''), (string) ($r['location'] ?? ''), (string) ($r['source']['url'] ?? ''), self::showAsOf($r)];
             if (!self::plainAt($rec, $series, $utc($r['originalStartTime']))) {
                 $heldRecords[] = (string) $rid;
             }
         }
         $rowAllDay = (int) $master['all_day'] === 1;
         $tuple = static fn(array $r): array => [(string) $r['title'], (string) $r['start_utc'], (string) $r['end_utc'], (string) $r['status'], (int) $r['all_day'],
-            (string) ($r['description'] ?? ''), (string) ($r['location'] ?? ''), (string) ($r['url'] ?? '')];
+            (string) ($r['description'] ?? ''), (string) ($r['location'] ?? ''), (string) ($r['url'] ?? ''), (string) ($r['show_as'] ?? 'busy')];
         $mine = $tuple($master);
         $storedRecords = [];
         foreach ($rows as $r) {
@@ -504,7 +504,7 @@ final class GoogleStand
         }
         ksort($parts);
         $tuple = static fn(array $r): array => [(string) $r['title'], (string) $r['start_utc'], (string) $r['end_utc'], (string) $r['status'], (int) $r['all_day'],
-            (string) ($r['description'] ?? ''), (string) ($r['location'] ?? ''), (string) ($r['url'] ?? '')];
+            (string) ($r['description'] ?? ''), (string) ($r['location'] ?? ''), (string) ($r['url'] ?? ''), (string) ($r['show_as'] ?? 'busy')];
         $series = $tuple($master);
         $records = [];
         foreach ($rows as $r) {
@@ -521,7 +521,7 @@ final class GoogleStand
 
     /**
      * Whether a record (title, start, end, status, all-day, description,
-     * location, link) is the series' own values at its occurrence $key: the
+     * location, link, free or busy) is the series' own values at its occurrence $key: the
      * series' fields, the key as its start and the series' length from it.
      * Such a record is no edited day (series-model.md, Google as a
      * Contract): Google keeps one for every day a write touched, and a row
@@ -532,6 +532,16 @@ final class GoogleStand
     {
         $len = Clock::parse($series[2])->getTimestamp() - Clock::parse($series[1])->getTimestamp();
         $at = Clock::parse($key);
-        return $rec === [$series[0], Clock::db($at), Clock::db(Clock::plus($at, $len)), $series[3], $series[4], $series[5], $series[6], $series[7]];
+        return $rec === [$series[0], Clock::db($at), Clock::db(Clock::plus($at, $len)), $series[3], $series[4], $series[5], $series[6], $series[7], $series[8]];
+    }
+
+    /**
+     * Whether a Google resource takes up time, in the column's words (1.5.8, #303): `free` when its `transparency` is
+     * `transparent`, else `busy` (Google's default is `opaque`; a PATCH's null removes the field). The harness's own
+     * reading of Google's field, never GoogleSync's.
+     */
+    public static function showAsOf(array $resource): string
+    {
+        return ($resource['transparency'] ?? null) === 'transparent' ? 'free' : 'busy';
     }
 }

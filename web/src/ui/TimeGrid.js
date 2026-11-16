@@ -983,11 +983,18 @@ export function TimeGrid({
     });
   }, [pointToSlot, infinite, previewGeom, onMoveEvent, onDropToCalendar, onDropToPerson, calendars]);
 
-  // Week view's all-day and multi-day bars move and resize by whole days, as
-  // in month view: the spanned columns show where they'd land, and letting
-  // go off the calendar does nothing. They couldn't be dragged at all (#183).
+  // All-day and multi-day bars move and resize by whole days, as in month
+  // view: the spanned columns show where they'd land, and letting go off the
+  // calendar does nothing. Week view's couldn't be dragged at all (#183), day
+  // view's not until #206. One code for both: the day is whatever pointToSlot
+  // reads under the pointer, a column side by side or a stacked day below,
+  // and the view glides along the scroller the days run on (dayScroll).
   // Trips and bands keep month view's drags.
-  const barDraggable = (occ) => !vstack && !occ.isContainer && !occ.isGroup && canReschedule(occ, calendars[occ.calendarId]);
+  const barDraggable = (occ) => !occ.isContainer && !occ.isGroup && canReschedule(occ, calendars[occ.calendarId]);
+  const dayScroll = () => (vstack ? { scrollEl: scrollRef.current } : { hScrollEl: infinite ? hscrollRef.current : null });
+  const barDrags = (occ) => (barDraggable(occ)
+    ? { onPointerDown: (e) => dragMoveBar(occ, e), onEdgePointerDown: (edge, e) => dragResizeBar(occ, edge, e) }
+    : {});
   const dragMoveBar = useCallback((occ, ev) => {
     if (!barDraggable(occ)) return;
     ev.stopPropagation();
@@ -1005,7 +1012,7 @@ export function TimeGrid({
     let ext = null;
     startPointerDrag(ev, {
       makeGhost: () => cloneAsGhost(src),
-      hScrollEl: infinite ? hscrollRef.current : null,
+      ...dayScroll(),
       copyable: () => !isFeed && !(ext && ext.kind === 'person'),
       onLift: () => src.classList.add('is-drag-source'),
       onMove: (pt) => {
@@ -1044,7 +1051,7 @@ export function TimeGrid({
     const eEd = epochDayOfKey(endKey);
     let target = null;
     startPointerDrag(ev, {
-      hScrollEl: infinite ? hscrollRef.current : null,
+      ...dayScroll(),
       onMove: (pt) => {
         const slot = pointToSlot(pt, true);
         if (!slot) { target = null; setDraft(null); return; }
@@ -1191,8 +1198,7 @@ export function TimeGrid({
       : html`<${EventBar} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
       note=${spanNote(occ, !seg.contLeft, !seg.contRight)}
       dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent}
-      onPointerDown=${barDraggable(occ) ? (e) => dragMoveBar(occ, e) : undefined}
-      onEdgePointerDown=${barDraggable(occ) ? (edge, e) => dragResizeBar(occ, edge, e) : null} />`}
+      ...${barDrags(occ)} />`}
   </div>`;
   };
   // Phone week: "+N" under the lanes on each day that has more; it opens
@@ -1357,6 +1363,7 @@ export function TimeGrid({
                     key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
                     note=${spanNote(occ, !dayOf || dayOf[0] === 1, !dayOf || dayOf[0] === dayOf[1]) || (phone && dayOf ? `day ${dayOf[0]} of ${dayOf[1]}` : null)}
                     dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent}
+                    ...${barDrags(occ)}
                   />`))}
                   ${bars.overflow > 0 && html`<button
                     type="button" class="bc-vday-more"

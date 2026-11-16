@@ -414,6 +414,60 @@ export async function run() {
         return { ok: lifted && bySecond === 0 && caught.length === 1, lifted, bySecond, byFirst: caught.length };
       });
 
+      // Day view: an all-day bar moves and resizes by week view's drags, the
+      // day being the stacked day under the pointer (#206). Today's end and
+      // tomorrow's start are scrolled into view, today's header (and its
+      // bars) held at the top; the bar or one of its ends is taken down into
+      // tomorrow.
+      const tomorrow = addDays(today, 1);
+      const dayViewDrag = async (id, grab) => {
+        A.jumpToDate(today);
+        A.setView('day');
+        await until(() => document.querySelector('.bc-tg-vday-head') && st().anchorSeen === st().scrollSeq);
+        await until(() => shown(id));
+        const sc = document.querySelector('.bc-tg-scroll');
+        const col = () => document.querySelector(`.bc-tg-col[data-day="${tomorrow}"]`);
+        if (!col() || !shown(id)) return null;
+        sc.scrollTop += col().getBoundingClientRect().top - sc.getBoundingClientRect().top - sc.clientHeight / 2;
+        await wait(300);
+        const el = grab(shown(id));
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        const x = r.left + Math.min(4, r.width / 2);
+        const y = r.top + r.height / 2;
+        const c = col().getBoundingClientRect();
+        caught.length = 0;
+        S.set({ dropChoice: null });
+        press(el, x, y);
+        moveTo(x, y + 8);
+        moveTo(c.left + 40, c.top + 60);
+        release(c.left + 40, c.top + 60);
+        await wait(600);
+        const out = { sent: caught.slice(), asked: !!st().dropChoice };
+        S.set({ dropChoice: null });
+        return out;
+      };
+      await check('day view: an all-day bar dragged into tomorrow moves there', async () => {
+        const id = await sample({ allDay: true, start: today, end: tomorrow });
+        const d = await dayViewDrag(id, (bar) => bar);
+        if (!d) return { ok: false, detail: 'the sample event or tomorrow did not show' };
+        const b = d.sent[0];
+        return { ok: d.sent.length === 1 && String(b.start).slice(0, 10) === tomorrow && String(b.end).slice(0, 10) === addDays(today, 2), sent: d.sent };
+      });
+      await check('day view: an all-day bar\'s end dragged into tomorrow adds the day', async () => {
+        const id = await sample({ allDay: true, start: today, end: tomorrow });
+        const d = await dayViewDrag(id, (bar) => bar.querySelector('.bc-bar-handle.r'));
+        if (!d) return { ok: false, detail: 'the sample event, its end or tomorrow did not show' };
+        const b = d.sent[0];
+        return { ok: d.sent.length === 1 && String(b.start).slice(0, 10) === today && String(b.end).slice(0, 10) === addDays(today, 2), sent: d.sent };
+      });
+      await check('day view: a repeating all-day bar asks This/Following/All before it moves', async () => {
+        const id = await sample({ allDay: true, start: today, end: tomorrow, rrule: 'FREQ=DAILY;COUNT=3' });
+        const d = await dayViewDrag(id, (bar) => bar);
+        if (!d) return { ok: false, detail: 'the sample event or tomorrow did not show' };
+        return { ok: d.asked && d.sent.length === 0, asked: d.asked, sent: d.sent };
+      });
+
       // Reschedule mode: after a jump to a far month, the arrow keys pick a
       // day on screen and Enter asks to move there.
       await check('reschedule mode: arrows and Enter work after a far jump', async () => {

@@ -1,0 +1,90 @@
+{
+    "about": "A same-clock-in-any-zone series every two days at 00:30 Pacific/Auckland changed for all events to 02:00 for an hour, made zoned, from 4 April 2027, the night the fall change repeats 02:00 to 03:00: the hour ends at the second 02:00, a range no typed pair names (an end at or before the start on the clocks is 400, api-contract.md, typed), so the edit is sent as instants alone and goes through (seed 29806 case 202).",
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY;INTERVAL=2",
+        "import": false,
+        "bound": "none",
+        "boundAt": 9,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "start": "2027-02-23 00:30",
+        "length": 60,
+        "floating": true
+    },
+    "exceptions": [
+        {
+            "at": 19,
+            "kind": "edit",
+            "own": [
+                "title",
+                "url",
+                "reminders",
+                "status"
+            ],
+            "days": 3,
+            "mins": -240,
+            "zone": "Asia/Tokyo",
+            "len": 60
+        },
+        {
+            "at": 21,
+            "kind": "edit",
+            "own": [
+                "time"
+            ],
+            "days": -3,
+            "mins": 180,
+            "zone": "Asia/Tokyo",
+            "len": 60
+        }
+    ],
+    "acted": 20,
+    "from": "afterChange",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 5400,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "reminders": [
+                45
+            ],
+            "people": [
+                "Alex Example",
+                "Sam Sample"
+            ]
+        },
+        "rule": "same",
+        "sameForm": "editor",
+        "newRule": "FREQ=WEEKLY;BYDAY=FR",
+        "bound": null,
+        "via": "row",
+        "startOnly": false
+    },
+    "stack": {
+        "kind": "rename",
+        "days": 7,
+        "mins": 120
+    },
+    "everyOption": false,
+    "typed": true,
+    "choices": {
+        "edit": {
+            "ownReminders": "keep"
+        },
+        "stack": {
+            "ownTitle": "keep"
+        }
+    },
+    "preselected": {
+        "edit": true,
+        "stack": true
+    }
+}

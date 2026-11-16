@@ -948,11 +948,20 @@ final class Driver
                 // its instant by the one wall-clock rule (a skipped clock the clock plus the gap, a repeated one its first
                 // instant), and the series' clock the clock typed. Not with a zone change, whose two promises read the
                 // wall clock on the old zone's clock.
+                // An end in the hour the fall change repeats can have a wall clock at or before the start's: no typed pair
+                // names that range ("with an end at or before the start on the clocks 400", api-contract.md, `typed`; the
+                // editor reads such a pair as no time at all), so the request is sent as instants alone ("an instant `start`
+                // alone is read as before"), which Expect's expectation is built from (seed 29806 case 202).
                 if (!empty($this->spec['typed']) && $v['zone'] === null) {
                     $wall = static fn(int $dn, int $secs): string => sprintf('%sT%02d:%02d:%02d', Days::date($dn), intdiv($secs, 3600), intdiv($secs % 3600, 60), $secs % 60);
                     $endLocal = Clock::local(Clock::db($end), $tz);
-                    $in['typed'] = ['start' => $wall($dS + $v['date'], $c), 'end' => $wall(Clock::dnOf($endLocal), Clock::secsOf($endLocal)), 'tz' => $tz];
-                    $sent += ['typed' => true, 'typedClock' => $c, 'typedTz' => $tz];
+                    $typed = ['start' => $wall($dS + $v['date'], $c), 'end' => $wall(Clock::dnOf($endLocal), Clock::secsOf($endLocal)), 'tz' => $tz];
+                    if ($typed['end'] > $typed['start']) {
+                        $in['typed'] = $typed;
+                        $sent += ['typed' => true, 'typedClock' => $c, 'typedTz' => $tz];
+                    } else {
+                        $this->na('typed wall clocks: an end in the repeated hour at or before the start clock, sent as instants');
+                    }
                 }
             }
         }

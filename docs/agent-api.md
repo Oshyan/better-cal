@@ -142,6 +142,7 @@ curl -s "$BC/events/42" -X DELETE -H "@$AUTH_FILE" -H 'Content-Type: application
 | Show or hide calendars | `PATCH /calendars` | `set_calendars_visible` | Many at once; a display preference, not in Activity |
 | Undo | `POST /undo` | `undo` | Each call undoes the most recent change not yet undone, so repeating it steps further back (within 7 days) |
 | Manage calendars and folders | `POST/PATCH/DELETE /calendars`, `/folders` | none | REST only |
+| Manage tags | `GET /tags`, `PATCH/DELETE /tags/:id` | none | REST only; a rename onto a name taken merges |
 | Outbound feeds, push devices, reminder email address | `/outfeeds`, `POST /push/subscribe`, `POST /push/unsubscribe`, `PATCH /settings` | none | REST only; what a key creates belongs to it |
 | Manage tokens | `GET/POST/DELETE /tokens` | none | Signed-in browser only |
 

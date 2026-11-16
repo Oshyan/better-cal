@@ -195,13 +195,13 @@ export function buildCommands() {
   }
 
   // Manage pages.
-  for (const [route, label] of MANAGE_ITEMS) {
+  for (const [route, label, words] of MANAGE_ITEMS) {
     out.push({
       id: 'route:' + route,
       label: label,
       group: 'Manage',
       icon: route, // Icon maps 'organize' to the folder glyph, same as the sidebar
-      keywords: 'open page manage',
+      keywords: 'open page manage' + (words ? ' ' + words : ''),
       staysOnPage: true,
       run: () => set({ route, popover: null }),
     });

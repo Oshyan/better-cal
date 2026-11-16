@@ -19,7 +19,7 @@ final class Labels
     {
         $ids = [];
         foreach ($names as $name) {
-            $name = mb_substr(trim((string) $name), 0, 80);
+            $name = Tags::normalize((string) $name);
             if ($name === '') {
                 continue;
             }

@@ -31,7 +31,7 @@ It works without AI. If you've set up an AI model, Settings → General → **Na
 
 Markers say something outright. Each counts only at the start of a word, so `7/31`, `w/ Sam`, web and email addresses are left alone. The full editor's text box takes them too.
 
-Typing a marker lists what it can name, narrowing as you type: `/` your calendars, `#` your tags, `@` your people. Arrow keys move, Enter or Tab fills one in, Esc closes the list; Enter creates the event as usual when no list is showing. On a phone the choices sit in a row under the box.
+Typing a marker lists what it can name, narrowing as you type: `/` your calendars, `#` your tags (those an event carries; one nothing carries any more isn't offered), `@` your people. Arrow keys move, Enter or Tab fills one in, Esc closes the list; Enter creates the event as usual when no list is showing. On a phone the choices sit in a row under the box.
 
 | Marker | Example | What it does |
 |---|---|---|

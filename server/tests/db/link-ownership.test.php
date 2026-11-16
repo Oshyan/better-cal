@@ -357,6 +357,35 @@ return static function (Db $db): void {
         checkEq('link ownership: the day that gave its people back holds exactly its series\' set', ['Sam Sample'], $peopleOf((int) $dayRow($id, '2027-01-11 09:00:00')['id']));
     });
 
+    // A tag renamed onto a name taken (merged) and deleted (#134): the same
+    // change on the series' links and every day's, each undone with a day
+    // made since.
+    scenario('link ownership: a tag merged or deleted, and each undone with a day made since, leaves every day holding its own tags or exactly its series\'', function () use ($db, $series, $holds, $tagsOf, $dayRow): void {
+        $tagId = static fn(int $u, string $name): int => (int) $db->scalar('SELECT id FROM tags WHERE user_id = ? AND name = ?', [$u, $name]);
+        $u = freshUser($db);
+        $d = domains($db);
+        $tags = new BetterCal\Domain\Tags($db);
+        $cal = Settings::defaultCalendarId($db, $u);
+        $id = $series($d->events, $u, $cal, ['tagNames' => ['Sample A']]);
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-25T09:00:00Z', 'tagNames' => ['Sample A', 'Sample D']]);
+        $d->events->create($u, eventAt($cal, 'Sample other', '2027-02-01', ['tagNames' => ['Sample B']]));
+        $tags->rename($u, $tagId($u, 'Sample A'), 'Sample B');
+        $holds('a tag renamed onto a name taken (Tags::rename, merged)', $u);
+        $entry = lastEntry($db, $u);
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-11T09:00:00Z', 'title' => 'Sample renamed day']);
+        $d->undo->undoById($u, $entry);
+        $holds('undo of a tag merged, a day made since (Tags::rename)', $u);
+        checkEq('link ownership: the day made since the merge holds the first tag again, the owning day its own pair', [['Sample A'], ['Sample A', 'Sample D']],
+            [$tagsOf((int) $dayRow($id, '2027-01-11 09:00:00')['id']), $tagsOf((int) $dayRow($id, '2027-01-25 09:00:00')['id'])]);
+        $tags->delete($u, $tagId($u, 'Sample A'));
+        $holds('a tag deleted (Tags::delete)', $u);
+        $entry = lastEntry($db, $u);
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-18T09:00:00Z', 'title' => 'Sample another day']);
+        $d->undo->undoById($u, $entry);
+        $holds('undo of a tag deleted, a day made since (Tags::delete)', $u);
+        checkEq('link ownership: the day made since the delete holds the tag brought back', ['Sample A'], $tagsOf((int) $dayRow($id, '2027-01-18 09:00:00')['id']));
+    });
+
     scenario('link ownership: a forced undo of a day\'s own tags or people after a split moved the day leaves it with its new series\' set', function () use ($db, $series, $holds, $tagsOf, $peopleOf, $dayRow): void {
         foreach (['tags' => ['tagNames', ['Sample A'], ['Sample B'], ['Sample C']], 'people' => ['personNames', ['Alex Example'], ['Sam Sample'], ['Pat Placeholder']]] as $field => [$key, $seriesSet, $daySet, $splitSet]) {
             $u = freshUser($db);
@@ -646,6 +675,8 @@ return static function (Db $db): void {
             'Domain/Events.php:googleCreate' => 'neutral: a new event or series has no days',
             'Domain/Events.php:detachToCalendar' => 'neutral: a standalone event',
             'Domain/People.php:updateLocked' => 'neutral: a person merged, the same set function on every event',
+            'Domain/Tags.php:rename' => 'run: a tag merged, the same set function on every event, and its undo',
+            'Domain/Tags.php:delete' => 'run: a tag deleted, the same set function on every event, and its undo',
             'Plugin/PluginHost.php:syncEvents' => 'neutral: plugin events have no series',
             'Infra/Db.php:update' => 'neutral: the statement builder the writers above use',
             'Infra/Db.php:upsert' => 'neutral: the statement builder the writers above use',
@@ -685,6 +716,7 @@ return static function (Db $db): void {
         $journalInventory = [
             'Domain/People.php:updateLocked' => 'run: undo of a person merged, a day made since',
             'Domain/People.php:delete' => 'run: undo of a person deleted, a day made since; and onto a day that gave its people back',
+            'Domain/Tags.php:snapshot' => 'run: undo of a tag merged and of one deleted, a day made since',
             'Domain/Labels.php:eventLinkRows' => 'run: every "this event" edit and plan, undone',
             'Domain/GoogleUndo.php:rowTables' => 'run: every Google writer above, undone',
             'Domain/Undo.php:linksOf' => 'run: CalDAV PUT, import, every plan, undone',

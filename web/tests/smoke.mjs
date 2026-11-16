@@ -1013,8 +1013,8 @@ assert('hotkeys: mod entries declare a display override',
   HOTKEYS.filter((h) => h.mod).every((h) => Array.isArray(h.display) && h.display.length > 0));
 assert('hotkeys: the palette binding is mod-gated',
   HOTKEYS.find((h) => h.id === 'palette').mod === true);
-assert('commands: manage items are [route, label] pairs',
-  MANAGE_ITEMS.length > 0 && MANAGE_ITEMS.every((r) => Array.isArray(r) && r.length === 2 && r.every((x) => typeof x === 'string')));
+assert('commands: manage items are [route, label] or [route, label, words] lists of text',
+  MANAGE_ITEMS.length > 0 && MANAGE_ITEMS.every((r) => Array.isArray(r) && (r.length === 2 || r.length === 3) && r.every((x) => typeof x === 'string')));
 eq('commands: manage routes are unique', new Set(MANAGE_ITEMS.map((r) => r[0])).size, MANAGE_ITEMS.length);
 assert('commands: every view id has a label',
   ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'].every((v) => typeof VIEW_LABELS[v] === 'string'));

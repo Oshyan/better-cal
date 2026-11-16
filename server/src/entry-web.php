@@ -141,6 +141,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $settingsController = new Controllers\SettingsController($settings);
         $geocodeController = new Controllers\GeocodeController($geocode, $placeSearch);
         $peopleController = new Controllers\PeopleController($people, $events);
+        $tagsController = new Controllers\TagsController(new Domain\Tags($db));
         $pluginsDomain = new Domain\Plugins($db, null, $cfg);
         $proposalsDomain = new Domain\Proposals($db, $events, $trips);
         $pluginsController = new Controllers\PluginsController($pluginsDomain, $jobQueue, $proposalsDomain, $undo, $db);
@@ -262,6 +263,9 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('PATCH', "$base/people/:id/availability/:spanId", [$peopleController, 'patchSpan']);
         $router->add('DELETE', "$base/people/:id/availability/:spanId", [$peopleController, 'deleteSpan']);
         $router->add('GET', "$base/availability", [$peopleController, 'window']);
+        $router->add('GET', "$base/tags", [$tagsController, 'index']);
+        $router->add('PATCH', "$base/tags/:id", [$tagsController, 'patch']);
+        $router->add('DELETE', "$base/tags/:id", [$tagsController, 'delete']);
         $router->add('GET', "$base/availability/check", [$peopleController, 'check']);
 
         // Plugin system (docs/plugins/prd-v1.md): ops + job-written reads.

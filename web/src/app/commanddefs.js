@@ -47,11 +47,11 @@ export const STATIC_COMMANDS = [
 ];
 
 // The Manage pages, shared with the sidebar footer so the two can't drift.
-// [route, label]
+// [route, label, words the palette also finds it by]
 export const MANAGE_ITEMS = [
   ['review', 'Review'],
   ['settings', 'Settings'],
-  ['organize', 'Calendars & folders'],
+  ['organize', 'Calendars & folders', 'tags rename merge'],
   ['people', 'People'],
   ['activity', 'Activity'],
   ['plugins', 'Plugins'],

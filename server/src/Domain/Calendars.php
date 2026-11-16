@@ -33,7 +33,9 @@ final class Calendars
             $userId
         );
         $folders = $this->db->all('SELECT * FROM folders WHERE user_id = ? ORDER BY position, id', [$userId]);
-        $tags = $this->db->all('SELECT id, name FROM tags WHERE user_id = ? ORDER BY name', [$userId]);
+        // The tags offered: those an event carries (Tags::inUse), so one
+        // nothing uses any more drops out of autocomplete by itself.
+        $tags = (new Tags($this->db))->inUse($userId);
 
         $calIds = array_map(static fn($c) => (int) $c['id'], $calendars);
         $folderIdsByCal = [];
@@ -69,7 +71,7 @@ final class Calendars
                 'sort' => Folders::sortOf($f),
                 'calendarIds' => $calIdsByFolder[(int) $f['id']] ?? [],
             ], $folders),
-            'tags' => array_map(static fn(array $t) => ['id' => (int) $t['id'], 'name' => (string) $t['name']], $tags),
+            'tags' => $tags,
         ];
     }
 

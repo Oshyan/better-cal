@@ -2395,6 +2395,17 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-org-gear { flex: none; }
 .bc-org-gear.is-open { color: var(--accent); }
 .bc-org-cal .bc-calset { margin: 0 0 10px; }
+/* Tags (#134): each in use on one line, side by side where the page is wide
+   enough; the rename field and an inline confirm take the row's width. */
+.bc-tag-list {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0 18px;
+  margin: 0; padding: 0 0 0 21px; list-style: none;
+}
+.bc-tag-item { min-width: 0; border-bottom: 1px solid var(--border); }
+.bc-tag-line { display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 3px 0; }
+.bc-tag-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.bc-tag-line .bc-org-count, .bc-tag-line .bc-org-note { flex: none; white-space: nowrap; }
+.bc-tag-item .bc-org-confirm { padding: 2px 0 8px; }
 
 /* --- quick create ----------------------------------------------------------- */
 

@@ -5,7 +5,10 @@
 // the end collects calendars in no folder. Every calendar row carries its
 // color dot, kind badge, and a single Folder dropdown; membership in several
 // folders stays possible through "+ Add to another folder". The gear expands
-// the same per-calendar settings panel the sidebar opens.
+// the same per-calendar settings panel the sidebar opens. Tags (#134) have
+// their own section: each tag in use with its count, renamed inline (onto a
+// name taken, it merges, asked first) or deleted with an inline confirm
+// that says how many events it comes off.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, toast, shallowEq, state, set } from './store.js';
@@ -14,6 +17,8 @@ import {
 } from './actions.js';
 import { sidebarGroups, moveGroup } from '../lib/sidebarorder.js';
 import { PageShell, EmptyState } from './PageShell.js';
+import { api, entriesOf, loadCalendars, refreshWindow } from './api.js';
+import { useOwnList, superseded } from './lists.js';
 import { CalendarSettings } from './CalendarSettings.js';
 import { feedProblem } from '../lib/feedproblem.js';
 import { Icon, CalDot } from '../ui/icons.js';
@@ -175,6 +180,119 @@ function FolderSection({ folder, cals, folders }) {
   </section>`;
 }
 
+const events = (n) => n + ' event' + (n === 1 ? '' : 's');
+
+// One tag's row: its name and how many events carry it; the pencil renames
+// in place, the trash asks inline. A name another tag has merges the two,
+// which is asked first, with both counts. Filters hold text, not tags: a
+// filter matching this name is named, and stays as it is.
+function TagRow({ tag, tags, onChanged }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(tag.name);
+  const [ask, setAsk] = useState(null); // null | 'delete' | {into: tag}
+  const [busy, setBusy] = useState(false);
+
+  const after = (saved, words) => {
+    toast(words, { title: tag.name, undo: entriesOf(saved) });
+    setEditing(false);
+    setAsk(null);
+    onChanged();
+    // Events carry tags as names: the store's tag list and the window both change.
+    loadCalendars().catch(() => {});
+    refreshWindow();
+  };
+  const send = async (fn) => {
+    setBusy(true);
+    try { await fn(); } catch (e) { toast('Failed: ' + e.message, { error: true }); } finally { setBusy(false); }
+  };
+  const rename = () => send(async () => {
+    const saved = await api('/tags/' + tag.id, { method: 'PATCH', body: { name: name.trim() } });
+    after(saved, saved.merged ? 'Merged into ' + saved.name : 'Tag renamed');
+  });
+  const remove = () => send(async () => {
+    const saved = await api('/tags/' + tag.id, { method: 'DELETE' });
+    after(saved, 'Tag deleted');
+  });
+  const save = () => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === tag.name) { setName(tag.name); setEditing(false); return; }
+    const into = tags.find((t) => t.id !== tag.id && t.name.toLowerCase() === trimmed.toLowerCase());
+    if (into) setAsk({ into });
+    else rename();
+  };
+  const cancel = () => { setName(tag.name); setEditing(false); setAsk(null); };
+  const filters = tag.filterCount > 0 && html`<span class="bc-org-note" title="Filters match the text they hold. Renaming or deleting this tag leaves them as they are.">matched by ${tag.filterCount} filter${tag.filterCount === 1 ? '' : 's'}</span>`;
+
+  return html`<li class="bc-tag-item">
+    <div class="bc-tag-line">
+      ${editing
+        ? html`<input
+            class="bc-org-rename" value=${name} autofocus maxlength="80"
+            aria-label=${'Rename tag ' + tag.name}
+            onInput=${(e) => { setName(e.target.value); setAsk(null); }}
+            onKeyDown=${(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); save(); }
+              if (e.key === 'Escape') { e.stopPropagation(); cancel(); }
+            }}
+          />
+          <button type="button" class="bc-btn bc-btn-primary" disabled=${busy || !name.trim()} onClick=${save}>Save</button>
+          <button type="button" class="bc-btn" onClick=${cancel}>Cancel</button>`
+        : html`<span class="bc-tag-name">#${tag.name}</span>
+          <span class="bc-org-count">${events(tag.eventCount)}</span>
+          ${filters}
+          <span class="bc-org-tools">
+            <button
+              type="button" class="bc-icon-btn"
+              title="Rename tag" aria-label=${'Rename tag ' + tag.name}
+              onClick=${() => { setName(tag.name); setAsk(null); setEditing(true); }}
+            ><${Icon} name="pencil" size=${13} /></button>
+            <button
+              type="button" class="bc-icon-btn bc-org-trash"
+              title="Delete tag" aria-label=${'Delete tag ' + tag.name}
+              onClick=${() => setAsk('delete')}
+            ><${Icon} name="trash" size=${13} /></button>
+          </span>`}
+    </div>
+    ${ask && ask.into && html`<div class="bc-org-confirm" role="group" aria-label="Merge tags">
+      <span>"${ask.into.name}" is already a tag, on ${events(ask.into.eventCount)}. Merge "${tag.name}" (${events(tag.eventCount)}) into it?</span>
+      <button type="button" class="bc-btn bc-btn-primary" disabled=${busy} onClick=${rename}>Merge</button>
+      <button type="button" class="bc-btn" onClick=${() => setAsk(null)}>Cancel</button>
+    </div>`}
+    ${ask === 'delete' && html`<div class="bc-org-confirm" role="group" aria-label="Delete tag">
+      <span>Take "${tag.name}" off ${events(tag.eventCount)} and delete it? The events stay.</span>
+      <button type="button" class="bc-btn bc-btn-danger" disabled=${busy} onClick=${remove}>Delete tag</button>
+      <button type="button" class="bc-btn" onClick=${() => setAsk(null)}>Cancel</button>
+    </div>`}
+  </li>`;
+}
+
+// Every tag an event carries (GET /tags), loaded again whenever the store's
+// tags change (an event tagged anywhere) or an undo lands. A tag nothing
+// carries isn't listed: it is offered nowhere.
+function TagsSection() {
+  const storeTags = useStore((s) => s.tags);
+  const [undoSeq, latest] = useOwnList();
+  const [tags, setTags] = useState(null);
+  const load = () => latest(api('/tags'))
+    .then((d) => setTags((d && d.tags) || []))
+    .catch((e) => { if (!superseded(e)) setTags((t) => t || []); });
+  useEffect(() => { load(); }, [storeTags, undoSeq]); // eslint-disable-line
+
+  if (tags === null) return null;
+  return html`<section class="bc-org-section">
+    <div class="bc-org-sect-head">
+      <span class="bc-org-icon"><${Icon} name="tag" size=${14} /></span>
+      <span class="bc-org-folder-name">Tags</span>
+      <span class="bc-org-count">${tags.length} in use</span>
+    </div>
+    ${tags.length === 0
+      ? html`<div class="bc-org-emptyrow">No tags yet. Add one to an event in its Tags field, or with #name in quick add.</div>`
+      : html`<ul class="bc-tag-list">
+        ${tags.map((t) => html`<${TagRow} key=${t.id} tag=${t} tags=${tags} onChanged=${load} />`)}
+      </ul>`}
+  </section>`;
+}
+
 const BUILT_IN_NAMES = { all: 'All calendars', people: 'People', plugins: 'Plugins' };
 
 // The sidebar's order: one line naming the groups, and Edit for a list to
@@ -293,8 +411,8 @@ export function OrganizePage() {
   const unfiled = calendars.filter((c) => !inFolder.has(c.id));
 
   return html`<${PageShell}
-    title="Calendars & folders"
-    note="Folders group calendars in the sidebar. Rename or delete a folder from its section; file a calendar with the Folder dropdown on its row."
+    title="Calendars, folders & tags"
+    note="Folders group calendars in the sidebar. Rename or delete a folder from its section; file a calendar with the Folder dropdown on its row. Tags in use are listed below the calendars."
   >
     <form class="bc-org-new" onSubmit=${submitNew}>
       <input
@@ -314,6 +432,7 @@ export function OrganizePage() {
       </div>
       ${unfiled.map((c) => html`<${CalendarRow} key=${c.id} cal=${c} folders=${folders} contextFolderId=${null} />`)}
     </section>`}
+    <${TagsSection} />
     ${calendars.length > 0 && html`<${SidebarOrder} keys=${groupKeys} shown=${shownKeys} folders=${folders} />`}
     ${calendars.length === 0 && html`<${EmptyState} text="No calendars yet. Add one from the sidebar." />`}
   <//>`;

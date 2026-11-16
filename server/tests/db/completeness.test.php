@@ -394,6 +394,17 @@ return static function (Db $db): void {
             $journaled('a person deleted', fn() => $people->delete($u, $person));
         });
 
+        // Tags managed as a list (#134).
+        scenario('journal: tags renamed, merged and deleted', function () use ($db, $d, $u, $home, $journaled): void {
+            $tags = new \BetterCal\Domain\Tags($db);
+            $d->events->create($u, eventAt($home, 'Sample brunch', '2026-12-13', ['tagNames' => ['Sample weekend', 'Sample out']]));
+            $d->events->create($u, eventAt($home, 'Sample hike', '2026-12-14', ['tagNames' => ['Sample outdoors']]));
+            $tagId = static fn(string $name): int => (int) $db->scalar('SELECT id FROM tags WHERE user_id = ? AND name = ?', [$u, $name]);
+            $journaled('a tag renamed', fn() => $tags->rename($u, $tagId('Sample weekend'), 'Sample saturday'));
+            $journaled('a tag renamed onto another (merged)', fn() => $tags->rename($u, $tagId('Sample out'), 'Sample outdoors'));
+            $journaled('a tag deleted', fn() => $tags->delete($u, $tagId('Sample outdoors')));
+        });
+
         // Saved views and filters.
         scenario('journal: saved views', function () use ($u, $views, $journaled): void {
             $journaled('a saved view made, changed and deleted', function () use ($views, $u): void {

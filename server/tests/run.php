@@ -11382,7 +11382,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $cdb->run('CREATE TABLE tags (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
     $cdb->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER, position INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (calendar_id, folder_id))');
     $cdb->run('CREATE TABLE feed_stats (calendar_id INTEGER, poll_date TEXT, raw_count INTEGER)');
-    $cdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, end_utc TEXT, deleted_at TEXT, rrule TEXT)');
+    $cdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, end_utc TEXT, deleted_at TEXT, rrule TEXT, recurrence_parent_id INTEGER)');
     $cdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
     undoJournal($cdb);
     eventLinkTables($cdb);

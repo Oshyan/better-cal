@@ -133,6 +133,9 @@ export function Icon({ name, size = 15, stroke = 1.4 }) {
     activity: html`<path d="M2.6 8A5.4 5.4 0 1 0 8 2.6c-1.6 0-3 .7-4 1.8M2.6 2.4v2.4H5" />
       <path d="M8 5.4V8l1.9 1.1" />`,
     views: html`<path d="M4.5 2h7v12l-3.5-2.7L4.5 14z" />`,
+    // A luggage tag: the Tags section.
+    tag: html`<path d="M2.2 3.2c0-.6.4-1 1-1h4.3l6.3 6.3-5.3 5.3-6.3-6.3z" />
+      <path d="M5.2 5.2h.01" stroke-width="2.2" stroke-linecap="round" />`,
     folder: html`<path d="M1.8 4.2c0-.6.4-1 1-1h3.4l1.4 1.6h5.6c.6 0 1 .4 1 1v6c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1z" />`,
     mixed: html`<circle cx="8" cy="8" r="5.2" />
       <path d="M8 2.8a5.2 5.2 0 0 1 0 10.4z" fill="currentColor" stroke="none" />`,

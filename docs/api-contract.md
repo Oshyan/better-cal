@@ -43,7 +43,7 @@ What a token creates belongs to that exact token and stops with it, whether it's
 
 ## Calendars and Folders
 
-- `GET /calendars` → `{calendars:[calendar], folders:[{id,name,position,sort,calendarIds}], tags:[{id,name}]}`. Calendars come in the list's own order (`position`). A folder's `calendarIds` are its calendars in its own order, and `sort` is `manual` or `az` (how the folder lists them; A to Z is the client's to apply). A calendar is `{id, name, color, kind, role, provider, sourceUrl, googleCalendarId, googleAccessRole, googleAccountEmail, editable, reschedulable, pluginId, pluginName, pluginSettings, ownSettings, ownStatus, place, visible, position, pollIntervalMinutes, staleAfterDays, folderIds:[], groupSimilar, hideCancelled, reminderDefaults, subscriptionAuthorization, health}`.
+- `GET /calendars` → `{calendars:[calendar], folders:[{id,name,position,sort,calendarIds}], tags:[{id,name,eventCount}]}`. `tags` are the tags in use, as `GET /tags` lists them (see [Tags](#tags)). Calendars come in the list's own order (`position`). A folder's `calendarIds` are its calendars in its own order, and `sort` is `manual` or `az` (how the folder lists them; A to Z is the client's to apply). A calendar is `{id, name, color, kind, role, provider, sourceUrl, googleCalendarId, googleAccessRole, googleAccountEmail, editable, reschedulable, pluginId, pluginName, pluginSettings, ownSettings, ownStatus, place, visible, position, pollIntervalMinutes, staleAfterDays, folderIds:[], groupSimilar, hideCancelled, reminderDefaults, subscriptionAuthorization, health}`.
   - `kind`: `local`, `subscribed` (both ICS and Google) or `plugin`.
   - `role` is what the calendar is to the person: `mine` (events are planned unless tentative), `opportunities` (events are available until picked) or `context` (information: never planned, never busy, drawn quietly). Defaults: local → mine, subscribed → opportunities, plugin → context.
   - `provider` is `ics` (an address the server fetches; `sourceUrl` set) or `google` (through a connected Google account; `googleCalendarId` and `googleAccessRole` set, `sourceUrl` null). A bearer token gets an ICS `sourceUrl` only for a subscription that exact token created, here and in calendar mutation responses; otherwise it's null.
@@ -248,6 +248,15 @@ A trip is a normal event with `isContainer: true` that groups other events. Atta
 - `PATCH /people/:id/availability/:spanId` `{start?, end?, kind?, note?}` → span (`note` null or blank clears it). `DELETE /people/:id/availability/:spanId`.
 - `GET /availability?start&end` → `{spans:[span + name]}` for people with `showOnCalendar` (the calendar's bands).
 - `GET /availability/check?start&end&names=A,B` → `{conflicts:[span + name]}`: overlapping spans for the named people, whatever their visibility (the editor's scheduling hint).
+
+## Tags
+
+A tag is made the first time an event carries it (`tagNames` on `POST`/`PATCH /events`, `#name` in quick add) and is local to Better-Cal: it is never sent to Google or written to a feed. Session or token, like people.
+
+- `GET /tags` → `{tags:[{id, name, eventCount, filterCount}]}`, by name: the tags on at least one event that isn't deleted. A tag nothing carries is not listed here or in `GET /calendars`, so it is offered nowhere; it comes back if an event carrying it does (an undo). `eventCount` counts events, a repeating event once with its edited days. `filterCount` is how many keyword and regex filters on the `tags` field (enabled or not) match the name.
+- `PATCH /tags/:id` `{name}` → `{id, name, merged, eventCount}`. The name is trimmed and cut to 80 characters; empty is 400 `invalid_request`. Every event carrying the tag, each day of a repeating event included, carries the new name. A name another tag has (case aside) merges the two: the events carry that tag instead, the renamed one is removed, and the answer is the survivor (its own spelling) with `merged: true`. A rename to the name it has writes nothing. Undoable; the undo of a merge puts both tags back on the events each was on.
+- `DELETE /tags/:id` → `{ok:true, eventCount}`: the tag comes off every event that carries it (the events stay) and is removed. Undoable.
+- 404 `not_found` for a tag that isn't the account's. Filters, saved views and outgoing search feeds hold text, not tags: neither a rename nor a delete changes them, and a filter that matched the old name no longer matches the new one.
 
 ## Change Cursor
 

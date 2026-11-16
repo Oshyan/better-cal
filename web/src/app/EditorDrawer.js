@@ -36,6 +36,7 @@ import { CalendarSelect } from '../ui/CalendarSelect.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { DateField, TimeField } from './WhenFields.js';
 import { useMarkerSuggest } from './MarkerSuggest.js';
+import { newUnwritableTags, TAG_NAME_HINT } from '../lib/markersuggest.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
 import { editedWords, timeChange } from '../lib/changeline.js';
 import { changedFields, fieldLines, sameOpening, editorBase, newShowAsOf } from '../lib/editfields.js';
@@ -401,6 +402,7 @@ function saveOf(editor, opened, form) {
 
 export function EditorDrawer() {
   const editor = useStore((s) => s.editor);
+  const knownTags = useStore((s) => s.tags);
   // The opening this editor is: the state it was opened as, kept while the
   // store only moves what may change under an open editor (lib/editfields.js
   // sameOpening: where Back returns, what the person has been shown). The
@@ -923,6 +925,7 @@ export function EditorDrawer() {
     const [s, en] = formInstants(form);
     if (isNaN(s) || isNaN(en) || en <= s) return;
     if (intervalWrong) return; // said under the repeat
+    if (badTags.length > 0) return; // said under the tags
     // A name nobody has confirmed as a person yet. Saving would have to either
     // invent the person or drop the name silently; ask instead. The People
     // field already shows the prompt, so just point at it.
@@ -1007,7 +1010,10 @@ export function EditorDrawer() {
   // A repeat interval no rule can hold (empty, not a whole number, over
   // MAX_INTERVAL): said under the repeat, and nothing is saved until it is fixed.
   const intervalWrong = !form.rrule.custom && form.rrule.freq !== 'none' ? intervalProblem(form.rrule.interval, form.rrule.freq) : null;
-  const unsaveable = backwards || !!intervalWrong;
+  // A new tag typed by hand follows the # marker's spelling rule (#310); a
+  // tag the account has, or the event already carries, is kept as it is.
+  const badTags = newUnwritableTags(form.tags, [...(knownTags || []).map((t) => t.name), ...((occ && occ.tags) || [])]);
+  const unsaveable = backwards || !!intervalWrong || badTags.length > 0;
   // Apply to: the scopes this occurrence has (scopes.js); one left out
   // stays in the list, disabled, saying why.
   const editorScopes = occ && occ.recurring ? seriesScopes(occ) : null;
@@ -1241,7 +1247,8 @@ export function EditorDrawer() {
         </div>
         ${lab('Tags')}
         <div class=${'bc-ed-ctl' + flash('tags')}>
-          <input placeholder="Comma separated" aria-label="Tags, comma separated" value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
+          <input placeholder="Comma separated" aria-label="Tags, comma separated" aria-invalid=${badTags.length > 0 ? 'true' : 'false'} value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
+          ${badTags.length > 0 && html`<div class="bc-ed-sub bc-ed-err" role="alert">${badTags.map((n) => '"' + n + '"').join(', ')} can't be ${badTags.length === 1 ? 'a new tag' : 'new tags'}. ${TAG_NAME_HINT}</div>`}
         </div>
         ${lab(mineCal ? 'For me' : 'Trip')}
         <div class="bc-ed-ctl bc-ed-flags">
@@ -1358,7 +1365,7 @@ export function EditorDrawer() {
       </div>
 
       <div class="bc-drawer-actions bc-ed-actions">
-        <button type="submit" class="bc-btn bc-btn-primary" disabled=${unsaveable || !!seriesAsk} title=${backwards ? 'The end is before the start' : intervalWrong ? intervalWrong : (occ ? 'Save' : 'Create') + ' (' + saveKeys + ')'}>${seriesAsk === 'asking' ? 'Working out the plan…' : occ ? 'Save' : 'Create'}</button>
+        <button type="submit" class="bc-btn bc-btn-primary" disabled=${unsaveable || !!seriesAsk} title=${backwards ? 'The end is before the start' : intervalWrong ? intervalWrong : badTags.length > 0 ? 'A new tag\'s name needs changing first (under Tags)' : (occ ? 'Save' : 'Create') + ' (' + saveKeys + ')'}>${seriesAsk === 'asking' ? 'Working out the plan…' : occ ? 'Save' : 'Create'}</button>
         <button type="button" class="bc-btn" onClick=${requestClose}>Cancel</button>
         ${googleCalendar(Number(form.calendarId)) && (occ ? occ.recurring && scope !== 'this' : (form.rrule.custom || form.rrule.freq !== 'none'))
           && html`<span class="bc-drawer-note" title="This calendar lives at Google: a change to the series is sent there and read back, and the calendar shows what Google stores.">${occ ? 'Saves' : 'Creates'} at Google</span>`}

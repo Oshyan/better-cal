@@ -67,11 +67,37 @@ export function calendarMarker(name) {
   return body ? '/' + body : null;
 }
 
+// The one spelling rule for a tag's name, as the server's # marker reads it
+// (Tags::NAME_PATTERN, which the unit suite compares with this text):
+// letters, digits, hyphens and underscores, at least one letter, at most 50.
+export const TAG_NAME = String.raw`(?=[\p{L}\p{N}_-]*\p{L})[\p{L}\p{N}][\p{L}\p{N}_-]{0,49}`;
+const TAG_WHOLE = new RegExp('^' + TAG_NAME + '$', 'u');
+
+/** Whether a name can be a tag's: typed after #, it reads back as itself. */
+export function tagNameWritable(name) {
+  return TAG_WHOLE.test(String(name || ''));
+}
+
+/** The rule in words, under any field where a person types a tag's name. */
+export const TAG_NAME_HINT = 'Letters, digits, - and _ only, starting with a letter or digit, at least one letter and no spaces, so the tag can be typed after #.';
+
+/**
+ * The names in a comma-separated Tags field that would be new tags the rule
+ * doesn't allow (#310). A name already one of the tags (`known`, case aside)
+ * is always fine, however it is spelled: an event carrying an older tag with
+ * a space still saves.
+ */
+export function newUnwritableTags(text, known = []) {
+  const have = new Set(known.map((n) => String(n).toLowerCase()));
+  return String(text || '').split(',').map((t) => t.trim()).filter(Boolean)
+    .filter((n) => !have.has(n.toLowerCase()) && !tagNameWritable(n));
+}
+
 // A tag as typed after #; one whose name a marker can't hold (spaces) isn't
 // offered, since typing it would make a different tag.
 export function tagMarker(name) {
   const n = String(name || '');
-  return /^(?=[\p{L}\p{N}_-]*\p{L})[\p{L}\p{N}][\p{L}\p{N}_-]{0,49}$/u.test(n) ? '#' + n : null;
+  return tagNameWritable(n) ? '#' + n : null;
 }
 
 // A person by first name when no one else has it (the server's matchPerson

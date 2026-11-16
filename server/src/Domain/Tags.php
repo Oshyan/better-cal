@@ -31,10 +31,30 @@ final class Tags
     {
     }
 
+    /**
+     * The one spelling rule for a tag's name: what quick add's `#` marker
+     * reads (QuickAddMarkers builds its pattern from this), so every name
+     * the rule allows can be typed after `#` in quick add and search.
+     * Letters, digits, hyphens and underscores, at least one letter, at
+     * most 50 characters. The app's marker suggestions hold the same text
+     * (web/src/lib/markersuggest.js, TAG_NAME); the unit suite compares
+     * the two.
+     */
+    public const NAME_PATTERN = '(?=[\p{L}\p{N}_-]*\p{L})[\p{L}\p{N}][\p{L}\p{N}_-]{0,49}';
+
+    /** NAME_PATTERN in words, for a refusal. */
+    public const NAME_RULE = 'A tag\'s name can have letters, digits, hyphens (-) and underscores (_), starting with a letter or digit, with at least one letter, up to 50 characters and no spaces, so it can be typed after # in quick add and search.';
+
     /** A tag's name as stored: trimmed, at most MAX_NAME characters ('' when nothing is left). */
     public static function normalize(string $name): string
     {
         return mb_substr(trim($name), 0, self::MAX_NAME);
+    }
+
+    /** Whether a name follows the spelling rule (NAME_PATTERN), whole. */
+    public static function writable(string $name): bool
+    {
+        return preg_match('/^' . self::NAME_PATTERN . '$/u', $name) === 1;
     }
 
     /**
@@ -102,6 +122,10 @@ final class Tags
             throw HttpError::badRequest('name is required');
         }
         $name = self::normalize($name);
+        // A name the # marker can't hold could be shown but never typed (#310).
+        if (!self::writable($name)) {
+            throw HttpError::badRequest(self::NAME_RULE, 'tag_name_unwritable');
+        }
         return $this->undo()->write($userId, function () use ($userId, $id, $name): array {
             $tag = $this->requireTag($userId, $id);
             $into = $this->db->scalar('SELECT id FROM tags WHERE user_id = ? AND name = ? AND id <> ?', [$userId, $name, $id]);

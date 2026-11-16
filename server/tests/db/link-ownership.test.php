@@ -368,8 +368,8 @@ return static function (Db $db): void {
         $cal = Settings::defaultCalendarId($db, $u);
         $id = $series($d->events, $u, $cal, ['tagNames' => ['Sample A']]);
         $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-25T09:00:00Z', 'tagNames' => ['Sample A', 'Sample D']]);
-        $d->events->create($u, eventAt($cal, 'Sample other', '2027-02-01', ['tagNames' => ['Sample B']]));
-        $tags->rename($u, $tagId($u, 'Sample A'), 'Sample B');
+        $d->events->create($u, eventAt($cal, 'Sample other', '2027-02-01', ['tagNames' => ['Sample-B']]));
+        $tags->rename($u, $tagId($u, 'Sample A'), 'Sample-B');
         $holds('a tag renamed onto a name taken (Tags::rename, merged)', $u);
         $entry = lastEntry($db, $u);
         $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-11T09:00:00Z', 'title' => 'Sample renamed day']);

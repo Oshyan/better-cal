@@ -90,4 +90,5 @@ Not events: a calendar's `.ics` or `webcal://` address opens Subscribe instead.
 - "In 2 hours" isn't read; use a clock time.
 - "9-5" isn't read as hours; write "9am-5pm".
 - A short day name or a day range at the very start stays in the title ("Wed planning", "Mon-Fri schedule review") unless a time follows it.
+- "Week from Monday" is always a week past the coming Monday, so "Offsite week from Monday to Friday" reads that one Monday and leaves "to Friday" in the title. For the five days, write "Offsite Mon-Fri next week".
 - A street address is read when its street name starts with a capital ("at 123 Example St"). In lower case ("at 123 example st") it stays in the title, as "at 7 sharp" does.

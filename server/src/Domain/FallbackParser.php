@@ -494,7 +494,7 @@ final class FallbackParser
         // A weekday counted from is the coming one, never today: typed on a
         // Friday, "a week from Friday" is 14 days out (#288). "Week from
         // Friday" without a count is one week.
-        if (preg_match('/\b(?:(' . $numAlt . ')\s+(day|week|month)s?|(week))\s+(?:from|after)\s+(now|today|tomorrow|' . $dayAltAll . ')\b/i', $work, $m)) {
+        if (preg_match('/\b' . self::counted() . '\s+(?:from|after)\s+(now|today|tomorrow|' . $dayAltAll . ')\b/i', $work, $m)) {
             [$count, $unit] = ($m[3] ?? '') !== '' ? [1, 'week'] : [$num($m[1]), strtolower($m[2])];
             $base = strtolower($m[4]);
             $from = match ($base) {
@@ -861,12 +861,11 @@ final class FallbackParser
     private static function startPhrase(string $work, \DateTimeImmutable $now): array
     {
         preg_match_all('/\b(?:from|starting(?:\s+(?:on|from))?|beginning(?:\s+on)?)\s+/i', $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
-        $numAlt = '\d{1,3}|' . implode('|', array_keys(self::NUMBER_WORDS));
         foreach ($all as $m) {
             $at = $m[0][1];
             $rest = substr($work, $at + strlen($m[0][0]));
             if (preg_match('/^from\s/i', $m[0][0]) === 1
-                && preg_match('/\b(?:' . $numAlt . ')\s+(?:days?|weeks?|months?)\s+$/i', substr($work, 0, $at)) === 1
+                && preg_match('/\b' . self::counted() . '\s+$/i', substr($work, 0, $at)) === 1
                 && preg_match('/^(?:now|today|tomorrow|' . implode('|', array_keys(self::WEEKDAYS)) . ')\b/i', $rest) === 1) {
                 continue; // "3 days from now", read by extractDate
             }
@@ -921,6 +920,18 @@ final class FallbackParser
             }
         }
         return [$work, null];
+    }
+
+    /**
+     * The count a day is reckoned from ("3 days", "2 weeks", "a week", a
+     * bare "week"), as groups 1 and 2 (the count and its unit) or 3 (a bare
+     * "week"). One pattern for the counted reading in extractDate and for
+     * the start phrase that leaves "from Friday" to it, so "week from
+     * Friday" is one reading wherever it is typed.
+     */
+    private static function counted(): string
+    {
+        return '(?:(\d{1,3}|' . implode('|', array_keys(self::NUMBER_WORDS)) . ')\s+(day|week|month)s?|(week))';
     }
 
     /**

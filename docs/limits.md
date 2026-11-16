@@ -37,6 +37,7 @@ Imports, subscribed feeds, CalDAV, incoming email, skipped occurrences, descript
 - **Ranking:** a separate AI budget with the same numbers: 40 calls an hour and 200 a day for the account, 20 an hour and 100 a day per calendar. When it runs out, Review shows a notice, existing scores stay, and ranking resumes once there's room.
 - **One AI response:** at most 1 MiB; a larger one is dropped and the feature falls back as it would on any AI failure.
 - **An event description:** 65,535 characters, after which it's cut.
+- **The duplicate check:** it reads 500 events a minute, so a calendar of thousands connected beside its own copies is shown once within an hour or so, whatever the dates and whether a calendar is hidden; the links it keeps have no cap. On a busy day one event is compared with 100 events within a day and a half (`BETTERCAL_LIMIT_DUPLICATE_CANDIDATES_PER_EVENT`), and Review holds 500 possible duplicates waiting for your answer, 3 for one event. When a check leaves something out for either reason, Settings, System says so once under Duplicate check, with the calendars and what to do.
 
 ### ZIP Imports and Malformed Dates
 

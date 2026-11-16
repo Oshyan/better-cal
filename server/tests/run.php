@@ -3990,7 +3990,7 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     Limits::configure([
         'DUPLICATE_SCAN_ROWS' => PHP_INT_MAX,
         'DUPLICATE_CANDIDATES_PER_EVENT' => PHP_INT_MAX,
-        'DUPLICATE_LINKED_EDGES' => PHP_INT_MAX,
+        'DUPLICATE_LINK_READ_EDGES' => PHP_INT_MAX,
         'DUPLICATE_LINK_TRAVERSAL_QUERIES' => PHP_INT_MAX,
         'DUPLICATE_OPEN_SUGGESTIONS' => PHP_INT_MAX,
         'DUPLICATE_OPEN_SUGGESTIONS_PER_EVENT' => PHP_INT_MAX,
@@ -4001,7 +4001,7 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     checkEq('dup limits: operator overrides cannot remove the hard ceilings', [2000, 250, 20000, 100, 2000, 10, 100000, 5000, 10], [
         Limits::get('DUPLICATE_SCAN_ROWS'),
         Limits::get('DUPLICATE_CANDIDATES_PER_EVENT'),
-        Limits::get('DUPLICATE_LINKED_EDGES'),
+        Limits::get('DUPLICATE_LINK_READ_EDGES'),
         Limits::get('DUPLICATE_LINK_TRAVERSAL_QUERIES'),
         Limits::get('DUPLICATE_OPEN_SUGGESTIONS'),
         Limits::get('DUPLICATE_OPEN_SUGGESTIONS_PER_EVENT'),
@@ -4012,7 +4012,6 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     Limits::configure([
         'DUPLICATE_SCAN_ROWS' => 20,
         'DUPLICATE_CANDIDATES_PER_EVENT' => 5,
-        'DUPLICATE_LINKED_EDGES' => 12,
         'DUPLICATE_OPEN_SUGGESTIONS' => 12,
         'DUPLICATE_OPEN_SUGGESTIONS_PER_EVENT' => 3,
         'DUPLICATE_COMPARISONS' => 20,
@@ -4112,9 +4111,10 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     checkEq('dup budget: a new cycle prunes automatic edges hidden by soft deletion', 1,
         (int) $budgetDb->scalar('SELECT COUNT(*) FROM event_duplicates'));
 
-    // Repeated remote changes may discover different exact links over time,
-    // but persistent linked storage and reads remain behind a hard ceiling.
-    Limits::configure(['DUPLICATE_LINKED_EDGES' => 3]);
+    // Repeated changes may find different exact links over time. No cap on
+    // stored links stops the scan (#317): title links need the owner's own
+    // calendars on both sides, and every read of links stays bounded.
+    Limits::configure(['DUPLICATE_LINK_READ_EDGES' => 3]);
     $rotateDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $rotateDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, change_seq INTEGER NOT NULL DEFAULT 0)');
     $rotateDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, role TEXT, provider TEXT)');
@@ -4132,8 +4132,8 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     $rotating->scan(1);
     $rotateDb->run("UPDATE events SET title = CASE id WHEN 3 THEN 'Beta' WHEN 4 THEN 'Alpha' ELSE title END");
     $rotated = $rotating->scanAllSlice(['userId' => 1, 'phase' => 'time', 'afterId' => 0]);
-    check('dup budget: rotating exact matches hit a visible hard linked-edge ceiling',
-        $rotated['throttled'] && (int) $rotateDb->scalar("SELECT COUNT(*) FROM event_duplicates WHERE status = 'linked'") === 3);
+    check('dup budget: rotating exact matches on your own calendars leave nothing out',
+        $rotated['skipped'] === [] && (int) $rotateDb->scalar("SELECT COUNT(*) FROM event_duplicates WHERE status = 'linked'") >= 2);
     $rotateDb->run('DELETE FROM event_duplicates');
     foreach ([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]] as [$a, $b]) {
         $rotateDb->run("INSERT INTO event_duplicates (user_id, event_a, event_b, status, basis) VALUES (1, ?, ?, 'linked', 'title')", [$a, $b]);
@@ -4144,7 +4144,7 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
 
     // A dense same-UID group is represented as a linear star. The title
     // phase excludes it, so it cannot recreate the omitted clique edges.
-    Limits::configure(['DUPLICATE_LINKED_EDGES' => 100]);
+    Limits::configure(['DUPLICATE_LINK_READ_EDGES' => 100]);
     $uidDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $uidDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, change_seq INTEGER NOT NULL DEFAULT 0)');
     $uidDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, role TEXT, provider TEXT)');
@@ -4178,6 +4178,28 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     checkEq('dup UID budget: title phase does not rebuild the same-UID clique', [0, 0],
         [$uidTime['linked'] + $uidTime['possible'], $uidTime['comparisons']]);
     Limits::reset();
+
+    // What a pass left out, in words (#317): summed across slices, counted
+    // by event, rounded so a condition that holds reads the same each pass.
+    $D = BetterCal\Domain\Duplicates::class;
+    checkEq('dup left out: nothing left out has no words', null, $D::shortfallWords([], []));
+    $merged = $D::mergeSkipped(
+        ['crowded' => ['events' => 1200, 'calendars' => [7 => 1000, 8 => 200]]],
+        ['crowded' => ['events' => 34, 'calendars' => ['8' => 34]], 'waiting' => ['events' => 1, 'calendars' => [9 => 1], 'reviewFull' => true], 'other' => ['events' => 3]]
+    );
+    checkEq('dup left out: slices sum by kind and calendar; an unknown kind is dropped',
+        ['crowded' => ['events' => 1234, 'calendars' => [7 => 1000, 8 => 234], 'reviewFull' => false], 'waiting' => ['events' => 1, 'calendars' => [9 => 1], 'reviewFull' => true]],
+        $merged);
+    checkEq('dup left out: the words name the calendars, about how many, what shows and what to do',
+        'About 1,200 events on busy days in Example Work and Example Feed were compared with only 100 of the events within a day and a half, so a copy on another calendar may show twice.'
+        . ' Setting BETTERCAL_LIMIT_DUPLICATE_CANDIDATES_PER_EVENT above 100 checks them all.'
+        . ' Possible duplicates of 1 event in Example Club are not in Review yet, because Review already holds 500 waiting for your answer. Answering those makes room, and the next check adds the rest.',
+        $D::shortfallWords($merged, [7 => 'Example Work', 8 => 'Example Feed', 9 => 'Example Club']));
+    check('dup left out: a count that moves a little reads the same',
+        $D::shortfallWords(['crowded' => ['events' => 1234, 'calendars' => [7 => 1]]], [7 => 'A']) === $D::shortfallWords(['crowded' => ['events' => 1191, 'calendars' => [7 => 1]]], [7 => 'A']));
+    checkEq('dup left out: an event at its share of Review says so',
+        'Possible duplicates of 3 events in A, B, C and 1 more calendar are not in Review yet, because each of those events already has 3 waiting in Review. Answering those makes room, and the next check adds the rest.',
+        $D::shortfallWords(['waiting' => ['events' => 3, 'calendars' => [1 => 3, 2 => 2, 3 => 1, 4 => 1]]], [1 => 'A', 2 => 'B', 3 => 'C', 4 => 'D']));
 }
 
 // ---------------------------------------------------------------------------

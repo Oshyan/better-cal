@@ -133,6 +133,74 @@ final class SystemHealth
     }
 
     /**
+     * A condition found by a whole run, rather than an attempt that failed:
+     * the duplicate check's pass ending with events left out. A run is its
+     * own proof, so the condition is journaled when first recorded; the
+     * same words while it is already recorded change nothing (no count, no
+     * time, no Activity line), so a condition that holds unchanged is
+     * recorded once, however many runs find it. New words record it again,
+     * as a count of one. It never earns an email by itself: a job's email
+     * needs JOB_MIN_FAILURES in a row (shouldAlert). Returns whether
+     * anything was recorded.
+     */
+    public function recordCondition(string $subject, string $kind, ?int $userId, string $label, string $words): bool
+    {
+        $now = Time::nowDb();
+        $words = mb_substr($words, 0, 2000);
+        $label = mb_substr($label, 0, 160);
+        return $this->db->tx(function () use ($subject, $kind, $userId, $label, $words, $now): bool {
+            $this->ensureRow($subject, $kind, $userId, $label);
+            $row = $this->lockedRow($subject);
+            if ($row === null) {
+                throw new \RuntimeException('Could not create system health row');
+            }
+            if ($row['status'] === 'failing' && (string) $row['last_error'] === $words) {
+                return false;
+            }
+            $transition = $row['status'] !== 'failing';
+            $this->db->update('system_health', [
+                'kind' => $kind,
+                'user_id' => $userId,
+                'label' => $label,
+                'status' => 'failing',
+                'first_failed_at' => $transition ? $now : $row['first_failed_at'],
+                'last_failed_at' => $now,
+                'consecutive_failures' => 1,
+                'last_error' => $words,
+                'alerted_at' => $transition ? null : $row['alerted_at'],
+            ], 'subject = ?', [$subject]);
+            $this->journal($userId, "$label: $words");
+            return true;
+        });
+    }
+
+    /**
+     * A condition (recordCondition) that a later run no longer finds: the
+     * subject is ok again, journaled with $note. Nothing is written when it
+     * was not recorded. An email sent for the streak before is followed by
+     * its recovery email, as for any failure. Returns whether it cleared.
+     */
+    public function clearCondition(string $subject, string $label, string $note): bool
+    {
+        $now = Time::nowDb();
+        $label = mb_substr($label, 0, 160);
+        return $this->db->tx(function () use ($subject, $label, $note, $now): bool {
+            $row = $this->lockedRow($subject);
+            if ($row === null || $row['status'] !== 'failing') {
+                return false;
+            }
+            $this->db->update('system_health', [
+                'label' => $label,
+                'status' => 'ok',
+                'last_ok_at' => $now,
+                'consecutive_failures' => 0,
+            ], 'subject = ?', [$subject]);
+            $this->journal($row['user_id'] !== null ? (int) $row['user_id'] : null, "$label: $note");
+            return true;
+        });
+    }
+
+    /**
      * Mark a subject failing because something stopped happening, rather
      * than because an attempt failed: the worker not running (WorkerWatch).
      * The streak starts at $sinceDb, the last time it did happen, and counts

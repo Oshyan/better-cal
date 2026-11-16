@@ -149,10 +149,14 @@ final class Limits
         // supplied events. Bound every slice before candidate generation can
         // become an all-pairs operation; unfinished rows continue in a later
         // worker job and pathological dense clusters are sampled, not fully
-        // materialised as an O(n squared) graph.
+        // materialised as an O(n squared) graph. Each bounds one slice's work
+        // (rows, candidates per event, comparisons, pairs, seconds), one read
+        // of links (LINK_READ_EDGES, LINK_TRAVERSAL_QUERIES) or the Review
+        // queue (OPEN_SUGGESTIONS). None caps the links an account keeps:
+        // those are bounded by how they are made (Duplicates, #317).
         'DUPLICATE_SCAN_ROWS' => 500,
         'DUPLICATE_CANDIDATES_PER_EVENT' => 100,
-        'DUPLICATE_LINKED_EDGES' => 5000,
+        'DUPLICATE_LINK_READ_EDGES' => 5000,
         'DUPLICATE_LINK_TRAVERSAL_QUERIES' => 32,
         'DUPLICATE_OPEN_SUGGESTIONS' => 500,
         'DUPLICATE_OPEN_SUGGESTIONS_PER_EVENT' => 3,
@@ -241,7 +245,7 @@ final class Limits
         'MODEL_LOG_RETENTION_DAYS' => 365,
         'DUPLICATE_SCAN_ROWS' => 2000,
         'DUPLICATE_CANDIDATES_PER_EVENT' => 250,
-        'DUPLICATE_LINKED_EDGES' => 20000,
+        'DUPLICATE_LINK_READ_EDGES' => 20000,
         'DUPLICATE_LINK_TRAVERSAL_QUERIES' => 100,
         'DUPLICATE_OPEN_SUGGESTIONS' => 2000,
         'DUPLICATE_OPEN_SUGGESTIONS_PER_EVENT' => 10,

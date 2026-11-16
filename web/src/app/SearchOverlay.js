@@ -222,7 +222,7 @@ export function SearchOverlay() {
       const cal = state.calendars.find((c) => c.id === occ.calendarId);
       const idx = offset + i;
       return html`<button
-        key=${occ.instanceId} type="button"
+        key=${occ.instanceId} type="button" data-opens-event=""
         class="bc-search-row${idx === sel ? ' is-selected' : ''}${occ.status === 'cancelled' ? ' is-cancelled' : ''}"
         onClick=${() => go(occ)}
         onMouseEnter=${() => setSel(idx)}

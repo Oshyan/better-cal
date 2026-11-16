@@ -474,7 +474,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         return html`<div
           key=${'rail:' + r.instanceId}
           class="bc-agenda-rail${r.isTrip ? ' is-trip' : ''}"
-          data-span=${r.instanceId}
+          data-span=${r.instanceId} data-opens-event=""
           style=${`top:${r.topPx}px;height:${r.heightPx}px;left:${-14 - r.lane * 6}px`}
           aria-hidden="true" title=${r.title}
           onPointerEnter=${() => setLinked(r.instanceId)}

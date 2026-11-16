@@ -121,6 +121,7 @@ export function fakeDom({ width = 1280 } = {}) {
   doc.activeElement = doc.body;
   const listeners = {};
   const win = {
+    listeners,
     innerWidth: width, innerHeight: 800, location: { href: 'http://app.test/', pathname: '/', search: '', hash: '' },
     addEventListener(type, fn) { (listeners[type] ||= []).push(fn); },
     removeEventListener(type, fn) { listeners[type] = (listeners[type] || []).filter((f) => f !== fn); },

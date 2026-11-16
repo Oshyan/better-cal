@@ -6943,6 +6943,8 @@ console.log('--- a change for more than one occurrence goes through its plan, wh
 // The editor's repeat row, in the stand-in DOM with its own stand-in server:
 // after everything above, which shares the page's fetch.
 await import('./repeat-control.mjs');
+// One press on anything that opens an event, with the panel open (#305).
+await import('./opens-event.mjs');
 
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

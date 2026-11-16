@@ -190,6 +190,7 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
     class="bc-chip${dotStyle ? ' is-dotstyle' : ''}${seg && seg.contLeft ? ' cont-l' : ''}${seg && seg.contRight ? ' cont-r' : ''}${stateClasses(occ, dimmed, nowMs)}"
     style=${style + hlVar(occ)}
     data-instance=${occ.instanceId}
+    data-opens-event=""
     data-hovertext=${occ.isGroup ? groupCardText(occ) : undefined}
     onPointerDown=${occ.isGroup ? undefined : onPointerDown}
     onClick=${onClick}
@@ -231,6 +232,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, note = null, onOpen, on
     class="bc-bar${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
     style=${style + hlVar(occ)}
     data-instance=${occ.instanceId}
+    data-opens-event=""
     data-hovertext=${occ.isGroup ? groupCardText(occ) : undefined}
     role="button"
     tabindex="0"
@@ -285,6 +287,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
     class="bc-block${titleOnly ? ' is-title-only' : ''}${rect.contUp ? ' cont-t' : ''}${rect.contDown ? ' cont-b' : ''}${stateClasses(occ, dimmed, nowMs)}"
     style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${rect.z ? `z-index:${rect.z};` : ''}${bg}${hlVar(occ)}`}
     data-instance=${occ.instanceId}
+    data-opens-event=""
     data-hovertext=${occ.isGroup ? groupCardText(occ) : undefined}
     role="button"
     tabindex="0"
@@ -332,6 +335,7 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
       ? `background:${withAlpha(color, 0.09)};border-top:2px dashed ${withAlpha(color, 0.45)};color:${withAlpha(ink(color), 0.9)}`
       : `background:${withAlpha(color, 0.13)};box-shadow:inset 0 2px 0 ${ink(color)}${hlVar(occ)}`}
     data-instance=${occ.instanceId}
+    data-opens-event=""
     role="button"
     tabindex="0"
     data-hovertext=${occ.availKind || occ.pluginId ? (occ.title || '(untitled)') + '\n' + bandDates(occ) : undefined}

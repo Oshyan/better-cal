@@ -49,6 +49,7 @@ function Token({ occ, cal, onOpen, zone = true, overflow = false }) {
     role="button" tabindex=${overflow ? -1 : 0} aria-hidden=${overflow ? 'true' : undefined}
     class=${'bc-ctx-token' + (overflow ? ' is-overflow' : '')}
     data-ctx-instance=${overflow ? undefined : occ.instanceId} aria-label=${contextTitle(occ)}
+    data-opens-event=${overflow ? undefined : ''}
     onPointerDown=${(e) => e.stopPropagation()}
     onClick=${(e) => open(onOpen, occ, e)}
     onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
@@ -139,7 +140,7 @@ export function ContextMark({ occ, cal, top, onOpen }) {
       ><${TokenIcon} token=${tk} cal=${cal} size=${11} plain=${true} />${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}</span>
       <span
         role="button" tabindex="0" class="bc-ctx-mark-hit"
-        data-ctx-instance=${occ.instanceId} aria-label=${contextTitle(occ)}
+        data-ctx-instance=${occ.instanceId} aria-label=${contextTitle(occ)} data-opens-event=""
         onPointerDown=${(e) => e.stopPropagation()}
         onClick=${(e) => open(onOpen, occ, e)}
         onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
@@ -165,14 +166,14 @@ export function DayLabel({ occs, onOpen, sep = false, flag = false }) {
   const lines = dayLabelLines(occs).join('\n');
   if (flag) {
     return html`<span
-      role="button" tabindex="0" class="bc-daylabel is-flag" data-hovertext=${lines} aria-label=${text}
+      role="button" tabindex="0" class="bc-daylabel is-flag" data-hovertext=${lines} aria-label=${text} data-opens-event=""
       onPointerDown=${(e) => e.stopPropagation()}
       onClick=${(e) => open(onOpen, occs[0], e)}
       onKeyDown=${(e) => keyOpen(onOpen, occs[0], e)}
     ><${Icon} name="flag" size=${11} /></span>`;
   }
   return html`<span
-    role="button" tabindex="0" class=${'bc-daylabel' + (sep ? ' is-sep' : '')} data-hovertext=${lines}
+    role="button" tabindex="0" class=${'bc-daylabel' + (sep ? ' is-sep' : '')} data-hovertext=${lines} data-opens-event=""
     onPointerDown=${(e) => e.stopPropagation()}
     onClick=${(e) => open(onOpen, occs[0], e)}
     onKeyDown=${(e) => keyOpen(onOpen, occs[0], e)}

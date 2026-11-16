@@ -117,7 +117,7 @@ function AlsoOn({ occ }) {
       return html`<span class="bc-es-alsoon-item" key=${d.pairId}>
         ${i > 0 && html`<span class="bc-es-alsoon-sep" aria-hidden="true">·</span>`}
         ${other
-          ? html`<button type="button" class="bc-es-alsoon-cal" title="Open this copy" onClick=${() => openDetail(other.instanceId)}><${CalDot} cal=${fullCal(d.cal)} />${d.cal.name}</button>`
+          ? html`<button type="button" class="bc-es-alsoon-cal" title="Open this copy" data-opens-event="" onClick=${() => openDetail(other.instanceId)}><${CalDot} cal=${fullCal(d.cal)} />${d.cal.name}</button>`
           : html`<span class="bc-es-alsoon-cal"><${CalDot} cal=${fullCal(d.cal)} />${d.cal.name}</span>`}
         <button type="button" class="bc-es-alsoon-split" disabled=${busy}
           title=${'Not the same event: show the one on ' + d.cal.name + ' separately'}
@@ -384,7 +384,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_SERIES_NOTE : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope, null, () => setTimeScope(f)); }} onCancel=${() => setTimeScope(null)} />`}
       ${panel && attendScope}
 
-      ${backTo && html`<button type="button" class="bc-es-backto" onClick=${() => goBackTo(backTo)}>
+      ${backTo && html`<button type="button" class="bc-es-backto" data-opens-event=${backTo.instanceId ? '' : undefined} onClick=${() => goBackTo(backTo)}>
         <${Icon} name="chevronLeft" size=${15} /><${Icon} name=${backTo.search ? 'search' : 'trip'} size=${14} />${backTo.title}
       </button>`}
       <div class="bc-es-head">
@@ -401,7 +401,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
         ${!panel && attendScope}
         ${occ.dupes && occ.dupes.length > 0 && html`<${AlsoOn} occ=${occ} />`}
         ${occ.containers && occ.containers.length > 0 && html`<button
-          type="button" class="bc-es-partof" onClick=${() => { close(); openTripByEventId(occ.containers[0].eventId); }}
+          type="button" class="bc-es-partof" data-opens-event="" onClick=${() => { close(); openTripByEventId(occ.containers[0].eventId); }}
         ><${Icon} name="trip" size=${15} />Part of ${occ.containers[0].title}</button>`}
       </div>
 

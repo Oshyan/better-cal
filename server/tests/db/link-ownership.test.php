@@ -377,6 +377,12 @@ return static function (Db $db): void {
         $holds('undo of a tag merged, a day made since (Tags::rename)', $u);
         checkEq('link ownership: the day made since the merge holds the first tag again, the owning day its own pair', [['Sample A'], ['Sample A', 'Sample D']],
             [$tagsOf((int) $dayRow($id, '2027-01-11 09:00:00')['id']), $tagsOf((int) $dayRow($id, '2027-01-25 09:00:00')['id'])]);
+        // The delete on an account of its own, so it stands on nothing the merge's undo left.
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = Settings::defaultCalendarId($db, $u);
+        $id = $series($d->events, $u, $cal, ['tagNames' => ['Sample A']]);
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-25T09:00:00Z', 'tagNames' => ['Sample A', 'Sample D']]);
         $tags->delete($u, $tagId($u, 'Sample A'));
         $holds('a tag deleted (Tags::delete)', $u);
         $entry = lastEntry($db, $u);

@@ -837,6 +837,12 @@ return [
             "link ownership: after undo of a person deleted, onto a day that gave its people back to its series since, every day holds its own set or its series' set",
             "link ownership: the day that gave its people back holds exactly its series' set",
             "link ownership: undoing a person's delete or merge leaves every day holding its own people or exactly its series': every live day row holds its own tags and people, or exactly its series'",
+            // A tag's merge or delete restores link rows alone, as a person's does (#134).
+            "link ownership: after undo of a tag merged, a day made since (Tags::rename), every day holds its own set or its series' set",
+            'link ownership: the day made since the merge holds the first tag again, the owning day its own pair',
+            "link ownership: after undo of a tag deleted, a day made since (Tags::delete), every day holds its own set or its series' set",
+            'link ownership: the day made since the delete holds the tag brought back',
+            "link ownership: a tag merged or deleted, and each undone with a day made since, leaves every day holding its own tags or exactly its series': every live day row holds its own tags and people, or exactly its series'",
             "link ownership: after a forced undo of a day's own tags after a split moved it (Undo::followLinks, the series it stands under now), every day holds its own set or its series' set",
             "link ownership: the day holds its new series' tags",
             "link ownership: after a forced undo of a day's own people after a split moved it (Undo::followLinks, the series it stands under now), every day holds its own set or its series' set",

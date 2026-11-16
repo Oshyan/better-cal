@@ -1,0 +1,36 @@
+{
+    "about": "One day of a busy series made free here, then the whole series made free, then busy again, then a poll. Google writes each of the master's markings into every exception (live probe of 2026-11-16), so after the second the day is busy at Google; the rows here must say what Google holds and the day must hold its series' marking or own its own (x-agree, x-own, x-write-asked).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.3,
+            "what": "showAs"
+        },
+        {
+            "do": "w-all",
+            "pick": 0.1,
+            "what": "showAs"
+        },
+        {
+            "do": "w-all",
+            "pick": 0.1,
+            "what": "showAs"
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.1
+        }
+    ]
+}

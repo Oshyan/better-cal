@@ -120,11 +120,6 @@ final class Interleave
     private ?array $singleSent = null;
     /** What a w-create step made, for the new-event marking check: [row id, Google id, all-day], or null. */
     private ?array $made = null;
-    /**
-     * @var array<string,true> series (by Google id) whose own marking was changed in Google Calendar by an r-free on the
-     * master, and not set here since by a change for all events or this and following that went through: #318's state.
-     */
-    private array $remoteFree = [];
 
     public function __construct(
         private readonly Db $db,
@@ -439,7 +434,6 @@ final class Interleave
         $this->etagOnly = [];
         $this->singles = $this->served = [];
         $this->single = $this->lastSingle = $this->singleSent = $this->made = null;
-        $this->remoteFree = [];
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
         $this->step = 0;
         $req = count($this->stand->fake->requests);
@@ -1921,9 +1915,6 @@ final class Interleave
                 $there = $onDay ? ($this->stand->fake->events[$instance] ?? $g) : $g;
                 $body = ['transparency' => GoogleStand::showAsOf($there) === 'free' ? 'opaque' : 'transparent'];
                 $touched = [$touch('showAs', $onDay ? $occ[0] : null)];
-                if (!$onDay) {
-                    $this->remoteFree[$gid] = true;
-                }
                 break;
             case 'r-etag':
                 $this->stand->fake->seed($g);
@@ -2614,10 +2605,6 @@ final class Interleave
                 array_slice($this->stand->fake->requests, $s0['req'], $s1['req'] - $s0['req']), $mAllDay, $context);
         }
         $this->made = null;
-        // The series' marking set here again: #318's state is over for it, and x-own judges its days' marking as before.
-        if ($out['ok'] && in_array($asked['kind'] ?? '', ['all', 'following'], true) && isset($asked['fields']['showAs']) && $gid !== null) {
-            unset($this->remoteFree[(string) $gid]);
-        }
 
         // x-choice: a change or delete of an event in no series, the conflict choice on.
         if ($choice && $this->singleSent !== null) {
@@ -3971,16 +3958,6 @@ final class Interleave
             $this->ran('x-own', $do);
             foreach (['title' => 'title', 'description' => 'description', 'location' => 'location', 'url' => 'url', 'status' => 'status', 'show_as' => 'showAs'] as $f => $ownName) {
                 if (!in_array($ownName, $r['own'], true) && (string) $r[$f] !== (string) $master[$f]) {
-                    // Oshyan/better-cal#318, left to the 1.5.11 rebuild: a series set free or busy in Google Calendar leaves a
-                    // day Google keeps a record of at its old marking, the day not owning it. Not judged for that marking
-                    // alone, only on a day with a record at Google, only while the series' marking was last changed there by
-                    // an r-free on the master; counted in every run. Any other field, and a mismatch a change here made, fail.
-                    $gid318 = (string) $master['google_event_id'];
-                    if ($f === 'show_as' && isset($this->remoteFree[$gid318]) && isset($s1['g']['digest'][$gid318]['records'][$key])) {
-                        $why = 'Not checked (#318): a day Google keeps a record of, its marking not the series\' after the series was marked free or busy in Google Calendar';
-                        $this->na[$why] = ($this->na[$why] ?? 0) + 1;
-                        continue;
-                    }
                     $this->fail($onlyLocal ? 'x-follow' : 'x-own', "step {$this->step} ($do): an edited day that doesn't own its $f has another than its series'", $context + ['row' => $id, 'own' => $r['own'], 'day' => (string) $r[$f], 'series' => (string) $master[$f]]);
                 }
             }

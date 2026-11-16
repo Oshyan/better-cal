@@ -3413,6 +3413,9 @@ body.bc-rescheduling { user-select: none; }
    opens the full day list rather than letting the header swallow the view. */
 .bc-tg-vday-allday { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-height: 20px; }
 .bc-tg-vday-allday .bc-bar { width: auto; max-width: min(100%, 320px); height: 20px; }
+/* Day view's days run down the page, so a bar's ends are dragged up or down
+   into another day (#206). */
+.bc-tg-vday-allday .bc-bar-handle { cursor: ns-resize; }
 .bc-vday-more {
   flex: none; background: var(--bg-inset); border: 1px solid var(--border-strong);
   border-radius: 5px; padding: 1px 8px; font-size: 11px; color: var(--fg-muted); cursor: pointer;

@@ -94,9 +94,22 @@ export function startPointerDrag(e, opts) {
   const canCopy = () => (typeof opts.copyable === 'function' ? !!opts.copyable() : !!opts.copyable);
   const showCopy = () => document.body.classList.toggle('bc-drag-copy', lifted && copyKey && canCopy());
 
+  // Edge auto-scroll is armed once the pointer is clear of every edge zone.
+  // A drag lifted inside one glided off before it had been moved: an
+  // all-day bar in day view's header, which sticks to the top of the
+  // scroller, sent the view a day back as it was picked up (#206). Brought
+  // back to an edge after leaving it, it glides.
+  let armed = true;
+  const edgeDeltas = () => ({
+    dy: opts.scrollEl ? edgeScrollDy(opts.scrollEl, lastPt.y, lastPt.x) : 0,
+    dx: opts.hScrollEl ? edgeScrollDx(opts.hScrollEl, lastPt.x, lastPt.y) : 0,
+  });
+
   function lift() {
     if (lifted || done) return;
     lifted = true;
+    const at = edgeDeltas();
+    armed = at.dy === 0 && at.dx === 0;
     if (opts.makeGhost) {
       ghost = opts.makeGhost();
       if (ghost) {
@@ -120,17 +133,14 @@ export function startPointerDrag(e, opts) {
   // near an edge keeps scrolling even without pointer movement.
   function loop() {
     if (done || !lifted) return;
-    const el = opts.scrollEl;
+    const { dy, dx } = edgeDeltas();
+    if (!armed && dy === 0 && dx === 0) armed = true;
     let moved = false;
-    if (el) {
-      const dy = edgeScrollDy(el, lastPt.y, lastPt.x);
-      if (dy !== 0) { el.scrollTop += dy; moved = true; autoScroll = { el, top: el.scrollTop }; }
+    if (armed && dy !== 0) {
+      const el = opts.scrollEl;
+      el.scrollTop += dy; moved = true; autoScroll = { el, top: el.scrollTop };
     }
-    const hel = opts.hScrollEl;
-    if (hel) {
-      const dx = edgeScrollDx(hel, lastPt.x, lastPt.y);
-      if (dx !== 0) { hel.scrollLeft += dx; moved = true; }
-    }
+    if (armed && dx !== 0) { opts.hScrollEl.scrollLeft += dx; moved = true; }
     if (moved && opts.onMove) opts.onMove(lastPt); // targets shift under the pointer
     raf = requestAnimationFrame(loop);
   }

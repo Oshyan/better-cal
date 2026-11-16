@@ -68,6 +68,12 @@ export function fakeDom({ width = 1280 } = {}) {
     append(...nodes) { for (const n of nodes) this.appendChild(typeof n === 'string' ? doc.createTextNode(n) : n); }
     removeChild(node) { this.childNodes = this.childNodes.filter((c) => c !== node); node.parentNode = null; return node; }
     remove() { if (this.parentNode) this.parentNode.removeChild(this); }
+    cloneNode(deep) {
+      const c = this.nodeType === 3 ? doc.createTextNode(this.data) : new FakeNode(this.nodeType, this.localName);
+      for (const [k, v] of this.attrs) c.setAttribute(k, v);
+      if (deep) for (const n of this.childNodes) c.appendChild(n.cloneNode(true));
+      return c;
+    }
     setAttribute(k, v) { this.attrs.set(k, String(v)); if (k.startsWith('data-')) this.dataset[k.slice(5).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = String(v); }
     getAttribute(k) { return this.attrs.has(k) ? this.attrs.get(k) : null; }
     hasAttribute(k) { return this.attrs.has(k); }
@@ -124,6 +130,8 @@ export function fakeDom({ width = 1280 } = {}) {
     innerWidth: width, innerHeight: 800, location: { href: 'http://app.test/', pathname: '/', search: '', hash: '' },
     addEventListener(type, fn) { (listeners[type] ||= []).push(fn); },
     removeEventListener(type, fn) { listeners[type] = (listeners[type] || []).filter((f) => f !== fn); },
+    // An event sent to the window's own listeners (a drag's moves and lift).
+    dispatch(type, extra = {}) { const ev = { type, preventDefault() {}, stopPropagation() {}, ...extra }; for (const fn of [...(listeners[type] || [])]) fn(ev); },
     matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }),
     getComputedStyle: () => ({ getPropertyValue: () => '' }),
     requestAnimationFrame: (cb) => setImmediate(cb), cancelAnimationFrame() {},

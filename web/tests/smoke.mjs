@@ -4948,6 +4948,103 @@ console.log('--- bar resize (#183) ---');
     { newStart: '2026-11-02', newEnd: '2026-11-06' });
 }
 
+console.log('--- day view all-day bars (#206) ---');
+{
+  // The real TimeGrid in day view, drawn into the stand-in DOM, its day
+  // panels laid out by hand and moved by the scroller: day A+k's column from
+  // 40 + 200k to 160 px below, less the scroll, its header (and its bars)
+  // the 40 px above. A bar is pressed, moved and let go as a person would,
+  // and what the grid hands on to be saved is read back. All-day dates are
+  // dates, the same in every zone.
+  const { fakeDom } = await import('./fakedom.mjs');
+  const dom = fakeDom();
+  dom.install();
+  const { options } = await import('../vendor/preact.module.js');
+  const savedRaf = options.requestAnimationFrame, savedDebounce = options.debounceRendering;
+  options.requestAnimationFrame = (cb) => setImmediate(cb);
+  options.debounceRendering = (cb) => Promise.resolve().then(cb);
+  const frame = () => new Promise((r) => setImmediate(r));
+  const settle = async () => { for (let i = 0; i < 12; i++) await frame(); };
+  const { render, html } = await import('../vendor/index.js');
+  const { TimeGrid } = await import('../src/ui/TimeGrid.js');
+  const { keyOfEpochDay: dayK, epochDayOfKey: edOf } = await import('../src/lib/dates.js');
+  const A = '2026-06-10';
+  const day = (k) => dayK(edOf(A) + k);
+  const occ = { instanceId: 'bar1', eventId: 1, calendarId: 1, title: 'Sample retreat', allDay: true, start: A + 'T00:00:00+00:00', end: day(1) + 'T00:00:00+00:00' };
+  const draw = (box, cal, sent) => render(html`<${TimeGrid} vstack=${true} days=${[A]} scrollKey=${A} occurrences=${[occ]}
+    calendars=${{ 1: { id: 1, name: 'Sample', color: '#3366cc', provider: 'local', ...cal } }} nowMs=${0}
+    onMoveEvent=${(p) => sent.push(['move', p])} onResizeEvent=${(p) => sent.push(['resize', p])} />`, box);
+  const sent = [];
+  const box = dom.doc.createElement('div');
+  dom.doc.body.appendChild(box);
+  draw(box, { editable: true }, sent);
+  await settle();
+  const sc = box.querySelector('.bc-tg-scroll');
+  sc.scrollTop = 0;
+  const rect = (top, bottom, left = 0, right = 400) => ({ top, bottom, left, right, width: right - left, height: bottom - top, x: left, y: top });
+  box.querySelector('.bc-timegrid').getBoundingClientRect = () => rect(0, 1200);
+  sc.getBoundingClientRect = () => rect(0, 1200);
+  for (const c of box.querySelectorAll('.bc-tg-col')) {
+    const k = edOf(c.dataset.day) - edOf(A);
+    c.getBoundingClientRect = () => rect(40 + 200 * k - sc.scrollTop, 200 + 200 * k - sc.scrollTop, 52, 400);
+  }
+  const bar = () => box.querySelector(`[data-vday="${A}"]`).querySelector('.bc-bar');
+  const pe = (x, y, buttons = 1) => ({ pointerId: 1, pointerType: 'mouse', button: 0, buttons, altKey: false, clientX: x, clientY: y });
+  const press = (el, x, y) => el.dispatch('pointerdown', pe(x, y));
+  const moveTo = async (x, y) => { dom.win.dispatch('pointermove', pe(x, y)); await settle(); };
+  const letGo = async (x, y) => { dom.win.dispatch('pointerup', pe(x, y, 0)); await settle(); };
+  const tinted = () => box.querySelectorAll('.bc-tg-col').filter((c) => c.classList.contains('is-range-draft')).map((c) => c.dataset.day);
+  const dates = (p) => [String(p.newStart).slice(0, 10), String(p.newEnd).slice(0, 10)];
+
+  eq('day view: an all-day bar has both its ends to drag', bar().querySelectorAll('.bc-bar-handle').map((h) => h.className), ['bc-bar-handle l', 'bc-bar-handle r']);
+
+  // Moved: picked up in its header at the top of the scroller, it stays
+  // put until moved, then lands on the day under the pointer.
+  press(bar(), 100, 25);
+  await moveTo(100, 31);
+  eq('day view: a bar picked up at the top edge does not glide off', sc.scrollTop, 0);
+  await moveTo(100, 520); // day A+2's column
+  eq('day view: the day it would move to is tinted', tinted(), [day(2)]);
+  await letGo(100, 520);
+  eq('day view: let go two days down, it moves two days', sent.map(([k, p]) => [k, ...dates(p)]), [['move', day(2), day(3)]]);
+
+  // Its end dragged down into a later day: the days between are added.
+  sent.length = 0;
+  press(bar().querySelector('.bc-bar-handle.r'), 395, 25);
+  await moveTo(395, 31);
+  await moveTo(395, 720); // day A+3's column
+  eq('day view: the days its end would reach are tinted', tinted(), [A, day(1), day(2), day(3)]);
+  await letGo(395, 720);
+  eq('day view: its end let go three days down ends it there', sent.map(([k, p]) => [k, p.edge, ...dates(p)]), [['resize', 'end', A, day(4)]]);
+
+  // Its start dragged up past the top: the view glides back a day, and the
+  // day before is added.
+  sent.length = 0;
+  press(bar().querySelector('.bc-bar-handle.l'), 5, 25);
+  await moveTo(5, 31);
+  await moveTo(60, 300); // clear of the edge
+  dom.win.dispatch('pointermove', pe(60, 10)); // back at the top edge
+  for (let i = 0; i < 400 && sc.scrollTop > -100; i++) await frame();
+  assert('day view: held at the top edge, the view glides back', sc.scrollTop <= -100);
+  await moveTo(60, 100); // the day before, now in view
+  eq('day view: the day its start would reach is tinted', tinted(), [day(-1), A]);
+  await letGo(60, 100);
+  eq('day view: its start let go on the day before starts it there', sent.map(([k, p]) => [k, p.edge, ...dates(p)]), [['resize', 'start', day(-1), day(1)]]);
+
+  // A calendar it can't be moved on: no ends, and pressing it moves nothing.
+  render(null, box);
+  sent.length = 0;
+  draw(box, { editable: false }, sent);
+  await settle();
+  eq('day view: a read-only bar has no ends to drag', bar().querySelectorAll('.bc-bar-handle').length, 0);
+
+  render(null, box);
+  box.remove();
+  options.requestAnimationFrame = savedRaf;
+  options.debounceRendering = savedDebounce;
+  dom.restore();
+}
+
 console.log('--- second review (#184) ---');
 {
   const at = (d, h, m = 0) => isoAt(new Date(2026, 10, d, h, m));

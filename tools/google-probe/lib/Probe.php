@@ -976,7 +976,7 @@ final class Probe
                 'title' => 'Probe weekly renamed', 'description' => 'Probe series notes ' . self::MARKER_TEXT, 'location' => 'Probe room 1',
                 'start_utc' => Time::toDb(new \DateTimeImmutable('2027-03-01 10:00', new \DateTimeZone(self::LA))),
                 'end_utc' => Time::toDb(new \DateTimeImmutable('2027-03-01 11:00', new \DateTimeZone(self::LA))),
-                'all_day' => 0, 'tzid' => self::LA, 'rrule' => 'FREQ=WEEKLY;COUNT=10',
+                'all_day' => 0, 'tzid' => self::LA, 'show_as' => 'busy', 'rrule' => 'FREQ=WEEKLY;COUNT=10',
                 'exdates_json' => json_encode([$cancelled]), 'status' => 'confirmed',
             ]);
             $this->standard($c, fn(CaseRun $c) => $this->send($c, 'write', 'patch the master with GoogleWriter::body', 'PATCH', '/events/' . rawurlencode($m), [], $body));
@@ -1034,7 +1034,7 @@ final class Probe
             'title' => 'Probe single', 'description' => 'Probe notes ' . self::MARKER_TEXT, 'location' => 'Probe room 1',
             'start_utc' => Time::toDb(new \DateTimeImmutable($local, new \DateTimeZone($tz))),
             'end_utc' => Time::toDb((new \DateTimeImmutable($local, new \DateTimeZone($tz)))->modify($allDay ? '+1 day' : '+60 minutes')),
-            'all_day' => $allDay ? 1 : 0, 'tzid' => $tz, 'rrule' => null, 'exdates_json' => null, 'status' => 'confirmed',
+            'all_day' => $allDay ? 1 : 0, 'tzid' => $tz, 'show_as' => 'busy', 'rrule' => null, 'exdates_json' => null, 'status' => 'confirmed',
         ]);
         $singles = [
             ['3.26', 'a single event, timed to all-day, as the app sends it', self::LA, '2027-03-01 10:00', $single(true, 'UTC', '2027-03-01 00:00'), false],
@@ -1059,7 +1059,7 @@ final class Probe
         $dayRow = static fn(bool $allDay): array => [
             'title' => 'Probe form', 'description' => null, 'location' => null, 'rrule' => null, 'exdates_json' => null, 'status' => 'confirmed',
             'start_utc' => $allDay ? '2027-03-22 00:00:00' : '2027-03-22 17:00:00', 'end_utc' => $allDay ? '2027-03-23 00:00:00' : '2027-03-22 18:00:00',
-            'all_day' => $allDay ? 1 : 0, 'tzid' => $allDay ? 'UTC' : self::LA,
+            'all_day' => $allDay ? 1 : 0, 'tzid' => $allDay ? 'UTC' : self::LA, 'show_as' => 'busy',
         ];
         // Built by hand, as the other form cases are: the probe runs against the
         // installed release's source, which need not have the app's newer

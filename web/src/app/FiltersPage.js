@@ -288,7 +288,7 @@ export function FiltersPage() {
   const evalFailing = ((health && health.rows) || []).find((r) => r.subject === 'job:filter_eval' && r.status === 'failing');
   return html`<${PageShell}
     title="Filters"
-    note="Filters hide, dim, or highlight matching events everywhere: in every view and in search."
+    note="Filters hide, dim, or highlight the events you choose, in every view and in search."
   >
     ${evalFailing && html`<div class="bc-syswarn" role="alert">
       Prompt filters are not being evaluated (failing since ${fmtSince(evalFailing.firstFailedAt)}${evalFailing.lastError ? ': ' + evalFailing.lastError : ''}). Keyword filters still apply; events a prompt filter would hide may be showing.
@@ -301,7 +301,7 @@ export function FiltersPage() {
 
     ${filters === null && html`<${Skeleton} rows=${4} />`}
     ${filters !== null && filters.length === 0 && html`<${EmptyState}
-      text="No filters yet. A filter hides, dims, or highlights events that match a keyword, a regex, or a plain-language description."
+      text="No filters yet. A filter hides, dims, or highlights events by a keyword, a regex, or a plain-language description."
       actionLabel="Create your first filter" onAction=${focusForm}
     />`}
     ${filters !== null && filters.length > 0 && html`<div class="bc-card-list">

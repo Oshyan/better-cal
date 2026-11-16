@@ -1250,7 +1250,7 @@ export function EditorDrawer() {
           <input placeholder="Comma separated" aria-label="Tags, comma separated" aria-invalid=${badTags.length > 0 ? 'true' : 'false'} value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
           ${badTags.length > 0 && html`<div class="bc-ed-sub bc-ed-err" role="alert">${badTags.map((n) => '"' + n + '"').join(', ')} can't be ${badTags.length === 1 ? 'a new tag' : 'new tags'}. ${TAG_NAME_HINT}</div>`}
         </div>
-        ${lab(mineCal ? 'For me' : 'Trip')}
+        ${lab(mineCal ? 'For me' : 'Trip', ' is-top')}
         <div class="bc-ed-ctl bc-ed-flags">
           ${mineCal && html`<span class="bc-ed-seg" role="group" aria-label="What this event is to you" title="What this event is to you. Maybe marks it tentative, which other calendar apps see too.">
             ${[['planned', 'Planned'], ['maybe', 'Maybe']].map(([v, label]) => html`<button

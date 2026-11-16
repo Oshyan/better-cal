@@ -1,13 +1,13 @@
 // Filters management: list, create/edit (scope/type/config/action),
 // enable/disable toggle, delete. The server applies enabled filters to the
 // events window and search; hide removes occurrences, dim mutes them,
-// highlight emphasizes them with an accent ring. Keyword/regex match inline
+// highlight underlines them in its colour. Keyword/regex match inline
 // (over title/description/location and, opt-in, tag names); prompt filters
 // are evaluated by the AI in the background (worker) and their cached
 // verdicts applied on the next load. Form is type-first: pick the filter
 // type, then the relevant fields show. The top form only creates; editing
 // expands the same form inline beneath the filter's own row (one at a time,
-// Esc cancels).
+// Esc cancels). Each card says what its filter matches (lib/filterwords.js).
 
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, state, toast, shallowEq } from './store.js';
@@ -17,18 +17,17 @@ import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { PALETTE } from '../lib/color.js';
 import { fmtSince } from '../lib/since.js';
 import { Icon } from '../ui/icons.js';
+import { DEFAULT_FIELDS, filterMatchText } from '../lib/filterwords.js';
 
 // An AI prompt filter on everything judges every event on every subscribed
 // calendar, including feeds added later, against one description. Fine when
 // meant; easy to miss when the prompt was written with one calendar in mind.
-const BROAD_PROMPT_NOTE = 'Judges every event on every subscribed calendar, including ones you add later.';
+const BROAD_PROMPT_NOTE = 'Judges every event on every subscribed and Google calendar, including ones you add later.';
 const broadPrompt = (type, scope) => type === 'prompt' && scope === 'global';
 
 const FIELD_OPTIONS = ['title', 'description', 'location', 'tags'];
-// Default selection mirrors the server default: tags is opt-in.
-// Saved filters without a field list match these (legacy); a new filter
-// starts on the title alone (server: Filters::NEW_FILTER_FIELDS).
-const DEFAULT_FIELDS = ['title', 'description', 'location'];
+// Saved filters without a field list match DEFAULT_FIELDS (legacy); a new
+// filter starts on the title alone (server: Filters::NEW_FILTER_FIELDS).
 const NEW_FILTER_FIELDS = ['title'];
 const TYPE_LABELS = { keyword: 'Keyword', regex: 'Regex', prompt: 'AI prompt' };
 const ACTION_LABELS = { hide: 'Hides', dim: 'Dims', highlight: 'Highlights' };
@@ -164,7 +163,7 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
         </div>
       </div>
     </div>
-    ${isPrompt && html`<p class="bc-page-note bc-filter-hint">Prompt filters run in the background: new and updated feed events are scored within a few minutes of arriving, so results appear shortly rather than instantly. Non-matching events are ${action === 'hide' ? 'hidden' : action === 'dim' ? 'dimmed' : 'highlighted'}; not-yet-scored events stay visible.</p>`}
+    ${isPrompt && html`<p class="bc-page-note bc-filter-hint">Prompt filters run in the background: new and updated events are judged within a few minutes of arriving, so results appear shortly rather than instantly. ${filterMatchText({ type, action, config: {} }).join(' ')}</p>`}
   </form>`;
 }
 
@@ -303,7 +302,7 @@ export function FiltersPage() {
             <div class="bc-card-body">${f.type === 'prompt' ? f.config.prompt : f.config.pattern}</div>
             ${f.type === 'prompt' && f.config.negativePrompt && html`<div class="bc-card-sub">Excludes: ${f.config.negativePrompt}</div>`}
             ${broadPrompt(f.type, f.scope) && html`<div class="bc-filter-broad"><${Icon} name="warning" size=${13} />${BROAD_PROMPT_NOTE}</div>`}
-            ${f.type !== 'prompt' && html`<div class="bc-card-sub">Matches in ${(f.config.fields || DEFAULT_FIELDS).join(', ')}</div>`}
+            ${filterMatchText(f).map((line, i) => html`<div key=${i} class="bc-card-sub">${line}</div>`)}
           </div>
           <label class="bc-switch">
             <input type="checkbox" checked=${f.enabled} onChange=${() => toggle(f)} />

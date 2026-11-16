@@ -8,6 +8,7 @@ import { Icon } from './icons.js';
 import { contrastText, ink } from '../lib/color.js';
 import { contextToken, contextTitle, compactTime, HOST_ICON, dayLabelText, dayLabelLines } from '../lib/context.js';
 import { parseISO } from '../lib/dates.js';
+import { filterClasses, hlStyle, combinedFilterMarks } from '../lib/filtermarks.js';
 
 const CONTEXT_RENDER_MAX = 100;
 const CONTEXT_OVERFLOW_TITLE_MAX = 20;
@@ -47,7 +48,8 @@ function Token({ occ, cal, onOpen, zone = true, overflow = false }) {
   const localTime = tk.time && tk.zone ? compactTime(parseISO(occ.start)) : tk.time;
   return html`<span
     role="button" tabindex=${overflow ? -1 : 0} aria-hidden=${overflow ? 'true' : undefined}
-    class=${'bc-ctx-token' + (overflow ? ' is-overflow' : '')}
+    class=${'bc-ctx-token' + filterClasses(occ) + (overflow ? ' is-overflow' : '')}
+    style=${hlStyle(occ) || undefined}
     data-ctx-instance=${overflow ? undefined : occ.instanceId} aria-label=${contextTitle(occ)}
     onPointerDown=${(e) => e.stopPropagation()}
     onClick=${(e) => open(onOpen, occ, e)}
@@ -133,9 +135,14 @@ export function ContextMark({ occ, cal, top, onOpen }) {
   // At this size the horizon glyphs turn to mud; the plain sun reads.
   if (tk.icon === 'sunrise' || tk.icon === 'sunset') tk.icon = 'sun';
   const color = (cal && cal.color) || '#8b93a4';
+  // A filter's marks go on the label and the line, never on the mark around
+  // them: a dim's opacity there would make the mark one stacking layer and
+  // drop its label and line below the events they are drawn over.
+  const marks = filterClasses(occ);
+  const hl = hlStyle(occ);
   return html`<div class="bc-ctx-mark" style=${`top:${top}px`}>
     <span class="bc-ctx-mark-pill">
-      <span class="bc-ctx-mark-label" aria-hidden="true" style=${`background:${color};color:${contrastText(color)}`}
+      <span class=${'bc-ctx-mark-label' + marks} aria-hidden="true" style=${`background:${color};color:${contrastText(color)}` + (hl ? ';' + hl : '')}
       ><${TokenIcon} token=${tk} cal=${cal} size=${11} plain=${true} />${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}</span>
       <span
         role="button" tabindex="0" class="bc-ctx-mark-hit"
@@ -145,7 +152,7 @@ export function ContextMark({ occ, cal, top, onOpen }) {
         onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
       ></span>
     </span>
-    <span class="bc-ctx-mark-line" style=${`border-color:${color}`}></span>
+    <span class=${'bc-ctx-mark-line' + marks} style=${`border-color:${color}`}></span>
   </div>`;
 }
 
@@ -163,16 +170,21 @@ export function DayLabel({ occs, onOpen, sep = false, flag = false }) {
   if (!occs || occs.length === 0) return null;
   const text = dayLabelText(occs);
   const lines = dayLabelLines(occs).join('\n');
+  // One label stands for every holiday on the day, so it takes a filter's
+  // marks as a group of events does.
+  const fm = combinedFilterMarks(occs);
+  const marks = filterClasses(fm);
+  const hl = hlStyle(fm) || undefined;
   if (flag) {
     return html`<span
-      role="button" tabindex="0" class="bc-daylabel is-flag" data-hovertext=${lines} aria-label=${text}
+      role="button" tabindex="0" class=${'bc-daylabel is-flag' + marks} style=${hl} data-hovertext=${lines} aria-label=${text}
       onPointerDown=${(e) => e.stopPropagation()}
       onClick=${(e) => open(onOpen, occs[0], e)}
       onKeyDown=${(e) => keyOpen(onOpen, occs[0], e)}
     ><${Icon} name="flag" size=${11} /></span>`;
   }
   return html`<span
-    role="button" tabindex="0" class=${'bc-daylabel' + (sep ? ' is-sep' : '')} data-hovertext=${lines}
+    role="button" tabindex="0" class=${'bc-daylabel' + (sep ? ' is-sep' : '') + marks} style=${hl} data-hovertext=${lines}
     onPointerDown=${(e) => e.stopPropagation()}
     onClick=${(e) => open(onOpen, occs[0], e)}
     onKeyDown=${(e) => keyOpen(onOpen, occs[0], e)}

@@ -14,6 +14,7 @@ import { parseISO, fmtTime, timeState, eventDuration, dateOfDayKey } from '../li
 import { occurrenceDaySpan } from './monthmath.js';
 import { Icon, PluginGlyph, EventMark, MarkDisc } from './icons.js';
 import { isPendingLocation } from '../lib/maps.js';
+import { filterClasses, hlStyle } from '../lib/filtermarks.js';
 
 // Bail out of custom click handling when modifier keys are pressed so
 // browser-native behaviors are never hijacked.
@@ -63,7 +64,8 @@ function calColor(cal) {
 // A highlight filter may name its own colour; the glow reads --hl and falls
 // back to the accent when no filter chose one.
 function hlVar(occ) {
-  return occ.highlighted && occ.highlightColor ? `;--hl:${occ.highlightColor}` : '';
+  const hl = hlStyle(occ);
+  return hl ? ';' + hl : '';
 }
 
 // A group's hover card: what it gathers (group ids aren't events, so the
@@ -85,7 +87,8 @@ function stateClasses(occ, dimmed, nowMs) {
   if (occ.isNew) c += ' is-new';
   if (occ.isGroup) c += ' is-group';
   if (occ.isContainer) c += ' is-trip';
-  if (occ.dimmed) c += ' is-filter-dimmed';
+  // A filter's dim and highlight: the rule every shape shares (lib/filtermarks.js).
+  c += filterClasses(occ);
   // Dropped and waiting for the series dialog's confirm (SeriesDialog.js).
   if (occ.seriesPending) c += ' is-series-pending';
   // Time-relative state (from the global minute tick): ended events dim,
@@ -95,8 +98,6 @@ function stateClasses(occ, dimmed, nowMs) {
     if (ts === 'past') c += ' is-past';
     else if (ts === 'now') c += ' is-now';
   }
-  // Server highlight filters: accent ring + slight saturation boost.
-  if (occ.highlighted) c += ' is-highlighted';
   // On-page type-to-filter: non-matching events are removed from view while
   // the filter text is non-empty (the `dimmed` prop carries that flag).
   if (dimmed) c += ' is-page-hidden';

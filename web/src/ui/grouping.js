@@ -9,6 +9,7 @@
 
 import { occurrenceDaySpan } from './monthmath.js';
 import { startMs, endMs } from '../lib/dates.js';
+import { combinedFilterMarks } from '../lib/filtermarks.js';
 
 // Title base: strip one trailing parenthetical (and surrounding whitespace).
 // A title that is nothing but a parenthetical keeps its original form.
@@ -66,7 +67,6 @@ export function groupOccurrences(occurrences, groupFlags) {
     const timed = allDay ? sorted : sorted.filter((m) => !m.allDay);
     const tFirst = timed[0];
     const tLast = timed.reduce((a, m) => (endMs(m) > endMs(a) ? m : a), timed[0]);
-    const lit = sorted.find((m) => m.highlighted);
     groupByKey.set(key, {
       isGroup: true,
       instanceId: GROUP_PREFIX + key,
@@ -79,9 +79,7 @@ export function groupOccurrences(occurrences, groupFlags) {
       // being two hours earlier in fact.
       end: allDay ? (endMs(last) > endMs(first) ? last.end : first.end) : tLast.end,
       allDay,
-      dimmed: sorted.every((m) => !!m.dimmed),
-      highlighted: !!lit,
-      highlightColor: lit ? lit.highlightColor : undefined,
+      ...combinedFilterMarks(sorted),
       isNew: sorted.some((m) => !!m.isNew),
       attendance: 'none',
       // What the members share decides how the group is drawn: holidays

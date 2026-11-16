@@ -9,6 +9,7 @@ import './resources.mjs';
 import './google-changed.mjs';
 import './dayshift-clock.mjs';
 import './visible-month.mjs';
+import './filter-words.mjs';
 // The series panel never guesses a clock's zone: under test a clock with none throws.
 import { setStrictClocks } from '../src/lib/planwords.js';
 setStrictClocks(true);
@@ -6976,6 +6977,8 @@ console.log('--- a change for more than one occurrence goes through its plan, wh
 // The editor's repeat row, in the stand-in DOM with its own stand-in server:
 // after everything above, which shares the page's fetch.
 await import('./repeat-control.mjs');
+// Filters' marks on context items (#72), also in the stand-in DOM.
+await import('./filter-marks.mjs');
 
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

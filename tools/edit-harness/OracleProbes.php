@@ -81,6 +81,18 @@ final class OracleProbes
                     $s1['rows'][$row($s1, $owns('title'))]['show_as'] = 'busy';
                     return [$out, $s0, $this->reshape($s1)];
                 }],
+            // #318's exemption is as narrow as stated: a marking a change here left wrong, and any other field, still fail.
+            ['check' => 'x-own', 'what' => "#318's case: a day given its own title here holds another marking than its series' before anything changed in Google Calendar", 'case' => 'a-titled-day-then-the-series-marked-free-at-google-and-polled-is-not-checked-318', 'step' => 1,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {
+                    $id = $row($s1, $owns('title'));
+                    $s1['rows'][$id]['show_as'] = (string) $s1['rows'][$id]['show_as'] === 'free' ? 'busy' : 'free';
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-own', 'what' => "#318's case: the day Google keeps busy under a series marked free there shows other notes than its series'", 'case' => 'a-titled-day-then-the-series-marked-free-at-google-and-polled-is-not-checked-318', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {
+                    $s1['rows'][$row($s1, $owns('title'))]['description'] = 'Sample probe notes';
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
             ['check' => 'x-conflict', 'what' => 'a rename over a free or busy change at Google not yet read goes through', 'case' => 'free-or-busy-changed-at-google-then-a-rename-here-is-refused', 'step' => 2,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => true, 'error' => null] + $out, $s0, $s1];

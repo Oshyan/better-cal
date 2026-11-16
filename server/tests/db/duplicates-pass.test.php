@@ -172,6 +172,25 @@ return static function (Db $db): void {
             $pass();
             checkEq('duplicates pass: compared in full, the line clears with one more Activity line', ['ok', 2], [$healthRow()['status'], $journaled() - $before]);
         });
+
+        scenario('duplicates pass: on a busy stretch an event is compared with its nearest neighbours first, so its twin is found', function () use ($db, $u, $kept, $copy, $pass): void {
+            // Four events earlier the same day, then the same event on two of
+            // your own calendars at one moment (different UIDs), each compared
+            // with only three neighbours: the twin is nearest, so it is among them.
+            Limits::configure(['DUPLICATE_CANDIDATES_PER_EVENT' => 3]);
+            $at = Time::nowUtc()->setTime(20, 0)->modify('+200 days');
+            foreach (['Pottery', 'Rowing', 'Chess', 'Choir'] as $i => $word) {
+                $copy($kept, "early-$i@example.test", "Sample $word club", $at->modify('-' . (4 - $i) . ' hours'), false);
+            }
+            $mine = (int) domains($db)->calendars->create($u, ['name' => 'Fourth sample'])['id'];
+            $a = $copy($kept, 'tour-a@example.test', 'Sample harbour tour', $at, false);
+            $b = $copy($mine, 'tour-b@example.test', 'Sample harbour tour', $at, false);
+            $pass();
+            checkEq('duplicates pass: the twin at the same moment is linked though earlier events fill the cap', 'linked',
+                $db->scalar('SELECT status FROM event_duplicates WHERE event_a = ? AND event_b = ?', [min($a, $b), max($a, $b)]));
+            Limits::configure(['DUPLICATE_CANDIDATES_PER_EVENT' => 100]);
+            $pass();
+        });
     } finally {
         Limits::reset();
     }

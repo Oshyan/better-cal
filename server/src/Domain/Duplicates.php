@@ -43,6 +43,8 @@ final class Duplicates
     /** How far back the title scan looks; ahead it looks a year. */
     private const SCAN_BACK = 'P14D';
     private const SCAN_AHEAD = 'P400D';
+    /** How far apart two starts can be and still be one event (nearest()). */
+    private const MATCH_REACH = 'PT38H';
 
     private const PREFIXES = '/^(?:(?:updated\s+)?invitation(?:\s+from\s+[^:]{1,80})?:|(?:your\s+)?reservation\s+(?:at|for|with)|booking\s+(?:at|for|confirmed:?|confirmation:?)|(?:order\s+)?confirmed:|registration\s+confirmed:?|you\'?re\s+(?:registered\s+for|going\s+to|in:?)|tickets?\s+(?:for|to):?|rsvp:|reminder:)\s*/u';
     private const STOPWORDS = ['the', 'a', 'an', 'at', 'with', 'and', 'of', 'for', 'to', 'in', 'on'];
@@ -549,23 +551,7 @@ final class Duplicates
                 $throttled = true;
                 break;
             }
-            $start = Time::fromDb((string) $row['start_utc']);
-            $candidates = $this->db->all(
-                "SELECT e.id, e.calendar_id, e.uid, e.title, e.start_utc, e.all_day, e.tzid,
-                        e.source, e.created_via, c.kind AS calendar_kind,
-                        COALESCE(c.provider, 'ics') AS calendar_provider
-                 FROM events e JOIN calendars c ON c.id = e.calendar_id
-                 WHERE $base AND e.rrule IS NULL AND e.id <> ? AND e.uid <> ?
-                   AND e.start_utc >= ? AND e.start_utc <= ?
-                 ORDER BY e.start_utc, e.id LIMIT " . ($maxCandidates + 1),
-                [
-                    $userId,
-                    (int) $row['id'],
-                    (string) $row['uid'],
-                    Time::toDb($start->sub(new \DateInterval('PT38H'))),
-                    Time::toDb($start->add(new \DateInterval('PT38H'))),
-                ]
-            );
+            $candidates = $this->nearest($row, $base, $userId, $maxCandidates);
             // More neighbours than one event is compared with: the rest are
             // never compared with it this pass, which the pass reports.
             $crowded = count($candidates) > $maxCandidates;
@@ -634,6 +620,48 @@ final class Duplicates
             'comparisons' => $comparisons,
             'rows' => count($rows),
         ];
+    }
+
+    /**
+     * The events one event is compared with: at most $max + 1 (one more
+     * says there were more), nearest its start first, by distance and then
+     * id, so a cap drops the farthest. MATCH_REACH is how far apart two
+     * events can be and still be one (when()): an all-day day is stored at
+     * its UTC midnight and a timed event is on its own clock's date, from
+     * 14 hours before that midnight (UTC+14) to 36 after (UTC-12, late in
+     * the evening); two timed ones are within NEAR_SECONDS. Each side is
+     * read on the (user_id, start_utc) index in its own order, nearest
+     * first, and the two are merged here; the order by distance itself
+     * could not use the index.
+     *
+     * @return list<array>
+     */
+    private function nearest(array $row, string $base, int $userId, int $max): array
+    {
+        $start = Time::fromDb((string) $row['start_utc']);
+        $cols = "e.id, e.calendar_id, e.uid, e.title, e.start_utc, e.all_day, e.tzid,
+                 e.source, e.created_via, c.kind AS calendar_kind,
+                 COALESCE(c.provider, 'ics') AS calendar_provider";
+        $where = "$base AND e.rrule IS NULL AND e.id <> ? AND e.uid <> ?";
+        $params = [$userId, (int) $row['id'], (string) $row['uid']];
+        $reach = new \DateInterval(self::MATCH_REACH);
+        $before = $this->db->all(
+            "SELECT $cols FROM events e JOIN calendars c ON c.id = e.calendar_id
+             WHERE $where AND e.start_utc >= ? AND e.start_utc <= ?
+             ORDER BY e.start_utc DESC, e.id LIMIT " . ($max + 1),
+            [...$params, Time::toDb($start->sub($reach)), Time::toDb($start)]
+        );
+        $after = $this->db->all(
+            "SELECT $cols FROM events e JOIN calendars c ON c.id = e.calendar_id
+             WHERE $where AND e.start_utc > ? AND e.start_utc <= ?
+             ORDER BY e.start_utc, e.id LIMIT " . ($max + 1),
+            [...$params, Time::toDb($start), Time::toDb($start->add($reach))]
+        );
+        $at = $start->getTimestamp();
+        $all = [...$before, ...$after];
+        usort($all, static fn(array $a, array $b): int => [abs(Time::fromDb((string) $a['start_utc'])->getTimestamp() - $at), (int) $a['id']]
+            <=> [abs(Time::fromDb((string) $b['start_utc'])->getTimestamp() - $at), (int) $b['id']]);
+        return array_slice($all, 0, $max + 1);
     }
 
     private function eligibleBase(): string

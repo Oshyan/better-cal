@@ -26,13 +26,14 @@ Everyday use: quick add, search, tags, filters, phones and calendar apps, and pl
 - **The repeat choice reads as a sentence, "Every 45 days",** up to 1,000.
 - **A change to a repeating event that also picks a new place goes through.** It was refused with "The series changed since this plan was made" (since 1.5.0).
 - Empty Agenda, search and Review say what they are for, with a start on the same line.
+- A keyboard shortcut no longer acts while a drawer, dialog or menu is open, so `n` cannot replace a draft you are writing. Escape still closes what is on top.
 - The sidebar's Plugins group lists only plugins nothing else shows or hides; Tides follows its tide calendars.
 
 **Tags and filters**
 - **Tags can be renamed and deleted,** under Calendars, folders & tags, with Undo. Renaming onto a name that exists merges the two. Tags no event carries are no longer offered. A new name must be one you can type after #.
 - **A dim or highlight filter shows on weather, holidays and other context,** and on a "+N" that hides a match.
 - **Each filter's card says what it matches.** An AI prompt filter says exactly what it sends.
-- **AI prompt filters set to dim or highlight now mark the events that fit.** Hide is unchanged.
+- **Every filter says which events its action takes: "that match" or "that don't match",** beside the action, so it reads as a sentence: "Dim events that don't match". For keyword, pattern and AI prompt filters. A new AI prompt filter starts on "Hide events that don't match", which keeps only what fits its description.
 
 **Phones and calendar apps**
 - **A reminder shows the start of the event's description, and tapping it opens straight onto the event,** without the calendar first.
@@ -49,15 +50,15 @@ Everyday use: quick add, search, tags, filters, phones and calendar apps, and pl
 - A Google calendar shown only as busy times no longer reports as a failing feed.
 
 **What an upgrade changes or loses**
-- An AI prompt filter set to dim or highlight flips: it marks what it used to leave. Reword its description to keep the old effect.
+- No filter changes: existing AI prompt filters are set to "that don't match", which is what they always did.
 - The remembered search choice is gone. A Tides row you had unchecked no longer hides its shading; the tide calendar's setting does.
 - The first reminder tapped after the update, with the app left open from before, only brings the app forward. Reopen it once.
 - Finish or put back any half-done change to a Google calendar before updating.
 - Existing events read as Busy until their calendar is next checked.
 
-For API and plugin users ([docs/api-contract.md](docs/api-contract.md)): `showAs` on an event and `newShowAs` on a calendar; `GET /tags`, `PATCH /tags/:id`, `DELETE /tags/:id`; `BETTERCAL_LIMIT_DUPLICATE_LINKED_EDGES` is gone.
+For API and plugin users ([docs/api-contract.md](docs/api-contract.md)): `showAs` on an event and `newShowAs` on a calendar; `appliesTo` on a filter; `GET /tags`, `PATCH /tags/:id`, `DELETE /tags/:id`; `BETTERCAL_LIMIT_DUPLICATE_LINKED_EDGES` is gone.
 
-Operators: one migration (a column, no rows rewritten); `update.php` or the update page as usual.
+Operators: two migrations (a column each; existing AI prompt filters get their side filled in, nothing else is rewritten); `update.php` or the update page as usual.
 
 ## 1.5.7 (2026-11-15)
 

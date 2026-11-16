@@ -221,4 +221,22 @@ return static function (Db $db): void {
             array_map(static fn(array $r): array => ['k' => $r['k'], 'show_as' => $r['show_as']] + ($r['k'] === null ? [] : ['own' => json_decode((string) $r['override_fields'], true)]), $after));
         H::done($t);
     });
+    // A day edited here (its own notes and a reminder, so Google keeps a record of it), then all events given the
+    // other free or busy: the day does not own it, so it takes the series' new value, here and in Google Calendar.
+    // A daily all-day series on a Google calendar starts free (the new-event rule); the mirror starts busy.
+    foreach (['free' => 'busy', 'busy' => 'free'] as $from => $to) {
+        scenario("show as: all events made $to from $from carry an edited day that does not own it", function () use ($db, $from, $to): void {
+            $t = H::make($db, ['start' => '2027-07-05', 'end' => '2027-07-06', 'allDay' => true, 'tzid' => 'UTC', 'rrule' => 'FREQ=DAILY;COUNT=8'] + ($from === 'busy' ? ['showAs' => 'busy'] : []));
+            $day = '2027-07-07';
+            H::this($t, $day . 'T00:00:00+00:00', ['description' => 'Sample notes for the day', 'reminders' => [['minutes' => 60]]]);
+            H::change($t, ['scope' => 'all', 'instanceStart' => '2027-07-05T00:00:00+00:00', 'showAs' => $to]);
+            $row = $db->one('SELECT show_as, override_fields FROM events WHERE calendar_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$t->s->calendarId, $day . ' 00:00:00']);
+            $series = $db->scalar('SELECT show_as FROM events WHERE id = ?', [$t->id]);
+            $atGoogle = static fn(?array $item): string => ($item['transparency'] ?? 'opaque') === 'transparent' ? 'free' : 'busy';
+            checkEq("all events $to: the series, and the edited day here and in Google Calendar, all $to; the day owns its notes and reminders only",
+                [$to, $to, ['description', 'reminders'], $to, $to],
+                [$series, $row['show_as'] ?? null, json_decode((string) ($row['override_fields'] ?? 'null'), true), $atGoogle($t->s->fake->events[$t->gid] ?? null), $atGoogle($t->s->fake->events[$t->gid . '_20270707'] ?? null)]);
+            H::done($t);
+        });
+    }
 };

@@ -1394,7 +1394,7 @@ final class GoogleSeries
     public static function masterBody(?array $before, array $after, array $exdates = []): array
     {
         $body = [];
-        $full = GoogleWriter::body(self::rowOf($after, $after['rrule'] !== '' ? (string) $after['rrule'] : null));
+        $full = GoogleWriter::whole(GoogleWriter::body(self::rowOf($after, $after['rrule'] !== '' ? (string) $after['rrule'] : null)));
         foreach (['title' => 'summary', 'description' => 'description', 'location' => 'location', 'status' => 'status'] as $col => $field) {
             if ($before === null || (string) ($before[$col] ?? '') !== (string) ($after[$col] ?? '')) {
                 $body[$field] = $full[$field];
@@ -1407,12 +1407,10 @@ final class GoogleSeries
         }
         if ($before === null || (string) ($before['url'] ?? '') !== (string) ($after['url'] ?? '')) {
             // The link as Google's source; null clears one (a PATCH leaves out what it doesn't name).
-            $body['source'] = $full['source'] ?? null;
+            $body['source'] = $full['source'];
         }
-        if ($before !== null && (string) $before['show_as'] !== (string) $after['show_as']) {
-            // Free as `transparent`; busy as null, which clears it to Google's default. A new series sends nothing for busy.
-            $body['transparency'] = $full['transparency'] ?? null;
-        } elseif ($before === null && isset($full['transparency'])) {
+        if ($before === null || (string) $before['show_as'] !== (string) $after['show_as']) {
+            // Free as `transparent`; busy as null, which clears it to Google's default.
             $body['transparency'] = $full['transparency'];
         }
         if ($body !== [] || $before === null || (string) $before['rrule'] !== (string) $after['rrule']) {
@@ -1459,10 +1457,8 @@ final class GoogleSeries
      */
     private static function exceptionBody(array $x): array
     {
-        $body = GoogleWriter::instanceBody(self::rowOf($x));
-        if (!isset($body['source'])) {
-            $body['source'] = null;
-        }
+        // The day whole: a link or free it does not have is cleared (GoogleWriter::whole).
+        $body = GoogleWriter::whole(GoogleWriter::instanceBody(self::rowOf($x)));
         return array_intersect_key($body, array_flip(GoogleWriter::allowedKeys()));
     }
 

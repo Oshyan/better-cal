@@ -3,11 +3,12 @@
 // tags render as clickable chips beneath the input; clicking one runs a
 // tag-only search ("#tag", server-side), and result rows show their tags.
 //
-// 0.7.3 (#60): Upcoming (the default), All or Past, and a calendar, chosen
-// under the input, filtered on the server before its result limit and
-// remembered per device. An Upcoming search ends with "N past matches".
-// An event opened from here offers "‹ Search" (and Back on a phone) to
-// return to these results as they were.
+// 0.7.3 (#60): Upcoming, All or Past, and a calendar, chosen under the
+// input and filtered on the server before its result limit. Search opens on
+// All with every calendar, every time (#304): a choice belongs to the one
+// search it was made in, never to the next. An Upcoming search ends with
+// "N past matches". An event opened from here offers "‹ Search" (and Back
+// on a phone) to return to these results as they were, choice included.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { CalDot, Icon } from '../ui/icons.js';
@@ -37,37 +38,33 @@ export function whenText(occ) {
   return isOvernight(occ) ? head + ' to ' + fmtTime(e) : head + ' to ' + dayOf(e) + ' ' + fmtTime(e);
 }
 
-const OPTS_KEY = 'bc-search-opts';
 const WHENS = [['upcoming', 'Upcoming'], ['all', 'All'], ['past', 'Past']];
 
-function loadOpts() {
-  try {
-    const o = JSON.parse(localStorage.getItem(OPTS_KEY) || '{}');
-    return { when: WHENS.some(([w]) => w === o.when) ? o.when : 'upcoming', calendar: o.calendar ? String(o.calendar) : '' };
-  } catch { return { when: 'upcoming', calendar: '' }; }
-}
-
-function saveOpts(o) {
-  try { localStorage.setItem(OPTS_KEY, JSON.stringify(o)); } catch { /* per-device convenience */ }
+// What a search is narrowed to. Every search starts here (#304); a scope
+// named by whoever opens it (a restored search, "‹ Search") is read through
+// this, so only a known choice is taken.
+export function searchScope(o = null) {
+  const when = o && WHENS.some(([w]) => w === o.when) ? o.when : 'all';
+  return { when, calendar: o && o.calendar ? String(o.calendar) : '' };
 }
 
 // The results an event was opened from, for "‹ Search" to bring back.
 let last = null;
 // What the open search holds, for a reload to bring back (0.9.1, resume.js).
-let live = { q: '', peek: null };
+let live = { q: '', scope: searchScope() };
 
 export function searchSnapshot() {
-  return { open: !!state.searchOpen, q: live.q, peek: live.peek, last: last ? { q: last.q, peek: last.peek } : null };
+  return { open: !!state.searchOpen, q: live.q, scope: live.scope, last: last ? { q: last.q, scope: last.scope } : null };
 }
 
 // After a reload: "‹ Search" on a restored event comes back to this query.
-export function primeSearchBack(q, peek = null) {
-  last = { q, results: null, pastCount: 0, peek, sel: -1, scrollTop: 0 };
+export function primeSearchBack(q, scope = null) {
+  last = { q, results: null, pastCount: 0, scope: searchScope(scope), sel: -1, scrollTop: 0 };
 }
 
 // After a reload: search open again on the same query, results refreshed.
-export function reopenSearch(q, peek = null) {
-  primeSearchBack(q, peek);
+export function reopenSearch(q, scope = null) {
+  primeSearchBack(q, scope);
   set({ searchOpen: true, searchRestore: true });
 }
 
@@ -78,9 +75,7 @@ export function SearchOverlay() {
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
   const [pastCount, setPastCount] = useState(0);
-  const [opts, setOpts] = useState(loadOpts);
-  // "Show them" widens one search to All without changing the remembered choice.
-  const [peek, setPeek] = useState(null);
+  const [scope, setScope] = useState(searchScope);
   // Nothing is selected until the keyboard or the pointer picks a row, so
   // the first row never looks chosen by default (0.7.3).
   const [sel, setSel] = useState(-1);
@@ -91,8 +86,8 @@ export function SearchOverlay() {
   const restoreRef = useRef(null);
 
   const phone = (() => { try { return matchMedia(PHONE_QUERY).matches; } catch { return false; } })();
-  const when = peek || opts.when;
-  live = { q, peek };
+  const { when, calendar } = scope;
+  live = { q, scope };
 
   useEffect(() => {
     if (!open) return;
@@ -102,17 +97,17 @@ export function SearchOverlay() {
       setQ(back.q);
       setResults(back.results);
       setPastCount(back.pastCount);
-      setPeek(back.peek);
+      setScope(back.scope);
       setSel(phone ? -1 : back.sel);
       restoreRef.current = back.scrollTop;
-      runSearch(back.q, back.peek || opts.when, opts.calendar); // quietly bring them up to date
+      runSearch(back.q, back.scope); // quietly bring them up to date
       if (!phone && inputRef.current) inputRef.current.focus();
       return;
     }
     setQ('');
     setResults(null);
     setPastCount(0);
-    setPeek(null);
+    setScope(searchScope());
     setSel(-1);
     if (inputRef.current) inputRef.current.focus();
   }, [open]); // eslint-disable-line
@@ -153,47 +148,29 @@ export function SearchOverlay() {
 
   if (!open) return null;
 
-  async function runSearch(query, w = when, calendar = opts.calendar) {
+  async function runSearch(query, sc = scope) {
     try {
-      const r = await search(query, { when: w, calendar });
+      const r = await search(query, sc);
       if (r !== null) { setResults(r.results); setPastCount(r.pastCount); } // null = superseded by newer request
     } catch { setResults([]); setPastCount(0); }
   }
 
-  const rerun = (w, calendar) => {
+  // A choice narrows this search only.
+  const narrow = (change) => {
+    const next = { ...scope, ...change };
+    setScope(next);
     clearTimeout(timerRef.current);
     setSel(-1);
-    if (q.trim()) runSearch(q.trim(), w, calendar);
-  };
-
-  const pickWhen = (w) => {
-    const next = { ...opts, when: w };
-    setOpts(next);
-    saveOpts(next);
-    setPeek(null);
-    rerun(w, next.calendar);
-  };
-
-  const pickCalendar = (calendar) => {
-    const next = { ...opts, calendar };
-    setOpts(next);
-    saveOpts(next);
-    rerun(when, calendar);
-  };
-
-  const showPast = () => {
-    setPeek('all');
-    rerun('all', opts.calendar);
+    if (q.trim()) runSearch(q.trim(), next);
   };
 
   const onInput = (e) => {
     const v = e.target.value;
     setQ(v);
     setSel(-1);
-    setPeek(null);
     clearTimeout(timerRef.current);
     if (!v.trim()) { setResults(null); setPastCount(0); return; }
-    timerRef.current = setTimeout(() => runSearch(v.trim(), opts.when), 250);
+    timerRef.current = setTimeout(() => runSearch(v.trim()), 250);
   };
 
   // Tag chip click: tag-only search ("#name" matches tags, not text).
@@ -201,9 +178,8 @@ export function SearchOverlay() {
     const query = '#' + name;
     setQ(query);
     setSel(-1);
-    setPeek(null);
     clearTimeout(timerRef.current);
-    runSearch(query, opts.when);
+    runSearch(query);
     if (inputRef.current) inputRef.current.focus();
   };
 
@@ -221,7 +197,7 @@ export function SearchOverlay() {
 
   const go = (occ) => {
     last = {
-      q, results, pastCount, peek,
+      q, results, pastCount, scope,
       sel: ordered.findIndex((o) => o.instanceId === occ.instanceId),
       scrollTop: listRef.current ? listRef.current.scrollTop : 0,
     };
@@ -281,9 +257,9 @@ export function SearchOverlay() {
       </div>
       <div class="bc-search-opts">
         <div class="bc-seg" role="group" aria-label="When">
-          ${WHENS.map(([w, label]) => html`<button key=${w} type="button" class=${'bc-seg-btn' + (when === w ? ' is-active' : '')} aria-pressed=${when === w} onClick=${() => pickWhen(w)}>${label}</button>`)}
+          ${WHENS.map(([w, label]) => html`<button key=${w} type="button" class=${'bc-seg-btn' + (when === w ? ' is-active' : '')} aria-pressed=${when === w} onClick=${() => narrow({ when: w })}>${label}</button>`)}
         </div>
-        <select class="bc-search-cal" aria-label="Calendar" value=${opts.calendar} onChange=${(e) => pickCalendar(e.target.value)}>
+        <select class="bc-search-cal" aria-label="Calendar" value=${calendar} onChange=${(e) => narrow({ calendar: e.target.value })}>
           <option value="">All calendars</option>
           ${calOptions.map((c) => html`<option key=${c.id} value=${String(c.id)}>${c.name}</option>`)}
         </select>
@@ -298,7 +274,7 @@ export function SearchOverlay() {
         ${results !== null && ordered.length === 0 && html`<div class="bc-empty">No ${scopeWord}matches for "${q}"</div>`}
         ${renderGroup('Upcoming', future, 0)}
         ${renderGroup('Past', past, future.length, true)}
-        ${results !== null && when === 'upcoming' && pastCount > 0 && html`<button type="button" class="bc-search-more" onClick=${showPast}>
+        ${results !== null && when === 'upcoming' && pastCount > 0 && html`<button type="button" class="bc-search-more" onClick=${() => narrow({ when: 'all' })}>
           ${pastCount} past ${pastCount === 1 ? 'match' : 'matches'}<span class="bc-search-more-act">Show them</span>
         </button>`}
       </div>

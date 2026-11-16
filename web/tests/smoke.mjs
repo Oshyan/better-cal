@@ -3616,6 +3616,70 @@ console.log('--- chronological ordering across timezone offsets ---');
     globalThis.fetch = editorFetch;
   }
 
+  // Search opens on All with every calendar, every time (#304). A choice
+  // made in a search is that search's: Back to it and a reload keep it, a
+  // new search does not, and nothing is stored on the device.
+  {
+    const { SearchOverlay, searchSnapshot, reopenSearch } = await import('../src/app/SearchOverlay.js');
+    const asked = [];
+    globalThis.fetch = async (url) => {
+      const u = new URL(String(url), 'http://app.test');
+      if (u.pathname.endsWith('/search')) {
+        asked.push({ q: u.searchParams.get('q'), when: u.searchParams.get('when'), calendar: u.searchParams.get('calendar') });
+        return json({ results: [] });
+      }
+      return json({});
+    };
+    put({ calendars: [{ id: 41, name: 'Sample club', visible: true, folderIds: [] }], folders: [], tags: [], searchOpen: false });
+    const box = dom.doc.createElement('div');
+    dom.doc.body.appendChild(box);
+    render(html`<${SearchOverlay} />`, box);
+    const openSearch = async () => { put({ searchOpen: true }); await settle(); };
+    const closeSearch = async () => { put({ searchOpen: false }); await settle(); };
+    const type = async (text) => {
+      const input = box.querySelector('.bc-search-input');
+      input.value = text;
+      input.dispatch('input');
+      await new Promise((r) => setTimeout(r, 300));
+      await settle();
+    };
+    const shown = () => [box.querySelector('.bc-seg-btn.is-active').textContent, box.querySelector('select.bc-search-cal').value];
+    const seg = (label) => box.querySelectorAll('.bc-seg-btn').find((b) => b.textContent === label);
+    await openSearch();
+    eq('search: a first search opens on All, every calendar', shown(), ['All', '']);
+    await type('sample');
+    eq('search: and asks for All with no calendar', asked.at(-1), { q: 'sample', when: 'all', calendar: null });
+    seg('Past').click();
+    await settle();
+    const cal = box.querySelector('select.bc-search-cal');
+    cal.value = '41';
+    cal.dispatch('change');
+    await settle();
+    eq('search: a choice narrows this search', [shown(), asked.at(-1)], [['Past', '41'], { q: 'sample', when: 'past', calendar: '41' }]);
+    eq('search: a reload keeps the choice with the search', searchSnapshot().scope, { when: 'past', calendar: '41' });
+    await closeSearch();
+    await openSearch();
+    eq('search: the next search opens on All again, every calendar', shown(), ['All', '']);
+    await type('sample');
+    eq('search: and asks for All with no calendar again', asked.at(-1), { q: 'sample', when: 'all', calendar: null });
+    eq('search: nothing about a search is stored on the device', localStorage.getItem('bc-search-opts'), null);
+    await closeSearch();
+    reopenSearch('sample', { when: 'upcoming', calendar: '41' });
+    await settle();
+    eq('search: brought back after a reload, it keeps the range it was on', [shown(), asked.at(-1)], [['Upcoming', '41'], { q: 'sample', when: 'upcoming', calendar: '41' }]);
+    await closeSearch();
+    reopenSearch('sample', { peek: 'all' });
+    await settle();
+    eq('search: a restored search with no choice of its own is on All', shown(), ['All', '']);
+    await closeSearch();
+    render(null, box);
+    box.remove();
+    await settle();
+    const { readFileSync: readSearchSource } = await import('node:fs');
+    eq('search: no code reads or writes the stored choice', /localStorage|loadOpts|saveOpts/.test(readSearchSource(new URL('../src/app/SearchOverlay.js', import.meta.url), 'utf8')), false);
+    globalThis.fetch = editorFetch;
+  }
+
   render(null, ed);
   put({ editor: null });
   await settle();

@@ -87,7 +87,9 @@ return static function (Db $db): void {
         checkEq('search: Upcoming alone, the same order', array_slice($titles($all), 0, 6), $titles($search->search($u, 'labor day', 50, true, ['when' => 'upcoming', 'now' => $now])));
         checkEq('search: Past alone, the same order', array_slice($titles($all), 6), $titles($search->search($u, 'labor day', 50, true, ['when' => 'past', 'now' => $now])));
         checkEq('search: past matches counted under Upcoming', 3, $search->countPast($u, 'labor day', ['now' => $now]));
-        checkEq('search: the limit keeps the best tiers', ['Labor Day Picnic', 'Labor Day BBQ', 'Labor Day Fair'], $titles($search->search($u, 'labor day', 3, true, ['now' => $now])));
+        checkEq('search: under All the limit keeps upcoming first, then the best tiers', ['Labor Day Picnic', 'Sample Gathering', 'Day of Labor Rally'], $titles($search->search($u, 'labor day', 3, true, ['now' => $now])));
+        checkEq('search: and a limit past the upcoming ones fills with past, best tier first', ['Labor Day Picnic', 'Sample Gathering', 'Day of Labor Rally', 'Laboratory Daytrip', 'Sample Visit', 'Neighborhood potluck', 'Labor Day BBQ'],
+            $titles($search->search($u, 'labor day', 7, true, ['now' => $now])));
 
         checkEq('search: one word, title before description', ['Labor Day Picnic', 'Neighborhood potluck'], $titles($search->search($u, 'picnic', 50, true, ['now' => $now])));
         checkEq('search: as you type, the last word a word start', ['Labor Day Picnic', 'Day of Labor Rally', 'Laboratory Daytrip'],
@@ -98,7 +100,28 @@ return static function (Db $db): void {
         checkEq('search: typed operators are only separators', $titles($all), $titles($search->search($u, '+labor -"day"*', 50, true, ['now' => $now])));
     });
 
-    scenario('search: short words and stopwords fall to LIKE', function () use ($db, $make, $search, $now, $titles): void {
+    // #304: search opens on All, so All must list what is still to come
+    // first even when a term's past alone fills the limit: a club met weekly
+    // for a year, and its one upcoming meeting holds the words only in its
+    // description (a lower tier than every past title).
+    scenario('search under All: upcoming first, however many past matches there are', function () use ($db, $make, $search, $now, $titles): void {
+        $u = freshUser($db);
+        for ($i = 1; $i <= 55; $i++) {
+            $make($u, 'Sample book club ' . $i, (new DateTimeImmutable('2025-10-01'))->modify('+' . (7 * $i) . ' days')->format('Y-m-d'));
+        }
+        $make($u, 'Sample reading night', '2026-12-04', ['description' => 'The book club picks its next title.']);
+        $make($u, 'Sample book club social', '2026-12-11');
+        $make($u, 'Sample porch chat', '2026-01-08', ['rrule' => 'FREQ=WEEKLY', 'description' => 'book club leftovers']);
+        $all = $search->search($u, 'book club', 50, true, ['now' => $now]);
+        checkEq('search under All: the upcoming ones first, title before description, though 55 past titles fill the limit',
+            ['Sample book club social', 'Sample porch chat', 'Sample reading night'], array_slice($titles($all), 0, 3));
+        checkEq('search under All: then the past, newest first, up to the limit', [50, 'Sample book club 55'], [count($all), $all[3]['title'] ?? null]);
+        checkEq('search under All: a running series is listed once, at its next date', 1, count(array_filter($all, static fn(array $r): bool => $r['title'] === 'Sample porch chat')));
+        checkEq('search under All: limit 1 keeps the soonest best upcoming match', ['Sample book club social'], $titles($search->search($u, 'book club', 1, true, ['now' => $now])));
+        checkEq('search under All: the same upcoming rows as Upcoming alone, in its order', $titles($search->search($u, 'book club', 50, true, ['when' => 'upcoming', 'now' => $now])), array_slice($titles($all), 0, 3));
+    });
+
+    scenario('search: short words and stopwords fall to LIKE',function () use ($db, $make, $search, $now, $titles): void {
         $u = freshUser($db);
         $make($u, 'Sample 5K Fun Run', '2026-12-05');
         $make($u, 'The Who Tribute Night', '2026-12-06');

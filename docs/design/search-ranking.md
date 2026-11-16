@@ -109,7 +109,7 @@ ORDER BY search_tier, start_utc  -- ascending for Upcoming, else descending
 LIMIT ?
 ```
 
-The limit keeps the best tiers. PHP then puts upcoming before past and, within a tier, orders by the date shown (a running series' next date is only known there). The web app keeps that order inside each group. InnoDB's relevance score is not used: within a tier the owner chose date order, and a score would decide almost every pair before the date did.
+The limit keeps the best tiers. PHP then orders within a tier by the date shown (a running series' next date is only known there). The web app keeps that order inside each group. Under All (the default, and what search opens on since #304) the search is Upcoming followed by Past, each run on its own with one shared now, so the limit keeps every upcoming match before any past one: a term with a long past and one upcoming match in a lower tier still lists the upcoming one first. A series still running is listed once, among the upcoming. InnoDB's relevance score is not used: within a tier the owner chose date order, and a score would decide almost every pair before the date did.
 
 **Tags and people.** `Labels::eventTiersForWords()` reads the account's tag and people names and matches them in PHP with `Search::nameTier()`, the same three kinds as the title. `#` searches tag names only and `@` people only, by the same rule. `GET /events?q=` keeps its own substring match.
 

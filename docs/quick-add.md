@@ -43,7 +43,7 @@ Typing a marker lists what it can name, narrowing as you type: `/` your calendar
 ## What It Reads
 
 - **Days:** today, tomorrow, tonight, Friday, next Friday, Fri, Aug 3, 8/3, 2026-08-15, the 15th. A date already past this year means next year.
-- **Counted from now:** in 2 weeks, 3 days from now, a week from Friday, 3 weeks from Monday, Friday after next, end of the month, this weekend, next weekend. A weekday counted from is the coming one, never today: typed on a Friday, "a week from Friday" is two weeks out. "Friday" alone on a Friday is today, and "next Friday" a week out.
+- **Counted from now:** in 2 weeks, 3 days from now, a week from Friday, 3 weeks from Monday, Friday after next, end of the month, this weekend, next weekend. A weekday counted from is the coming one, never today: typed on a Friday, "a week from Friday" is two weeks out. "Friday" alone on a Friday is today, and "next Friday" a week out. Short day names work in all of these ("week from fri", "3 weeks from Mon", "first Wed of September").
 - **Times:** 7pm, 7:30 pm, 19:00, noon, midnight, "at 7" (1 to 7 are afternoon, 8 to 11 morning), this evening, Sunday evening.
 - **Time ranges and lengths:** 7-9pm, 11am-1pm, 9am-noon, 6pm to midnight, 10pm to 6am, for 2 hours, for 90 min.
 - **Zones:** EST, PT, GMT, UTC, CET and others, after a time. Two-letter ones only in capitals, and not before an ordinary word ("3pm CT scan"); "3pm ET with Sam" is fine.
@@ -90,4 +90,5 @@ Not events: a calendar's `.ics` or `webcal://` address opens Subscribe instead.
 - "In 2 hours" isn't read; use a clock time.
 - "9-5" isn't read as hours; write "9am-5pm".
 - A short day name or a day range at the very start stays in the title ("Wed planning", "Mon-Fri schedule review") unless a time follows it.
+- "Week from Monday" is always a week past the coming Monday, so "Offsite week from Monday to Friday" reads that one Monday and leaves "to Friday" in the title. For the five days, write "Offsite Mon-Fri next week".
 - A street address is read when its street name starts with a capital ("at 123 Example St"). In lower case ("at 123 example st") it stays in the title, as "at 7 sharp" does.

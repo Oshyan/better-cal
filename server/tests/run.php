@@ -569,6 +569,55 @@ checkEq('fp71 a weekday named alone, typed on that weekday, is today', [
     'Workshop Mon-Fri next week' => '2026-08-10',
 ], array_combine(['Dentist Friday', 'Dentist this Friday', 'Workshop Fri-Sun', 'Workshop Mon-Fri next week'],
     [$onFriday('Dentist Friday'), $onFriday('Dentist this Friday'), $onFriday('Workshop Fri-Sun'), $on('Workshop Mon-Fri next week', '2026-08-03')]));
+// "week from Friday" with no article is the same counted reading wherever it
+// is typed: the start phrase leaves "from Friday" to it. On the Friday and on
+// the Thursday before. "Offsite week from Monday to Friday" reads the Monday
+// a week after the coming one, "to Friday" left in the title (quick-add.md,
+// Limits).
+$counted = static function (string $text, string $day) use ($tz): array {
+    $d = FallbackParser::parse($text, $tz, new DateTimeImmutable($day . 'T10:00:00', new DateTimeZone($tz)));
+    return [$d['title'], substr($d['start'], 0, 16), $d['personNames']];
+};
+checkEq('fp73 "week from Friday" without "a" is a week past the coming Friday', [
+    ['Dentist', '2026-08-14T00:00', []], ['Dentist', '2026-08-07T00:00', []],
+    ['Dentist', '2026-08-14T15:00', []], ['Dentist', '2026-08-07T15:00', []],
+    ['Dinner with Sam Sample', '2026-08-14T19:00', ['Sam Sample']], ['Dinner with Sam Sample', '2026-08-07T19:00', ['Sam Sample']],
+    ['Offsite to Friday', '2026-08-10T00:00', []],
+], [
+    $counted('Dentist week from Friday', '2026-07-31'), $counted('Dentist week from Friday', '2026-07-30'),
+    $counted('Dentist week from Friday 3pm', '2026-07-31'), $counted('Dentist week from Friday 3pm', '2026-07-30'),
+    $counted('Dinner with Sam Sample week from Friday at 7pm', '2026-07-31'), $counted('Dinner with Sam Sample week from Friday at 7pm', '2026-07-30'),
+    $counted('Offsite week from Monday to Friday', '2026-07-30'),
+]);
+// A weekday's name is one definition (WeekdayName): every arm that reads a
+// weekday reads its short forms too. On the day named and the day before.
+checkEq('fp74 short day names in counted phrases read as the full names do', [
+    ['Dentist', '2026-08-14T00:00', []], ['Dentist', '2026-08-07T00:00', []],
+    ['Dentist', '2026-08-14T15:00', []], ['Dentist', '2026-08-07T15:00', []],
+    ['Review', '2026-08-31T10:00', []], ['Review', '2026-08-24T10:00', []],
+    ['Party', '2026-08-14T00:00', []], ['Party', '2026-08-07T00:00', []],
+    ['Book club', '2026-09-02T19:00', []], ['Workshop', '2026-08-04T00:00', []],
+], [
+    $counted('dentist week from fri', '2026-07-31'), $counted('dentist week from fri', '2026-07-30'),
+    $counted('Dentist a week from Fri 3pm', '2026-07-31'), $counted('Dentist a week from Fri 3pm', '2026-07-30'),
+    $counted('Review 3 weeks from Mon 10am', '2026-08-03'), $counted('Review 3 weeks from Mon 10am', '2026-07-31'),
+    $counted('Party fri after next', '2026-07-31'), $counted('Party fri after next', '2026-07-30'),
+    $counted('Book club first Wed of September 7pm', '2026-07-30'), $counted('Workshop next week Tues', '2026-07-30'),
+]);
+checkEq('fp75 a short day name that is a word or a name stays in the title', [
+    ['Sat down with Alex Example', '2026-07-31T00:00', ['Alex Example']],
+    ['Sun Valley ski trip', '2026-07-31T00:00', []],
+    ['Sat Nav Club meetup', '2026-08-01T10:00', []],
+    ['Wed planning', '2026-07-30T11:00', []],
+    ['Mon-Fri schedule review', '2026-07-30T11:00', []],
+    ['Marathon training', '2027-03-03T00:00', []],
+    ['Dinner', '2026-11-16T19:00', []],
+], [
+    $counted('Sat down with Alex Example Friday', '2026-07-30'), $counted('Sun Valley ski trip Friday', '2026-07-30'),
+    $counted('Sat Nav Club meetup Sat 10am', '2026-07-30'), $counted('Wed planning', '2026-07-30'),
+    $counted('Mon-Fri schedule review', '2026-07-30'), $counted('Marathon training Mar 3', '2026-07-30'),
+    $counted('Dinner Mon, Nov 16 at 7pm', '2026-07-30'),
+]);
 checkEq('fp72 a date typed on its own day is this year, the day before it next year', [
     'Party 7/31' => '2026-07-31', 'Party July 31' => '2026-07-31', 'Party 31 July' => '2026-07-31', 'Retro last Friday of July' => '2026-07-31',
     'Trip July 31-Aug 2' => '2026-07-31', 'Party 7/30' => '2027-07-30', 'Trip July 30 to Aug 2' => '2027-07-30',

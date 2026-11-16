@@ -4,7 +4,7 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## 1.5.8 (unreleased)
+## 1.5.8 (2026-11-16)
 
 Everyday use: quick add, search, tags, filters, phones and calendar apps, and plainer words throughout.
 

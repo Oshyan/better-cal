@@ -27,7 +27,7 @@ Sign-in is HTTP Basic, so it's only safe over HTTPS. The server doesn't serve `/
 - Alarms: an event's own reminders go out as alarms (`VALARM`), and an alarm set, changed or removed in a client becomes the event's own reminders, as an imported file's do. Alarms sent back as they were served change nothing, so an event that follows its calendar's default reminders keeps following them. Only alarms that show a notice some minutes before the start are read; other kinds are ignored.
 - Which occurrence a changed or skipped date is: a client names it by `RECURRENCE-ID` or `EXDATE`, and that name is read against the series, never against the changed date's own start. So one day of a timed series made a whole day, or one day of a whole-day series given a time, stays that day. A plain date naming a day of a timed series (not allowed by the standard, sent by some clients) is that date's occurrence.
 - A rich description goes out as plain text in `DESCRIPTION` and allowlisted HTML (plain formatting and http(s) links) in `X-ALT-DESC`. One written by a client is cleaned the same way when it arrives.
-- Changes made in the web app, the API or by agents reach your devices through delta sync (sync-collection and ctag), and so does Undo in the app.
+- Changes made in the web app, the API, by agents or by importing a file reach your devices through delta sync (sync-collection and ctag), and so does Undo in the app.
 - Subscribed calendars are polled by the server (an ICS feed hourly by default, a connected Google calendar every 5 minutes; set per calendar under "Check for updates"), and their events reach your devices after each poll.
 
 ## Read-Only Rules

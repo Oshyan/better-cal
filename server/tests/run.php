@@ -14523,7 +14523,8 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
 // calendar, that Better-Cal's own import reads back.
 {
     $xdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $xdb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, position INTEGER DEFAULT 0, kind TEXT DEFAULT 'local', provider TEXT, visible INTEGER NOT NULL DEFAULT 1)");
+    $xdb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, position INTEGER DEFAULT 0, kind TEXT DEFAULT 'local', provider TEXT, visible INTEGER NOT NULL DEFAULT 1, synctoken INTEGER DEFAULT 1)");
+    davJournal($xdb);
     $xdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
     $xdb->run('INSERT INTO users (id) VALUES (1), (2)');
     undoJournal($xdb);

@@ -5877,7 +5877,7 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the in
                     $before = array_map($rtKey, $rtRec->expand($master, [$override], $win[0], $win[1]));
                     $rows = [];
                     foreach (Ics::parse(Ics::buildObject([$master, $override])) as $p) {
-                        $rows[] = DavIcs::eventColumns($p) + ['uid' => 'rt'];
+                        $rows[] = \BetterCal\Domain\Feeds::columnsOf($p, null, \BetterCal\Domain\Feeds::FROM_CALDAV) + ['uid' => 'rt'];
                     }
                     $m2 = null;
                     $o2 = [];
@@ -7329,12 +7329,12 @@ checkEq('dav change op modify', 2, ChangeLog::OP_MODIFY);
 checkEq('dav change op delete', 3, ChangeLog::OP_DELETE);
 
 // DATE vs DATE-TIME mapping decisions (parsed shape as produced by Ics::parse).
-$cols = DavIcs::eventColumns([
+$cols = BetterCal\Domain\Feeds::columnsOf([
     'uid' => 'x', 'title' => 'Vacation', 'description' => null, 'location' => null, 'url' => null,
     'start_utc' => '2026-08-15 00:00:00', 'end_utc' => '2026-08-16 00:00:00',
     'all_day' => 1, 'tzid' => 'UTC', 'rrule' => null, 'exdates' => [],
     'status' => 'confirmed', 'recurrence_instance_utc' => null,
-]);
+], null, BetterCal\Domain\Feeds::FROM_CALDAV);
 checkEq('dav DATE maps to all_day=1', 1, $cols['all_day']);
 checkEq('dav DATE keeps tzid UTC', 'UTC', $cols['tzid']);
 // Parsed from the wire: a DATE stays a UTC midnight even with a stray TZID
@@ -7343,7 +7343,7 @@ checkEq('dav DATE keeps tzid UTC', 'UTC', $cols['tzid']);
 if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
 $davDate = Ics::parse("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:d1\r\nDTSTART;VALUE=DATE;TZID=Asia/Tokyo:20261010\r\nDTEND;VALUE=DATE:20261011\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")[0];
 checkEq('dav DATE with stray TZID is a UTC midnight', ['2026-10-10 00:00:00', 'UTC'], [$davDate['start_utc'], $davDate['tzid']]);
-$davZoned = DavIcs::eventColumns(Ics::parse("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:z1\r\nDTSTART;TZID=Asia/Tokyo:20261010T000000\r\nDTEND;TZID=Asia/Tokyo:20261011T000000\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")[0]);
+$davZoned = BetterCal\Domain\Feeds::columnsOf(Ics::parse("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:z1\r\nDTSTART;TZID=Asia/Tokyo:20261010T000000\r\nDTEND;TZID=Asia/Tokyo:20261011T000000\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")[0], null, BetterCal\Domain\Feeds::FROM_CALDAV);
 checkEq('dav zoned-midnight all-day is stored as its UTC date (0.9.16)', [1, 'UTC', '2026-10-10 00:00:00'], [$davZoned['all_day'], $davZoned['tzid'], $davZoned['start_utc']]);
 // Import (audit #2): a Windows zone name keeps the zone sabre resolved, and a
 // floating time is read in the calendar's X-WR-TIMEZONE or the Home zone.
@@ -7359,26 +7359,24 @@ checkEq('import: a UTC time is unchanged', ['2026-10-12 09:00:00', 'UTC'], [$zTi
 checkEq('dav empty exdates -> null json', null, $cols['exdates_json']);
 checkEq('dav no rrule stays null', null, $cols['rrule']);
 
-$cols = DavIcs::eventColumns([
+$cols = BetterCal\Domain\Feeds::columnsOf([
     'uid' => 'x', 'title' => 'Standup', 'description' => 'notes', 'location' => 'HQ', 'url' => 'https://x.test',
     'start_utc' => '2026-08-03 17:00:00', 'end_utc' => '2026-08-03 17:30:00',
     'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=DAILY',
     'exdates' => ['2026-08-05 17:00:00'], 'status' => 'tentative',
     'recurrence_instance_utc' => null,
-]);
+], null, BetterCal\Domain\Feeds::FROM_CALDAV);
 checkEq('dav DATETIME keeps tzid', 'America/Los_Angeles', $cols['tzid']);
 checkEq('dav DATETIME all_day=0', 0, $cols['all_day']);
 checkEq('dav exdates encode to json', json_encode(['2026-08-05 17:00:00']), $cols['exdates_json']);
 checkEq('dav rrule passthrough', 'FREQ=DAILY', $cols['rrule']);
 checkEq('dav status passthrough', 'tentative', $cols['status']);
-checkEq('dav bad tzid falls back to UTC', 'UTC', DavIcs::eventColumns([
-    'start_utc' => '2026-08-03 17:00:00', 'end_utc' => '2026-08-03 18:00:00',
-    'all_day' => 0, 'tzid' => 'Mars/Olympus_Mons', 'exdates' => [],
-])['tzid']);
-checkEq('dav empty rrule string -> null', null, DavIcs::eventColumns([
-    'start_utc' => '2026-08-03 17:00:00', 'end_utc' => '2026-08-03 18:00:00',
-    'all_day' => 0, 'tzid' => 'UTC', 'rrule' => '', 'exdates' => [],
-])['rrule']);
+if (class_exists(\Sabre\VObject\Reader::class)) {
+// The parsed shape every source maps (Feeds::columnsOf) is already normal: an
+// unknown zone is read as UTC, and an empty rule is none.
+$davOdd = BetterCal\Domain\Feeds::columnsOf(Ics::parse("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:o1\r\nDTSTART;TZID=Mars/Olympus_Mons:20260803T170000\r\nDTEND;TZID=Mars/Olympus_Mons:20260803T180000\r\nRRULE:\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")[0], null, BetterCal\Domain\Feeds::FROM_CALDAV);
+checkEq('dav bad tzid falls back to UTC, and an empty rrule is none', ['UTC', null], [$davOdd['tzid'], $davOdd['rrule']]);
+}
 
 // Object body: master (RRULE + EXDATE) plus one RECURRENCE-ID override, one VCALENDAR.
 $davMaster = [
@@ -8217,7 +8215,7 @@ check('inert text: decode-limit-plus-one cannot become markup downstream',
     && !Sanitize::isHtml(html_entity_decode($fourDeepInert, ENT_QUOTES | ENT_HTML5, 'UTF-8')));
 checkEq('inert text: benign entities remain readable', 'Fish & chips', Sanitize::inertText('Fish &amp; chips'));
 checkEq('inert text: angle-bracket prose remains prose', 'a < b and b > c', Sanitize::inertText('a < b and b > c'));
-checkEq('caldav write: a description is cleaned on the way in', '<p>hi</p>', BetterCal\Dav\DavIcs::eventColumns(['title' => 't', 'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00', 'description' => '<p onclick="x()">hi<script>y()</script></p>'])['description']);
+checkEq('caldav write: a description is cleaned on the way in', '<p>hi</p>', BetterCal\Domain\Feeds::columnsOf(['title' => 't', 'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00', 'description' => '<p onclick="x()">hi<script>y()</script></p>', 'location' => null, 'url' => null, 'all_day' => 0, 'tzid' => 'UTC', 'rrule' => null, 'exdates' => [], 'status' => 'confirmed', 'recurrence_instance_utc' => null], null, BetterCal\Domain\Feeds::FROM_CALDAV)['description']);
 
 // ---------------------------------------------------------------------------
 // PlaceSearch: tz centroids, address compose, distance, ranking (pure)

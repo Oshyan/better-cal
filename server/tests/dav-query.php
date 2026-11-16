@@ -45,7 +45,7 @@ $dqDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kin
 $dqDb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, event_id INTEGER, container_id INTEGER, position INTEGER DEFAULT 0)');
 $dqDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT,
     start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT, rrule TEXT, exdates_json TEXT, status TEXT DEFAULT \'confirmed\', reminders_json TEXT,
-    recurrence_parent_id INTEGER, recurrence_instance_utc TEXT, is_container INTEGER DEFAULT 0, deleted_at TEXT, updated_at TEXT DEFAULT \'2026-11-01 00:00:00\')');
+    recurrence_parent_id INTEGER, recurrence_instance_utc TEXT, is_container INTEGER DEFAULT 0, floating INTEGER DEFAULT 0, deleted_at TEXT, updated_at TEXT DEFAULT \'2026-11-01 00:00:00\')');
 davJournal($dqDb);
 $dqDb->run("INSERT INTO users VALUES (1, 'sam@example.test', 'Sam Sample', '{}')");
 $dqCalendar = 0;
@@ -60,7 +60,7 @@ $dqRow = static function (int $calendar, array $cols) use ($dqDb): int {
 /** A stored event read from an object as a PUT reads it. */
 $dqFromIcs = static function (int $calendar, string $vevent) use ($dqRow): string {
     $parsed = Ics::parse("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\n" . $vevent . "END:VCALENDAR\r\n", 'UTC')[0];
-    $dqRow($calendar, DavIcs::eventColumns($parsed) + ['uid' => (string) $parsed['uid']]);
+    $dqRow($calendar, BetterCal\Domain\Feeds::columnsOf($parsed, null, BetterCal\Domain\Feeds::FROM_CALDAV) + ['uid' => (string) $parsed['uid']]);
     return DavIcs::objectUri((string) $parsed['uid']);
 };
 $dqBackend = new CalendarBackend($dqDb, new BetterCal\Domain\Undo($dqDb));

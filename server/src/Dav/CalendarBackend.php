@@ -415,7 +415,12 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             $isNewObject = $existingMaster === null || $existingMaster['deleted_at'] !== null;
 
             $now = Time::nowDb();
-            $masterCols = DavIcs::eventColumns($masters[0]);
+            // The one mapping of every source (Feeds::columnsOf): a client's
+            // alarms are the event's reminders where it changed them, and a
+            // zone it gives a time that had none is kept (#287). A deleted
+            // row brought back was never the client's to see.
+            $masterShown = $existingMaster !== null && $existingMaster['deleted_at'] === null ? $existingMaster : null;
+            $masterCols = Feeds::columnsOf($masters[0], null, Feeds::FROM_CALDAV, $masterShown);
             if ($existingMaster !== null) {
                 $masterId = (int) $existingMaster['id'];
                 $this->db->update('events', $masterCols + ['deleted_at' => null, 'updated_at' => $now], 'id = ?', [$masterId]);
@@ -452,10 +457,10 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             $feeds = new Feeds($this->db);
             $given = []; // the rows a record of the PUT was given to, by id
             foreach ($parsedOverrides as $ov) {
-                $cols = DavIcs::eventColumns($ov);
-                $instance = (string) $cols['recurrence_instance_utc'];
-                $cols['recurrence_parent_id'] = $masterId;
-                $current = $rowFor[$instance] ?? null;
+                $current = $rowFor[(string) $ov['recurrence_instance_utc']] ?? null;
+                // A day with no row showed its series' alarms.
+                $cols = Feeds::columnsOf($ov, $masterId, Feeds::FROM_CALDAV,
+                    $current !== null && $current['deleted_at'] === null ? $current : array_merge($existingMaster ?? [], $masterCols));
                 if ($current !== null) {
                     $given[(int) $current['id']] = true;
                 }

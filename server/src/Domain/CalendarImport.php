@@ -144,38 +144,25 @@ final class CalendarImport
                         continue;
                     }
                 }
+                $parentId = $ev['recurrence_instance_utc'] !== null ? ($masterIdByUid[(string) $ev['uid']] ?? null) : null;
+                // The one mapping of every source (Feeds::columnsOf): the
+                // file's alarms become the event's own reminders (none
+                // follows the calendar's defaults), a day's against its
+                // series' alarms; its times float as the calendar's preset
+                // says.
+                $master = $parentId === null ? null : ($importedMasters[(string) $ev['uid']] ?? $this->db->one('SELECT * FROM events WHERE id = ?', [$parentId]));
                 $cols = [
                     'user_id' => $userId,
                     'calendar_id' => $calendarId,
                     'created_via' => 'import',
                     'uid' => $ev['uid'],
-                    'title' => $ev['title'],
-                    'description' => Sanitize::description($ev['description']),
-                    'location' => $ev['location'],
-                    'url' => $ev['url'],
-                    'start_utc' => $ev['start_utc'],
-                    'end_utc' => $ev['end_utc'],
-                    'all_day' => $ev['all_day'],
-                    'tzid' => $ev['tzid'],
-                    'floating' => (int) $ev['all_day'] !== 1 && (($ev['floating'] ?? 0) === 1 || $floatTimed) ? 1 : 0,
-                    'rrule' => $ev['rrule'],
-                    'exdates_json' => $ev['exdates'] === [] ? null : json_encode($ev['exdates']),
-                    // VALARM reminders become explicit overrides; none = inherit defaults.
-                    'reminders_json' => ($ev['reminders'] ?? []) === [] ? null : json_encode($ev['reminders']),
-                    'status' => $ev['status'],
-                    'recurrence_instance_utc' => $ev['recurrence_instance_utc'],
-                    'recurrence_parent_id' => $ev['recurrence_instance_utc'] !== null
-                        ? ($masterIdByUid[(string) $ev['uid']] ?? null)
-                        : null,
                     'source' => 'local',
-                ];
+                ] + Feeds::columnsOf($ev, $parentId, Feeds::FROM_IMPORT, $master, $floatTimed);
                 if ($cols['recurrence_parent_id'] !== null) {
                     // An edited day never seen before: its own fields by
                     // equality with its master, every field compared (Rows
                     // from Elsewhere), whether the master came in with this
                     // file or was in the calendar already. Never left null.
-                    $master = $importedMasters[(string) $ev['uid']]
-                        ?? $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $cols['recurrence_parent_id']]);
                     // What an imported row has for the fields a file doesn't carry.
                     $row = $cols + ['icon' => null, 'attendance' => 'none'];
                     $cols['override_fields'] = OwnFields::encode($master === null ? [] : OwnFields::infer($row, $master));

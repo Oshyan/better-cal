@@ -17,7 +17,7 @@ namespace BetterCal\Domain;
  */
 final class RepeatParser
 {
-    private const DAY = '(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)';
+    private const DAY = WeekdayName::PATTERN; // the one definition of a weekday's name
     private const DAYS_PLURAL = '(?:mondays|tuesdays|wednesdays|thursdays|fridays|saturdays|sundays)';
     // Between day names: a comma, "and", "&", or just a space ("mon wed fri").
     private const JOIN = '(?:\s*(?:,\s*and\b|,|&|\band\b)\s*|\s+)';

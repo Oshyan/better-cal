@@ -18,15 +18,6 @@ final class FallbackParser
         'jan' => 1, 'feb' => 2, 'mar' => 3, 'apr' => 4, 'may' => 5, 'jun' => 6,
         'jul' => 7, 'aug' => 8, 'sep' => 9, 'oct' => 10, 'nov' => 11, 'dec' => 12,
     ];
-    private const WEEKDAYS = [
-        'sunday' => 0, 'monday' => 1, 'tuesday' => 2, 'wednesday' => 3,
-        'thursday' => 4, 'friday' => 5, 'saturday' => 6,
-    ];
-    /** Short day names (#33), read only where they can't be a word ("Sun Valley"). */
-    private const WEEKDAY_ABBR = [
-        'sun' => 0, 'mon' => 1, 'tue' => 2, 'tues' => 2, 'wed' => 3,
-        'thu' => 4, 'thur' => 4, 'thurs' => 4, 'fri' => 5, 'sat' => 6,
-    ];
     private const NUMBER_WORDS = [
         'a' => 1, 'an' => 1, 'one' => 1, 'two' => 2, 'three' => 3, 'four' => 4, 'five' => 5, 'six' => 6,
         'seven' => 7, 'eight' => 8, 'nine' => 9, 'ten' => 10, 'eleven' => 11, 'twelve' => 12,
@@ -482,7 +473,6 @@ final class FallbackParser
                 }
             }
         }
-        $dayAltAll = implode('|', array_keys(self::WEEKDAYS));
         $numAlt = '\d{1,3}|' . implode('|', array_keys(self::NUMBER_WORDS));
         $num = static fn(string $n): int => ctype_digit($n) ? (int) $n : self::NUMBER_WORDS[strtolower($n)];
         $today = $now->setTime(0, 0);
@@ -494,19 +484,19 @@ final class FallbackParser
         // A weekday counted from is the coming one, never today: typed on a
         // Friday, "a week from Friday" is 14 days out (#288). "Week from
         // Friday" without a count is one week.
-        if (preg_match('/\b' . self::counted() . '\s+(?:from|after)\s+(now|today|tomorrow|' . $dayAltAll . ')\b/i', $work, $m)) {
+        if (preg_match('/\b' . self::counted() . '\s+(?:from|after)\s+(now|today|tomorrow|' . WeekdayName::PATTERN . ')\b/i', $work, $m)) {
             [$count, $unit] = ($m[3] ?? '') !== '' ? [1, 'week'] : [$num($m[1]), strtolower($m[2])];
             $base = strtolower($m[4]);
             $from = match ($base) {
                 'now', 'today' => $now,
                 'tomorrow' => $now->add(new \DateInterval('P1D')),
-                default => $now->add(new \DateInterval('P' . self::weekdayAhead(self::WEEKDAYS[$base], $now, false) . 'D')),
+                default => $now->add(new \DateInterval('P' . self::weekdayAhead((int) WeekdayName::number($base), $now, false) . 'D')),
             };
             return [self::cut($work, $m[0]), $from->modify('+' . $count . ' ' . $unit), true, null];
         }
         // "Friday after next": a week past the coming Friday.
-        if (preg_match('/\b(?:the\s+)?(' . $dayAltAll . ')\s+after\s+next\b/i', $work, $m)) {
-            $diff = self::weekdayAhead(self::WEEKDAYS[strtolower($m[1])], $now, false);
+        if (preg_match('/\b(?:the\s+)?(' . WeekdayName::PATTERN . ')\s+after\s+next\b/i', $work, $m)) {
+            $diff = self::weekdayAhead((int) WeekdayName::number($m[1]), $now, false);
             return [self::cut($work, $m[0]), $now->add(new \DateInterval('P' . ($diff + 7) . 'D')), true, null];
         }
         // "end of the month", "end of next month": its last day.
@@ -523,7 +513,7 @@ final class FallbackParser
             return [self::cut($work, $m[0]), $first, true, $sat->add(new \DateInterval('P1D'))];
         }
         // "all week next week", "next week all week": Monday to Sunday.
-        if (preg_match('/\ball\s+week\b/i', $work, $all) && preg_match('/\b(this|next)\s+week\b(?!\s+(?:on\s+)?(?:' . $dayAltAll . '))/i', $work, $m)) {
+        if (preg_match('/\ball\s+week\b/i', $work, $all) && preg_match('/\b(this|next)\s+week\b(?!\s+(?:on\s+)?(?:' . WeekdayName::PATTERN . '))/i', $work, $m)) {
             $monday = $today->sub(new \DateInterval('P' . (((int) $now->format('w') + 6) % 7) . 'D'));
             if (strtolower($m[1]) === 'next') $monday = $monday->add(new \DateInterval('P7D'));
             $work = self::cut(self::cut($work, $all[0]), $m[0]);
@@ -548,7 +538,7 @@ final class FallbackParser
         // "first Monday of September" / "last Friday in October" (nth weekday
         // of a month; rolls to next year when the whole month is past).
         if (preg_match(
-            '/\b(first|second|third|fourth|last)\s+(' . $dayAltAll . ')\s+(?:of|in)\s+(' . $monthAlt . ')\b(?:,?\s*(\d{4}))?/i',
+            '/\b(first|second|third|fourth|last)\s+(' . WeekdayName::PATTERN . ')\s+(?:of|in)\s+(' . $monthAlt . ')\b(?:,?\s*(\d{4}))?/i',
             $work,
             $m
         )) {
@@ -556,7 +546,7 @@ final class FallbackParser
             if ($monthNum !== null) {
                 $year = ($m[4] ?? '') !== '' ? (int) $m[4] : null;
                 $read = self::upcoming($year, $now, $m[0], static fn(int $y): ?\DateTimeImmutable
-                    => self::nthWeekdayOfMonth($now, $y, $monthNum, self::WEEKDAYS[strtolower($m[2])], strtolower($m[1])));
+                    => self::nthWeekdayOfMonth($now, $y, $monthNum, (int) WeekdayName::number($m[2]), strtolower($m[1])));
                 if ($read !== null) {
                     return [self::cut($work, $m[0]), $read[0], true, null, false, $read[1]];
                 }
@@ -575,7 +565,6 @@ final class FallbackParser
         if (preg_match('/\byesterday\b/i', $work, $m)) {
             return [self::cut($work, $m[0]), $now->sub(new \DateInterval('P1D')), true, null];
         }
-        $dayAlt = implode('|', array_keys(self::WEEKDAYS));
         // "next week thursday": the named weekday within the next calendar week
         // (weeks start Monday). Checked before the bare-weekday branch below.
         if (!$weekdays) {
@@ -606,8 +595,8 @@ final class FallbackParser
             }
             $skip = [$range['offset'], $range['offset'] + strlen($range['match'])];
         }
-        if (preg_match('/\bnext\s+week(?:\s+(?:on\s+)?(' . $dayAlt . '))\b/i', $work, $m)) {
-            $target = self::WEEKDAYS[strtolower($m[1])];
+        if (preg_match('/\bnext\s+week(?:\s+(?:on\s+)?(' . WeekdayName::PATTERN . '))\b/i', $work, $m)) {
+            $target = (int) WeekdayName::number($m[1]);
             $offsetInWeek = ($target - 1 + 7) % 7; // Monday-based position
             return [self::cut($work, $m[0]), $now->add(new \DateInterval('P' . (self::weekdayAhead(1, $now, false) + $offsetInWeek) . 'D')), true, null];
         }
@@ -620,8 +609,7 @@ final class FallbackParser
         // ("Sun Valley", "Sat Nav": followed by a capitalized word), in a
         // day range ("Mon-Fri"), or as the first word unless a time follows
         // ("Sat exam prep" vs "Sat 10am brunch"); a full name wins over them.
-        $abbrAlt = implode('|', array_keys(self::WEEKDAY_ABBR));
-        preg_match_all('/(?<![\p{L}\p{N}])(?:(next|this)\s+)?(' . $dayAlt . '|(?:' . $abbrAlt . ')\.?(?!\s+(?-i:[A-Z])))(?![\p{L}\p{N}_\'])/iu', $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        preg_match_all('/(?<![\p{L}\p{N}])(?:(next|this)\s+)?(' . WeekdayName::PATTERN . ')(?![\p{L}\p{N}_\'])/iu', $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
         $pick = null;
         foreach ($all as $m) {
             $before = substr($work, 0, $m[0][1]);
@@ -629,9 +617,9 @@ final class FallbackParser
                 || ($skip !== null && $m[0][1] >= $skip[0] && $m[0][1] < $skip[1])) {
                 continue;
             }
-            if (!isset(self::WEEKDAYS[strtolower($m[2][0])])) {
+            if (WeekdayName::isShort($m[2][0])) {
                 $after = substr($work, $m[0][1] + strlen($m[0][0]));
-                if (preg_match('/[-–—]\s*$/u', $before) === 1 || preg_match('/^\s*[-–—]\s*\w/u', $after) === 1
+                if (preg_match('/^\s+(?-i:[A-Z])/u', $after) === 1 || preg_match('/[-–—]\s*$/u', $before) === 1 || preg_match('/^\s*[-–—]\s*\w/u', $after) === 1
                     || (trim($before) === '' && $m[1][0] === '' && preg_match('/^\s*(?:at\s+)?\d/i', $after) !== 1)) {
                     continue;
                 }
@@ -642,8 +630,7 @@ final class FallbackParser
             break;
         }
         if ($pick !== null) {
-            $name = strtolower(rtrim($pick[2][0], '.'));
-            $target = self::WEEKDAYS[$name] ?? self::WEEKDAY_ABBR[$name];
+            $target = (int) WeekdayName::number($pick[2][0]);
             $diff = self::weekdayAhead($target, $now, strtolower($pick[1][0] ?? '') !== 'next');
             // Cut at the match itself, not an earlier copy of the same word
             // ("Meet at Sat Nam Yoga Sat 10am").
@@ -816,7 +803,7 @@ final class FallbackParser
      */
     private static function timedStretch(string $work, \DateTimeImmutable $now): array
     {
-        $day = '(?:' . implode('|', array_keys(self::WEEKDAYS)) . '|' . implode('|', array_keys(self::WEEKDAY_ABBR)) . ')\.?';
+        $day = WeekdayName::PATTERN;
         $mon = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?';
         $when = '(' . $day . '|' . $mon . '|\d{1,2}\/\d{1,2})';
         $time = '(\d{1,2}(?::\d{2})?\s*(?:am|pm)|noon|midnight)';
@@ -866,7 +853,7 @@ final class FallbackParser
             $rest = substr($work, $at + strlen($m[0][0]));
             if (preg_match('/^from\s/i', $m[0][0]) === 1
                 && preg_match('/\b' . self::counted() . '\s+$/i', substr($work, 0, $at)) === 1
-                && preg_match('/^(?:now|today|tomorrow|' . implode('|', array_keys(self::WEEKDAYS)) . ')\b/i', $rest) === 1) {
+                && preg_match('/^(?:now|today|tomorrow|' . WeekdayName::PATTERN . ')\b/i', $rest) === 1) {
                 continue; // "3 days from now", read by extractDate
             }
             $first = self::leadingDate($rest, $now);
@@ -1038,8 +1025,8 @@ final class FallbackParser
      */
     private static function confirmingWeekday(string $work, int $at, \DateTimeImmutable $date): string
     {
-        $names = implode('|', array_merge(array_keys(self::WEEKDAYS), array_keys(self::WEEKDAY_ABBR)));
-        $day = static fn(string $w): ?int => self::WEEKDAYS[$w = strtolower(rtrim($w, '.'))] ?? self::WEEKDAY_ABBR[$w] ?? null;
+        $names = WeekdayName::PATTERN;
+        $day = static fn(string $w): ?int => WeekdayName::number($w);
         $own = (int) $date->format('w');
         [$head, $tail] = [substr($work, 0, $at), substr($work, $at)];
         // The comma between the weekday and the date goes with the weekday;

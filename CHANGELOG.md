@@ -6,11 +6,58 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## 1.5.8 (unreleased)
 
-- **The month on a phone's month view names what fills the screen.** After Next, the top bar said the month before for some months (January and April 2027 among them).
-- **A toast with several buttons fits a phone.** Its buttons move under the message instead of squeezing it to one word per line.
-- **The repeat choice reads as a sentence: "Every 45 days".** The list offers "Every … days", "Every … weeks" and so on, the number goes up to 1,000, and a number past that says so under the row.
-- **Quick add reads repeats of more than 99:** "Replace water filter every 120 days".
-- **A change to a repeating event that also picks a new place goes through.** Confirmed a second or more after its preview, it was refused every time with "The series changed since this plan was made" (since 1.5.0).
+Everyday use: quick add, search, tags, filters, phones and calendar apps, and plainer words throughout.
+
+**Quick add and pasted links**
+- **A street address after "at" is the place,** city and all, and leaves the title: "Lunch tomorrow 3pm at 123 Example St, Springfield" is "Lunch". Type it with capitals; a venue's name stays in the title as before.
+- **A comma before "with" keeps the place:** "at Sample Theater, with Alex".
+- **"A week from Friday", typed on a Friday, is two weeks out,** with or without the "a", and short day names work everywhere: "3 weeks from Mon", "fri after next".
+- **A pasted event link works with tracking or an invitation code on the end,** and the saved link drops the tracking.
+- **Place search asks your next service when the first only knows places far away,** nearby ones first. A venue the map lacks is placed by the address after its name, never at the middle of town.
+- Repeats of more than 99: "Replace water filter every 120 days".
+
+**Search and the event panel**
+- **Search opens on All, every calendar, every time.** A choice applies to that search only, and upcoming matches always come before past ones.
+- **With an event open in the side panel, one click opens another** from search or anywhere else, and search's own controls, menus and dialogs work on the first click.
+
+**Views and editing**
+- **Day view's all-day bars drag to another day and resize,** as week view's do. A drag picked up at the edge of a view no longer scrolls before it has moved, and the original fades while you drag, in every view.
+- **Show as Busy or Free** in the editor. Free events from feeds, files, phones and Google Calendar stay free and are passed on as free. A new all-day event on a Google calendar is Free, as Google Calendar makes it.
+- **The repeat choice reads as a sentence, "Every 45 days",** up to 1,000.
+- **A change to a repeating event that also picks a new place goes through.** It was refused with "The series changed since this plan was made" (since 1.5.0).
+- Empty Agenda, search and Review say what they are for, with a start on the same line.
+- The sidebar's Plugins group lists only plugins nothing else shows or hides; Tides follows its tide calendars.
+
+**Tags and filters**
+- **Tags can be renamed and deleted,** under Calendars, folders & tags, with Undo. Renaming onto a name that exists merges the two. Tags no event carries are no longer offered. A new name must be one you can type after #.
+- **A dim or highlight filter shows on weather, holidays and other context,** and on a "+N" that hides a match.
+- **Each filter's card says what it matches.** An AI prompt filter says exactly what it sends.
+- **AI prompt filters set to dim or highlight now mark the events that fit.** Hide is unchanged.
+
+**Phones and calendar apps**
+- **A reminder shows the start of the event's description, and tapping it opens straight onto the event,** without the calendar first.
+- **An alarm set in a phone's calendar app is kept** as the event's own reminder.
+- **An import into an existing calendar reaches phones right away.**
+- The month on a phone's month view names what fills the screen, and a toast with several buttons fits.
+
+**Duplicates**
+- **Connecting a calendar whose events you already hold shows every pair once.** The duplicate check no longer stops at 5,000 pairs or repeats one notice; when it does leave something out, Settings says which calendars and what to do. On a busy day it compares each event with the nearest first.
+
+**Words**
+- **"In Google Calendar" wherever the calendar is meant;** "Google" alone is your account. Activity says what changed when a repeating event moves, and Review's previews keep their paragraphs.
+- A half-done change that Finish cannot complete says so in Review, with Put back as the way out.
+- A Google calendar shown only as busy times no longer reports as a failing feed.
+
+**What an upgrade changes or loses**
+- An AI prompt filter set to dim or highlight flips: it marks what it used to leave. Reword its description to keep the old effect.
+- The remembered search choice is gone. A Tides row you had unchecked no longer hides its shading; the tide calendar's setting does.
+- The first reminder tapped after the update, with the app left open from before, only brings the app forward. Reopen it once.
+- Finish or put back any half-done change to a Google calendar before updating.
+- Existing events read as Busy until their calendar is next checked.
+
+For API and plugin users ([docs/api-contract.md](docs/api-contract.md)): `showAs` on an event and `newShowAs` on a calendar; `GET /tags`, `PATCH /tags/:id`, `DELETE /tags/:id`; `BETTERCAL_LIMIT_DUPLICATE_LINKED_EDGES` is gone.
+
+Operators: one migration (a column, no rows rewritten); `update.php` or the update page as usual.
 
 ## 1.5.7 (2026-11-15)
 

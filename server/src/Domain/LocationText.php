@@ -150,15 +150,21 @@ final class LocationText
 
     /**
      * Where the place in $text ends, in bytes: at a with-clause ("with Alex",
-     * "w/ Sam"), or at the separator before a later part that asks a
+     * "w/ Sam") that no address follows,
+     * or at the separator before a later part that asks a
      * question; the separator and spaces before the end are not the place's.
      * Quick add's place after "at" ends here too (FallbackParser::place).
      */
     public static function placeLength(string $text): int
     {
         $end = strlen($text);
+        // A with-clause ends the place only when no address follows it: "with"
+        // before an address is part of a name ("Cafe with a View, 12 Elm St").
         if (preg_match('/(?<![\p{L}\p{N}])(?:with\s|w\/)/iu', $text, $m, PREG_OFFSET_CAPTURE) === 1) {
-            $end = (int) $m[0][1];
+            $after = array_filter(self::parts(substr($text, (int) $m[0][1])), static fn(string $p): bool => self::addressStart($p) !== null);
+            if ($after === []) {
+                $end = (int) $m[0][1];
+            }
         }
         $pieces = preg_split(self::SEPARATOR, $text, -1, PREG_SPLIT_OFFSET_CAPTURE) ?: [];
         foreach ($pieces as $i => [$piece, $offset]) {

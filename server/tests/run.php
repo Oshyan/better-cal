@@ -543,6 +543,9 @@ checkEq('fp64 an address with its time after it',
 // #328): a later part that asks a question is not the place.
 checkEq('fp65 a question after the place is not the place',
     'Sample Cafe', $p('Dinner Friday 7pm at Sample Cafe - is it open late?')['location']);
+checkEq('fp67 "with" ends the place when nothing after it is an address',
+    ['Sample Cafe', 'Sample Cafe', 'Cafe with a View, 12 Elm St'],
+    [$p('Lunch Friday at Sample Cafe with Alex')['location'], $p('Lunch Friday at Sample Cafe, with Alex')['location'], $p('Lunch Friday at Cafe with a View, 12 Elm St')['location']]);
 checkEq('fp66 a dash before words that ask nothing stays in the place, as before',
     'Sample Cafe - patio', $p('Dinner Friday 7pm at Sample Cafe - patio')['location']);
 checkEq('fp65 an address, its city, then a with-clause',
@@ -7091,6 +7094,18 @@ $roomRows = [
 ];
 foreach ($roomRows as [$part, $room]) {
     checkEq('location room: ' . $part, $room, \BetterCal\Domain\LocationText::isRoom($part));
+}
+// A with-clause ends the place only when no address follows it.
+$withRows = [
+    ['Cafe with a View, 12 Elm St, Sampletown', [['Cafe with a View, 12 Elm St, Sampletown', null], ['12 Elm St, Sampletown', '12 Elm St']]],
+    ['With Love Bakery, 12 Example St', [['With Love Bakery, 12 Example St', null], ['12 Example St', '12 Example St']]],
+    ['Sample Cafe with Alex', [['Sample Cafe', null]]],
+    ['Sample Theater, with Alex', [['Sample Theater', null]]],
+    ['Sample Cafe with Alex, Sam and Jo', [['Sample Cafe', null]]],
+    ['With Love Bakery', []],
+];
+foreach ($withRows as [$text, $forms]) {
+    checkEq('location with: ' . $text, $forms, Geocode::forms($text));
 }
 checkEq('location room: a Florida address keeps its state and postcode in every form', [
     ['Sample Diner, 123 Main St, Sampleville, FL 32202', null], ['123 Main St, Sampleville, FL 32202', '123 Main St'],

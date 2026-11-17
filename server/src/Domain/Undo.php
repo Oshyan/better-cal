@@ -2164,40 +2164,69 @@ final class Undo
      * Redo is the undo's entry undone by its id. A line that changed no
      * row (log-only, touching nothing) is passed over too, judged by what
      * it changed, never by who wrote it. When that last change can't be
-     * undone (an answer already sent, say), that's the answer: an older one
-     * behind it isn't undone instead.
+     * undone (an answer already sent, say, or a newer change standing on
+     * it), that's the answer, and the refusal carries the entry's id
+     * (`entryId`): an older one behind it isn't undone instead.
+     *
+     * $past is that id, sent back by the caller with its next press: the
+     * refusal is said once, and an entry at or newer than $past is passed
+     * over while it is still refused, each one asked again (one that has
+     * become undoable since is taken, newest first), so the press reaches
+     * the latest entry before them that can be undone, and a refusal there
+     * is said with its own id. Nothing is stored for a refusal: what a
+     * caller forgets costs one repeated refusal (decisions.md, "The plain
+     * Undo passes over a refusal the caller has already been told").
      *
      * @return array{entity:string,op:string}
      */
-    public function undoLatest(int $userId, ?RequestAuthority $authority = null): array
+    public function undoLatest(int $userId, ?RequestAuthority $authority = null, ?int $past = null): array
     {
         [$in, $params] = Db::in(ActivityContext::get() === 'api' ? ['api'] : self::OWN_SOURCES);
         $below = PHP_INT_MAX;
-        do {
-            $last = $this->db->one(
-                "SELECT id, user_id, summary, details_json, format, before_json IS NULL AND after_json IS NULL AS log_only FROM mutations
-                 WHERE user_id = ? AND undone = 0 AND id < ? AND source IN $in ORDER BY id DESC LIMIT 1",
-                array_merge([$userId, $below], $params)
-            );
-            if ($last === null) {
-                throw HttpError::notFound('Nothing to undo', 'nothing_to_undo');
+        while (true) {
+            do {
+                $last = $this->db->one(
+                    "SELECT id, user_id, summary, details_json, format, before_json IS NULL AND after_json IS NULL AS log_only FROM mutations
+                     WHERE user_id = ? AND undone = 0 AND id < ? AND source IN $in ORDER BY id DESC LIMIT 1",
+                    array_merge([$userId, $below], $params)
+                );
+                if ($last === null) {
+                    throw HttpError::notFound('Nothing to undo', 'nothing_to_undo');
+                }
+                $below = (int) $last['id'];
+                // Passed over: an undo's own entry, and a line that changed no
+                // row (log-only and touching nothing), whoever wrote it: it is
+                // no change to take back. One that changed rows it can't put
+                // back is the answer, below. A whole-series change on a Google
+                // calendar whose undo is held back (GoogleUndo::seriesUndoOff)
+                // is passed over too, so an older change undoes, and so is one
+                // recorded in an older format (JOURNAL_FORMAT), which can't be
+                // undone at all.
+            } while ($this->takesBack($below) || GoogleUndo::seriesUndoOff($this->db, $last) || self::olderFormat($last)
+                || ((int) $last['log_only'] === 1 && $this->db->scalar('SELECT 1 FROM mutation_touches WHERE mutation_id = ? LIMIT 1', [$below]) === null));
+            try {
+                if ((int) $last['log_only'] === 1) {
+                    throw HttpError::badRequest("The last change can't be undone here: " . $last['summary'], 'not_undoable');
+                }
+                return $this->undoById($userId, $below, false, $authority);
+            } catch (HttpError $e) {
+                if (!in_array($e->errorCode, self::REFUSALS, true)) {
+                    throw $e;
+                }
+                if ($past !== null && $below >= $past) {
+                    continue; // Said already, and still refused: the press goes on to the change before it.
+                }
+                $blocked = $e->errorCode === 'stale_undo' || in_array($e->extra['reason'] ?? null, [self::DAY_UNPLACED, self::DAY_GONE, self::DAYS_SINCE], true);
+                throw new HttpError($e->errorCode, $e->getMessage() . ($blocked ? ' ' . self::PASSED_ON : ''), $e->status, $e->extra + ['entryId' => $below]);
             }
-            $below = (int) $last['id'];
-            // Passed over: an undo's own entry, and a line that changed no
-            // row (log-only and touching nothing), whoever wrote it: it is
-            // no change to take back. One that changed rows it can't put
-            // back is the answer, below. A whole-series change on a Google
-            // calendar whose undo is held back (GoogleUndo::seriesUndoOff)
-            // is passed over too, so an older change undoes, and so is one
-            // recorded in an older format (JOURNAL_FORMAT), which can't be
-            // undone at all.
-        } while ($this->takesBack($below) || GoogleUndo::seriesUndoOff($this->db, $last) || self::olderFormat($last)
-            || ((int) $last['log_only'] === 1 && $this->db->scalar('SELECT 1 FROM mutation_touches WHERE mutation_id = ? LIMIT 1', [$below]) === null));
-        if ((int) $last['log_only'] === 1) {
-            throw HttpError::badRequest("The last change can't be undone here: " . $last['summary'], 'not_undoable');
         }
-        return $this->undoById($userId, (int) $last['id'], false, $authority);
     }
+
+    /** The refusals the plain Undo says once and passes over on a press that names them (undoLatest's $past): each writes and sends nothing. */
+    private const REFUSALS = ['not_undoable', 'stale_undo', 'undo_conflict', 'google_conflict'];
+
+    /** What a refusal of the plain Undo adds where newer changes block the entry (undoLatest). */
+    public const PASSED_ON = 'It can still be undone in Activity once the newer changes are undone.';
 
     /**
      * The format the journal is written in (mutations.format), raised

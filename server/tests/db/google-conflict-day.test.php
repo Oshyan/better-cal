@@ -687,6 +687,54 @@ return static function (Db $db): void {
         });
     }
 
+    // The same save also setting something held here alone: a row exists for its own fields and for whatever refers
+    // to it, so the day keeps its row and what was set; alone, the day is ordinary again. Undo puts back what was there.
+    foreach ([true, false] as $on) {
+        $mode = $on ? 'the conflict choice on' : 'the conflict choice off';
+        scenario("a day's title put back by its own row with something held here set in the same save, $mode", function () use ($fresh, $on, $send, $day, $occ, $over, $mark, $writes, $methods, $dayRow, $tagsOf, $atG, $mode, $db): void {
+            $peopleOf = static fn(?array $r): array => $r === null ? [] : array_column($db->all('SELECT p.name FROM event_people ep JOIN people p ON p.id = ep.person_id WHERE ep.event_id = ? ORDER BY p.name', [(int) $r['id']]), 'name');
+            $with = [
+                'a tag' => [['tagNames' => ['sample-tag']], static fn(?array $r): mixed => $tagsOf($r), ['sample-tag'], []],
+                'people' => [['personNames' => ['Alex Example']], static fn(?array $r): mixed => $peopleOf($r), ['Alex Example'], []],
+                'a reminder' => [['reminders' => [['minutes' => 15]]], static fn(?array $r): mixed => $r === null ? null : (json_decode((string) ($r['reminders_json'] ?? 'null'), true)[0]['minutes'] ?? null), 15, null],
+                'nothing else' => [[], static fn(?array $r): mixed => $r === null ? 'no row' : 'a row', 'no row', 'a row'],
+            ];
+            foreach ($with as $label => [$more, $read, $set, $was]) {
+                $t = $fresh($on);
+                $gid = $t->gid . '_20270310T180000Z';
+                $o = $occ($t, '2027-03-10');
+                $day($t, 'patch', $o, ['title' => 'Planning day', 'over' => $over($o, ['title'])]);
+                $o = $occ($t, '2027-03-10');
+                $m = $mark($t);
+                [$status, $json] = $day($t, 'patch', $o, ['title' => 'Team sync', 'over' => $over($o, ['title'])] + $more);
+                $state = static fn(): array => [$atG($t, $gid)['summary'] ?? null, $occ($t, '2027-03-10')['title'] ?? null, $read($dayRow($t, '2027-03-10'))];
+                checkEq("$mode, the title put back with $label: 200, one PATCH; the repeating event's title in Google Calendar and here; what was set is held on the day",
+                    [200, ['PATCH'], ['Team sync', 'Team sync', $set]], [isset($json['error']) ? $status . ' ' . $json['error']['code'] : $status, $methods($writes($t, $m)), $state()]);
+                $t->s->poll();
+                checkEq("$mode, the title put back with $label: the next poll changes nothing", ['Team sync', 'Team sync', $set], $state());
+                $entry = (int) $db->scalar('SELECT id FROM mutations WHERE user_id = ? AND source <> ? ORDER BY id DESC LIMIT 1', [$t->u, 'google']);
+                (new \BetterCal\Domain\Undo($db, null, $t->s->writer))->undoById($t->u, $entry);
+                checkEq("$mode, the title put back with $label: undo of the save puts back the day's own title, in Google Calendar and here, and what was there", ['Planning day', 'Planning day', $was], $state());
+                H::done($t);
+            }
+            // The same save by the repeating event's id and the day's key: the other path to a day with a row. There a
+            // value set equal to the repeating event's stays the day's own (googlePatchThis writes the day's own list
+            // before the answer is stored), so the row stays even with nothing else set: nothing is lost on either path,
+            // but the two differ in whether the day is ordinary again. Pinned as it is; reported, not changed here.
+            foreach (['a tag' => [['tagNames' => ['sample-tag']], ['sample-tag'], true], 'nothing else' => [[], [], true]] as $label => [$more, $tags, $row]) {
+                $t = $fresh($on);
+                $o = $occ($t, '2027-03-10');
+                $day($t, 'patch', $o, ['title' => 'Planning day', 'over' => $over($o, ['title'])]);
+                $o = $occ($t, '2027-03-10');
+                [$status] = $send($t, 'patch', $t->id, ['scope' => 'this', 'instanceStart' => '2027-03-10T18:00:00+00:00', 'title' => 'Team sync', 'over' => $over($o, ['title'])] + $more);
+                $t->s->poll();
+                checkEq("$mode, by the repeating event's id and the day's key, the title put back with $label: 200; the title the repeating event's; the tag held; the day keeps its row",
+                    [200, 'Team sync', $tags, $row], [$status, $occ($t, '2027-03-10')['title'] ?? null, $tagsOf($dayRow($t, '2027-03-10')), $dayRow($t, '2027-03-10') !== null]);
+                H::done($t);
+            }
+        });
+    }
+
     // Case 14: the setting off (an operator's switch): the code it was.
     scenario('setting off, a day: the refusal for each of the above', function () use ($fresh, $day, $occ, $over, $timeKeys, $allKeys, $whole, $atGoogle, $dayId, $mark, $writes, $db): void {
         $cases = [

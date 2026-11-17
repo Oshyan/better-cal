@@ -445,7 +445,7 @@ return static function (Db $db): void {
         checkEq('link ownership: the deleted event stays deleted with its own title', [true, 'Sample single'],
             [$db->scalar('SELECT deleted_at FROM events WHERE id = ?', [$id]) !== null, $db->scalar('SELECT title FROM events WHERE id = ?', [$id])]);
         checkEq('link ownership: the Activity line says how many were left out', true,
-            str_ends_with((string) $db->scalar('SELECT summary FROM mutations WHERE id = ?', [lastEntry($db, $u)]), '; 1 left out, deleted here before'));
+            str_ends_with((string) $db->scalar('SELECT summary FROM mutations WHERE id = ?', [lastEntry($db, $u)]), '; 1 left out, removed from this calendar before'));
         $holds('an import beside a deleted event', $u);
         $d->undo->undoById($u, lastEntry($db, $u));
         checkEq('link ownership: undone, the new event is gone and the deleted one is as it was', [0, true],

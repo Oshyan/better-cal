@@ -1822,10 +1822,10 @@ final class Events
     }
 
     /** @return array occurrence for the created event (first instance) */
-    public function create(int $userId, array $in, ?RequestAuthority $authority = null): array
+    public function create(int $userId, array $in, ?RequestAuthority $authority = null, array $cameFrom = []): array
     {
         $calendarId = (int) ($in['calendarId'] ?? 0);
-        return $this->undo->write($userId, function () use ($userId, $in, $calendarId, $authority): array {
+        return $this->undo->write($userId, function () use ($userId, $in, $calendarId, $authority, $cameFrom): array {
             // The request's credential is locked first (user before calendar),
             // so the checks around a Google write below keep the lock order.
             $authority?->assertValid($this->db);
@@ -1836,12 +1836,12 @@ final class Events
             // Keep the row lock through the sink even for a subscription. It
             // prevents adopt() from changing its authority between this
             // decision and a Google/local write.
-            return $this->createLocked($userId, $in, $authority);
+            return $this->createLocked($userId, $in, $authority, $cameFrom);
         });
     }
 
     /** @return array occurrence for the created event (first instance) */
-    private function createLocked(int $userId, array $in, ?RequestAuthority $authority = null): array
+    private function createLocked(int $userId, array $in, ?RequestAuthority $authority = null, array $cameFrom = []): array
     {
         $calendarId = (int) ($in['calendarId'] ?? 0);
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]);
@@ -1938,6 +1938,10 @@ final class Events
         // A series starts on a day it actually repeats on, for every family
         // (series-model.md, Creating a Series).
         $row = array_merge($row, self::seriesStart($row, self::typedClock($in, $tzid, $allDay)));
+        // Where a copy came from (copyTo, through cameFrom); never from a request.
+        if ($cameFrom !== []) {
+            $row = self::cameFrom($row, ...$cameFrom);
+        }
 
         if ($google !== null) {
             return $this->serializeSingle($this->googleCreate($userId, $google, $row, $in, $authority));
@@ -1990,6 +1994,7 @@ final class Events
             throw HttpError::badRequest('start and end go together');
         }
         $source = $event;
+        $instanceUtc = null;
         $series = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
         if ($series && $start !== null && $scope !== 'this') {
             throw HttpError::badRequest('A copy at another time is one occurrence: send scope "this" with instanceStart');
@@ -2050,7 +2055,13 @@ final class Events
             $in['start'] = $start;
             $in['end'] = $end;
         }
-        $copy = $this->create($userId, $in, $authority);
+        // Its source: the event copied (a series by its uid), and the day's
+        // key where one day of a series was copied, its own row or not.
+        $copy = $this->create($userId, $in, $authority, [
+            (string) $event['uid'],
+            $instanceUtc ?? (empty($event['recurrence_instance_utc']) ? null : (string) $event['recurrence_instance_utc']),
+            $duplicate ? 'duplicate' : 'copy',
+        ]);
         // A copy made on purpose is not a duplicate of its source (#9).
         Duplicates::markDistinct($this->db, $userId, (int) $event['id'], (int) $copy['eventId']);
         return $copy;
@@ -2610,6 +2621,11 @@ final class Events
         $row['source'] = 'local';
         $row['created_via'] = ActivityContext::get();
         $row['override_fields'] = null;
+        // Where it came from: the repeating event and the day's key as the
+        // skip below stores it (cameFrom).
+        if ($master !== null) {
+            $row = self::cameFrom($row, (string) $master['uid'], (string) $instanceUtc, 'moved');
+        }
         $row = array_merge($row, $this->columnPatch($row, $in, null, forOverride: true));
         $copyFromId = $existingOverrideId ?? ($master !== null ? (int) $master['id'] : null);
 
@@ -3131,7 +3147,36 @@ final class Events
         // A series' start as read is its first shown day (shownSpan), a
         // floating one's on the viewer's clock.
         [$start, $end] = Floating::span($row, ...self::shownSpan($row), viewer: $this->viewerFor([$row], (int) $row['user_id']));
-        return $this->serialize($row, $start, $end, $links, full: true);
+        return $this->serialize($row, $start, $end, $links, full: true) + ['cameFrom' => $this->cameFromOut($row)];
+    }
+
+    /**
+     * Where an event made out of another came from, for the full record:
+     * the source's uid, the day's key where it was one day of the source (a
+     * UTC instant, or a date at 00:00 UTC for an all-day one; else null),
+     * how, and the source as it stands now, live, so a client can name it
+     * (null fields when it is gone). Null for an event made out of no other,
+     * or made before the link was kept.
+     *
+     * @return array{uid:string,day:?string,how:string,eventId:?int,title:?string,calendarId:?int}|null
+     */
+    private function cameFromOut(array $row): ?array
+    {
+        if (($row['came_from_how'] ?? null) === null) {
+            return null;
+        }
+        $series = $this->db->one(
+            'SELECT id, title, calendar_id FROM events WHERE user_id = ? AND uid = ? AND recurrence_parent_id IS NULL AND recurrence_instance_utc IS NULL AND deleted_at IS NULL ORDER BY id DESC LIMIT 1',
+            [(int) $row['user_id'], (string) $row['came_from_uid']]
+        );
+        return [
+            'uid' => (string) $row['came_from_uid'],
+            'day' => $row['came_from_key'] === null ? null : Time::fromDb((string) $row['came_from_key'])->format('Y-m-d\TH:i:s\Z'),
+            'how' => (string) $row['came_from_how'],
+            'eventId' => $series !== null ? (int) $series['id'] : null,
+            'title' => $series !== null ? (string) $series['title'] : null,
+            'calendarId' => $series !== null ? (int) $series['calendar_id'] : null,
+        ];
     }
 
     /**
@@ -3679,24 +3724,35 @@ final class Events
         return $utc->setTimezone(Time::zone($tzid))->modify('+1 day')->setTime(0, 0)->setTimezone(Time::utc());
     }
 
+    /**
+     * The key an instanceStart names under $series, read alone (no check
+     * that it is an occurrence): what requireInstance checks, and what a
+     * writer of a link names the day by. An all-day occurrence is named by
+     * its date. Its serialized start is "<date>T00:00:00+00:00", which as an
+     * INSTANT is only the occurrence for a series stored in UTC; for a
+     * series in any other zone it named no occurrence at all.
+     *
+     * @throws \InvalidArgumentException
+     */
+    private static function instanceKey(string $raw, array $series): string
+    {
+        return Time::toDb((int) ($series['all_day'] ?? 0) === 1
+            ? self::allDayBoundary($raw, (string) $series['tzid'])
+            : Time::parseIso($raw, (string) $series['tzid']));
+    }
+
     private function requireInstance(array $in, array $master): string
     {
         $raw = $in['instanceStart'] ?? null;
         if ($raw === null || $raw === '') {
             throw HttpError::badRequest('instanceStart is required for this scope');
         }
-        // An all-day occurrence is named by its date. Its serialized start is
-        // "<date>T00:00:00+00:00", which as an INSTANT is only the occurrence
-        // for a series stored in UTC; for a series in any other zone it named
-        // no occurrence at all.
         try {
-            $instance = (int) ($master['all_day'] ?? 0) === 1
-                ? self::allDayBoundary((string) $raw, (string) $master['tzid'])
-                : Time::parseIso((string) $raw, (string) $master['tzid']);
+            $key = self::instanceKey((string) $raw, $master);
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage(), 'invalid_recurrence_instance');
         }
-        $key = Time::toDb($instance);
+        $instance = Time::fromDb($key);
 
         // Preserve legitimate detached instances created before this policy
         // (including provider exceptions whose master rule later changed),
@@ -3751,7 +3807,36 @@ final class Events
         $copy['created_at'] = Time::nowDb();
         $copy['updated_at'] = Time::nowDb();
         $copy['deleted_at'] = null;
-        return $copy;
+        // A row made from another starts with no link of its own: each
+        // writer that makes an event out of another sets it (cameFrom), and
+        // a day row or a series' own row is not one.
+        return self::cameFrom($copy, null, null, null);
+    }
+
+    /** How an event can come from another (cameFrom), each by its one writer. */
+    public const CAME_FROM_HOWS = [
+        'moved',     // a day moved to another calendar (detachToCalendar)
+        'kept',      // a day a change to all events keeps as an event of its own (SeriesPlans)
+        'split',     // the later part of "this and following" (SeriesPlans::splitWriter)
+        'copy',      // a copy on another calendar (copyTo)
+        'duplicate', // a copy on the same calendar (copyTo)
+    ];
+
+    /**
+     * $row with where it came from: the source's uid, the day's key where it
+     * was one day of the source (else null), and how (CAME_FROM_HOWS). The
+     * one function every writer of the link goes through; all null clears
+     * it (copyForChild).
+     */
+    private static function cameFrom(array $row, ?string $uid, ?string $key, ?string $how): array
+    {
+        if ($how !== null && ($uid === null || !in_array($how, self::CAME_FROM_HOWS, true))) {
+            throw new \LogicException('cameFrom: a link needs a source uid and a known how');
+        }
+        $row['came_from_uid'] = $how === null ? null : $uid;
+        $row['came_from_key'] = $how === null ? null : $key;
+        $row['came_from_how'] = $how;
+        return $row;
     }
 
     private function decodeExdates(array $row): array

@@ -1,0 +1,28 @@
+{
+    "about": "Another day of the series given its own title and notes at Google, not yet read, then a day renamed here: a change to another day is no change to this one, so the rename goes through, nothing asked and nothing kept, and the other day shows its new title here (Slice 2, case 2; x-choice).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "r-exc+",
+            "pick": 0.1
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.5,
+            "what": "title",
+            "onRemote": false,
+            "byRow": false
+        }
+    ]
+}

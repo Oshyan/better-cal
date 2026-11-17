@@ -160,11 +160,11 @@ final class OracleProbes
                     $s1['rows'][$id]['google_event_id'] = substr($gid, 0, $cut + 1) . (strlen($suffix) === 8 ? $suffix . 'T000000Z' : substr($suffix, 0, 8));
                     return [$out, $s0, $this->reshape($s1)];
                 }],
-            ['check' => 'x-conflict', 'what' => 'a write over a change at Google not yet read goes through', 'case' => 'an-ordinary-day-edited-after-a-rename-at-google-is-conditional', 'step' => 2,
+            ['check' => 'x-conflict', 'what' => 'a write over a change at Google not yet read goes through', 'case' => 'an-ordinary-day-edited-after-a-rename-at-google-with-the-conflict-choice-off-is-refused', 'step' => 2,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => true, 'error' => null] + $out, $s0, $s1];
                 }],
-            ['check' => 'x-conflict', 'what' => 'a refused write leaves a changed etag here', 'case' => 'an-ordinary-day-edited-after-a-rename-at-google-is-conditional', 'step' => 2,
+            ['check' => 'x-conflict', 'what' => 'a refused write leaves a changed etag here', 'case' => 'an-ordinary-day-edited-after-a-rename-at-google-with-the-conflict-choice-off-is-refused', 'step' => 2,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     $id = array_key_first($s1['here']['etags']);
                     $s1['here']['etags'][$id] = '"probe"';
@@ -247,7 +247,7 @@ final class OracleProbes
                     $this->db->run('UPDATE mutations SET undone = 0 WHERE id = ?', [(int) $out['entry']]);
                     return [$out, $s0, $s1];
                 }],
-            ['check' => 'x-honest', 'what' => 'a refusal changed a row here', 'case' => 'an-ordinary-day-edited-after-a-rename-at-google-is-conditional', 'step' => 2,
+            ['check' => 'x-honest', 'what' => 'a refusal changed a row here', 'case' => 'an-ordinary-day-edited-after-a-rename-at-google-with-the-conflict-choice-off-is-refused', 'step' => 2,
                 'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $master): array {
                     $s1['rows'][$row($s1, $master)]['title'] = 'Sample probe title';
                     return [$out, $s0, $this->reshape($s1)];
@@ -606,6 +606,104 @@ final class OracleProbes
                     $s1 = $s0;
                     $s1['rows'][$this->singles[(string) $this->single]]['start_utc'] = '2027-01-01 00:00:00';
                     return [['ok' => false, 'error' => 'client_outdated', 'status' => 400, 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $this->reshape($s1)];
+                }],
+            // x-choice for one day of a repeating event (google-conflict-choice.md, Slice 2): one probe per statement, each on
+            // the case that shows it. The day's row is found by the change's own record of the day (daySent, still set when
+            // the damage runs).
+            ['check' => 'x-choice', 'what' => "a day's answer leaves out the title the whole event took at Google (kept)", 'case' => 'a-day-dragged-here-after-the-series-renamed-at-google-keeps-the-title', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $out['answer']['kept'] = [];
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'the drag of a day leaves its time here as it was', 'case' => 'a-day-dragged-here-after-the-series-renamed-at-google-keeps-the-title', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ($s1['rows'] as $id => $r) {
+                        if ((string) $r['recurrence_instance_utc'] === (string) $this->daySent['key']) {
+                            $s1['rows'][$id]['start_utc'] = $r['recurrence_instance_utc'];
+                            $s1['rows'][$id]['end_utc'] = gmdate('Y-m-d H:i:s', strtotime($r['recurrence_instance_utc'] . ' UTC') + 3600);
+                        }
+                    }
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-choice', 'what' => 'a change to one day puts the title the whole event had back at Google', 'case' => 'a-day-dragged-here-after-the-series-renamed-at-google-keeps-the-title', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $s1['g']['digest'][(string) $this->daySent['gid']]['title'] = 'Sample series';
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "another day's title changed at Google is named kept in a day's answer", 'case' => 'a-day-renamed-here-after-another-day-renamed-at-google-keeps-nothing', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $out['answer']['kept'] = [['field' => 'title', 'now' => 'Sample remote day 1']];
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "another day's title changed at Google is not stored here by a change to this day", 'case' => 'a-day-renamed-here-after-another-day-renamed-at-google-keeps-nothing', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ($s1['rows'] as $id => $r) {
+                        if ($r['title'] === 'Sample remote day 1') {
+                            $s1['rows'][$id]['title'] = 'Sample series';
+                        }
+                    }
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-choice', 'what' => "a day renamed at Google and here goes through without a question", 'case' => 'a-day-renamed-at-google-then-renamed-here-asks-about-the-day', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => true, 'error' => null, 'answer' => ['kept' => []]] + $out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "the question about a day's own record says the change was made to the whole repeating event (from series)", 'case' => 'a-day-renamed-at-google-then-renamed-here-asks-about-the-day', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        $out['extra']['fields'][$i]['from'] = 'series';
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "the question about a day leaves out the day", 'case' => 'a-day-renamed-at-google-then-renamed-here-asks-about-the-day', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    unset($out['extra']['day']);
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "the question about a day gives Google's title as what was shown (was)", 'case' => 'a-day-renamed-at-google-then-renamed-here-asks-about-the-day', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        $out['extra']['fields'][$i]['was'] = $f['now'] ?? null;
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'after the question about a day the day here keeps what it showed, not what was read from Google', 'case' => 'a-day-renamed-at-google-then-renamed-here-asks-about-the-day', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ($s1['rows'] as $id => $r) {
+                        if ((string) $r['recurrence_instance_utc'] === (string) $this->daySent['key']) {
+                            unset($s1['rows'][$id]);
+                        }
+                    }
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-choice', 'what' => 'a change to a day deleted at Google goes through', 'case' => 'a-day-deleted-at-google-then-renamed-here-is-refused-as-no-longer-a-day', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => true, 'error' => null, 'answer' => ['kept' => []]] + $out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "the question about a day's delete leaves out the notes Google changed", 'case' => 'a-day-renamed-at-google-then-deleted-here-asks', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $out['extra']['fields'] = array_values(array_filter((array) ($out['extra']['fields'] ?? []), static fn(array $f): bool => ($f['field'] ?? '') !== 'description'));
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => '"Use series value" over a change at Google to the same field of the day goes through without a question', 'case' => 'a-day-with-its-own-title-renamed-at-google-then-given-the-series-title-asks', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => true, 'error' => null, 'answer' => ['kept' => []]] + $out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'the question about an edited day renamed with the whole event says the change was made to the day (from day)', 'case' => 'an-edited-day-renamed-with-the-whole-event-at-google-then-renamed-by-its-row-asks-from-series', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        $out['extra']['fields'][$i]['from'] = 'day';
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'Maybe on a day leaves the day Planned here', 'case' => 'a-day-made-maybe-after-the-series-renamed-at-google-keeps-the-title', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ($s1['rows'] as $id => $r) {
+                        if ((string) $r['recurrence_instance_utc'] === (string) $this->daySent['key']) {
+                            $s1['rows'][$id]['status'] = 'confirmed';
+                        }
+                    }
+                    return [$out, $s0, $this->reshape($s1)];
                 }],
         ];
     }

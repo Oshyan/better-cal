@@ -120,6 +120,10 @@ final class Interleave
     private ?array $singleSent = null;
     /** What a w-create step made, for the new-event marking check: [row id, Google id, all-day], or null. */
     private ?array $made = null;
+    /** The change to one day of a repeating event the step being checked sent (action, body, gid, master id, key, by its row), for x-choice's day reading, or null. */
+    private ?array $daySent = null;
+    /** Whether the case's account has the conflict choice on: the run's setting, or the fixed case's own `conflictChoice`. */
+    private bool $choiceOn = true;
 
     public function __construct(
         private readonly Db $db,
@@ -400,7 +404,9 @@ final class Interleave
             'w-all' => $r->pick(['title', 'title', 'description', 'location', 'url', 'tags', 'time', 'length', 'count', 'showAs']),
             'w-race' => 'title',
             'w-follow' => $r->pick(['title', 'tags', 'description', 'showAs']),
-            'w-this-g' => $r->pick(['title', 'description', 'location', 'time', 'showAs']),
+            // Since slice 2 of the conflict choice also a link, Planned or Maybe (`status`, sent as the relationship) and "Use
+            // series value" on an edited day (`useSeries`): every field the comparison reads, and every kind of change to a day.
+            'w-this-g' => $r->pick(['title', 'description', 'location', 'time', 'showAs', 'url', 'status', 'useSeries']),
             'w-this-l' => $r->pick(['tags', 'tags', 'people', 'reminders', 'icon', 'coords']),
             'w-this-m' => $r->pick(['title+tags', 'description+reminders', 'location+coords']),
             // Since 1.5.8 transparency is a shown field (r-free); guestsCanModify stands in its place among the fields only Google holds.
@@ -418,6 +424,19 @@ final class Interleave
         if ($what !== null) {
             $step['what'] = $what;
         }
+        // A change to one day (google-conflict-choice.md, Slice 2), from the pick alone so no draw after it moves: `onRemote`,
+        // the day a change at Google not yet read touched, when there is one (else the day the pick names), so a change at
+        // Google to this day's own record is reached as often as one to another day; `byRow`, an edited day sent to its own
+        // row as the app sends it (else to the repeating event with the day's key). And a day's record changed at Google
+        // (r-exc+) has its time moved too (`moved`) in a third of the draws. A fixed case names each or has none of them.
+        $mil = (int) round($step['pick'] * 1000);
+        if (in_array($do, ['w-this-g', 'w-this-m', 'w-del1'], true)) {
+            $step['onRemote'] = $mil % 2 === 0;
+            $step['byRow'] = intdiv($mil, 2) % 2 === 0;
+        }
+        if ($do === 'r-exc+') {
+            $step['moved'] = $mil % 3 === 0;
+        }
         return $step;
     }
 
@@ -433,7 +452,13 @@ final class Interleave
         $this->entryStates = [];
         $this->etagOnly = [];
         $this->singles = $this->served = [];
-        $this->single = $this->lastSingle = $this->singleSent = $this->made = null;
+        $this->single = $this->lastSingle = $this->singleSent = $this->made = $this->daySent = null;
+        // A fixed case may name the setting for its account (`conflictChoice`), so a case written for the 1.5.6 refusal
+        // keeps showing it whatever the run's setting.
+        $this->choiceOn = (bool) ($spec['conflictChoice'] ?? Product::$conflictChoice);
+        if (array_key_exists('conflictChoice', $spec)) {
+            \conflictChoice($this->db, $this->userId, $this->choiceOn);
+        }
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
         $this->step = 0;
         $req = count($this->stand->fake->requests);
@@ -1028,6 +1053,7 @@ final class Interleave
     private function runStep(array $step): void
     {
         $do = $step['do'];
+        $this->daySent = null;
         $s0 = $this->snap();
         $knobs = $this->stand->knobs;
         $knobs->writes = $knobs->taken = 0;
@@ -1153,6 +1179,37 @@ final class Interleave
         $dates = array_keys($days);
         $date = $dates[min(count($dates) - 1, (int) floor($pick * count($dates)))];
         return [$days[$date], $date];
+    }
+
+    /** The day of a master that the latest change at Google not yet read touched by its key, while the rows here show it: [key, date], or null. */
+    private function remoteDay(array $master): ?array
+    {
+        $gid = (string) $master['google_event_id'];
+        $skips = Recurrence::decodeExdates($master['exdates_json'] ?? null);
+        $dates = array_flip(self::days($master, 200));
+        foreach (array_reverse($this->touches) as $t) {
+            if (!empty($t['remote']) && empty($t['polled']) && $t['gid'] === $gid && ($t['key'] ?? null) !== null) {
+                $k = (string) $t['key'];
+                return isset($dates[$k]) && !in_array($k, $skips, true) ? [$k, $dates[$k]] : null;
+            }
+        }
+        return null;
+    }
+
+    /** An edited day of a master that owns a field the comparison reads, and that field, by the pick: [[key, date], field], or null. */
+    private function ownedDay(array $master, float $pick): ?array
+    {
+        $dates = array_flip(self::days($master, 200));
+        $found = [];
+        foreach ($this->rows() as $r) {
+            if ((int) ($r['recurrence_parent_id'] ?? 0) !== (int) $master['id'] || !isset($dates[(string) $r['recurrence_instance_utc']])) {
+                continue;
+            }
+            foreach (array_intersect(['title', 'description', 'location', 'url', 'status', 'showAs'], $r['own']) as $f) {
+                $found[] = [[(string) $r['recurrence_instance_utc'], $dates[(string) $r['recurrence_instance_utc']]], $f];
+            }
+        }
+        return $found === [] ? null : $found[min(count($found) - 1, (int) floor($pick * count($found)))];
     }
 
     private static function instanceArg(array $master, string $key): string
@@ -1281,44 +1338,75 @@ final class Interleave
         $what = (string) ($step['what'] ?? 'title');
         if ($do === 'w-useseries' || in_array($do, ['w-this-g', 'w-this-l', 'w-this-m', 'w-del1'], true)) {
             $occ = isset($step['onMark']) ? $this->markedOccurrence($master, (string) $step['onMark']) : $this->occurrenceOf($master, fmod($step['pick'] * 7.0, 1.0));
-            if ($do === 'w-useseries') {
-                if ($occ === null) {
-                    return ['skip' => true];
-                }
-                [$key, $date] = $occ;
-                $this->lastAsked = ['kind' => 'this', 'gid' => $gid, 'key' => $key, 'fields' => [$what => true], 'days' => [$date], 'local' => false];
-                $this->events->patch($this->userId, $mid, ['scope' => 'this', 'instanceStart' => self::instanceArg($master, $key), 'useSeries' => [$what]]);
-                $this->events->throwDeferred();
-                return ['asked' => $this->lastAsked];
+            if (!isset($step['onMark']) && !empty($step['onRemote'])) {
+                $occ = $this->remoteDay($master) ?? $occ;
+            }
+            $useSeries = $do === 'w-useseries' ? $what : null;
+            if ($do === 'w-this-g' && $what === 'useSeries') {
+                // "Use series value" on an edited day that owns a field the comparison reads: the day and the field by the pick.
+                [$occ, $useSeries] = $this->ownedDay($master, $step['pick']) ?? [null, null];
             }
             if ($occ === null) {
                 return ['skip' => true];
             }
             [$key, $date] = $occ;
             $inst = self::instanceArg($master, $key);
+            // An edited day is sent to its own row in the share `byRow` names (the app's request for one), else to the
+            // repeating event with the day's key; an ordinary day always to the repeating event.
+            $row = null;
+            foreach ($rows as $rid => $r) {
+                if ((int) ($r['recurrence_parent_id'] ?? 0) === $mid && (string) $r['recurrence_instance_utc'] === (string) $key) {
+                    $row = $rid;
+                }
+            }
+            $byRow = !empty($step['byRow']) && $row !== null && $do !== 'w-this-l';
+            $target = $byRow ? $row : $mid;
+            $scope = $byRow ? [] : ['scope' => 'this', 'instanceStart' => $inst];
+            if ($useSeries !== null) {
+                $this->lastAsked = ['kind' => 'this', 'gid' => $gid, 'key' => $key, 'fields' => [$useSeries => true], 'days' => [$date], 'local' => in_array($useSeries, self::LOCAL, true)];
+                $this->daySent = ['action' => 'useSeries', 'body' => ['useSeries' => [$useSeries]], 'gid' => $gid, 'mid' => $mid, 'key' => $key, 'byRow' => $byRow];
+                $this->events->patch($this->userId, $target, $scope + ['useSeries' => [$useSeries]]);
+                $this->events->throwDeferred();
+                return ['asked' => $this->lastAsked, 'answer' => $this->events->keptAnswer($this->userId)];
+            }
             if ($do === 'w-del1') {
                 $this->lastAsked = ['kind' => 'del1', 'gid' => $gid, 'key' => $key, 'fields' => [], 'days' => [$date]];
-                $this->events->deleteEvent($this->userId, $mid, 'this', $inst);
+                $this->daySent = ['action' => 'delete', 'body' => [], 'gid' => $gid, 'mid' => $mid, 'key' => $key, 'byRow' => $byRow];
+                $this->events->deleteEvent($this->userId, $target, $byRow ? null : 'this', $byRow ? null : $inst);
                 $this->events->throwDeferred();
                 return ['asked' => $this->lastAsked];
             }
+            if ($what === 'status') {
+                // Planned or Maybe on the day: the other of what the day shows, as the relationship endpoint takes it.
+                $shown = (string) ($row !== null ? $rows[$row]['status'] : $master['status']);
+                $rel = $shown === 'tentative' ? 'planned' : 'maybe';
+                $this->lastAsked = ['kind' => 'this', 'gid' => $gid, 'key' => $key, 'fields' => ['status' => true], 'days' => [$date], 'local' => false];
+                $this->daySent = ['action' => 'relationship', 'body' => ['relationship' => $rel], 'gid' => $gid, 'mid' => $mid, 'key' => $key, 'byRow' => $byRow];
+                $this->events->setRelationship($this->userId, $target, $rel, $byRow ? null : 'this', $byRow ? null : $inst);
+                $this->events->throwDeferred();
+                return ['asked' => $this->lastAsked, 'answer' => $this->events->keptAnswer($this->userId)];
+            }
             if ($what === 'time') {
-                if ((int) $master['all_day'] === 1) {
-                    return ['skip' => true];
-                }
-                $z = Clock::zone((string) $master['tzid']);
-                $start = Clock::parse($key);
                 $len = Clock::parse((string) $master['end_utc'])->getTimestamp() - Clock::parse((string) $master['start_utc'])->getTimestamp();
-                $shift = (int) Clock::local($key, (string) $master['tzid'])->format('G') >= 20 ? -3600 : 3600;
-                $in = ['start' => Clock::iso(Clock::plus($start, $shift)->setTimezone($z)), 'end' => Clock::iso(Clock::plus($start, $shift + $len)->setTimezone($z)), 'tzid' => $master['tzid'], 'allDay' => false];
+                if ((int) $master['all_day'] === 1) {
+                    // An all-day day dragged to the next date, its length kept.
+                    $d = Days::ofDate(substr((string) $key, 0, 10)) + 1;
+                    $in = ['start' => Days::date($d), 'end' => Days::date($d + intdiv($len, 86400)), 'tzid' => 'UTC', 'allDay' => true];
+                } else {
+                    $z = Clock::zone((string) $master['tzid']);
+                    $start = Clock::parse($key);
+                    $shift = (int) Clock::local($key, (string) $master['tzid'])->format('G') >= 20 ? -3600 : 3600;
+                    $in = ['start' => Clock::iso(Clock::plus($start, $shift)->setTimezone($z)), 'end' => Clock::iso(Clock::plus($start, $shift + $len)->setTimezone($z)), 'tzid' => $master['tzid'], 'allDay' => false];
+                }
                 $fields = ['time' => true];
             } else {
                 [$in, $fields] = $this->values($what, $master);
             }
             $this->lastAsked = ['kind' => 'this', 'gid' => $gid, 'key' => $key, 'fields' => $fields, 'days' => [$date], 'local' => array_diff(array_keys($fields), self::LOCAL) === []];
-            $this->events->patch($this->userId, $mid, $in + ['scope' => 'this', 'instanceStart' => $inst]);
+            $this->daySent = ['action' => 'patch', 'body' => $in, 'gid' => $gid, 'mid' => $mid, 'key' => $key, 'byRow' => $byRow];
+            $this->events->patch($this->userId, $byRow ? $target : $mid, $in + ($do === 'w-this-l' ? ['scope' => 'this', 'instanceStart' => $inst] : $scope));
             $this->events->throwDeferred();
-            return ['asked' => $this->lastAsked];
+            return ['asked' => $this->lastAsked, 'answer' => $this->lastAsked['local'] ? [] : $this->events->keptAnswer($this->userId)];
         }
         // A change from the series' first day (all events), or a split from a later one.
         $first = $this->occurrenceOf($master, 0.0);
@@ -1885,6 +1973,14 @@ final class Interleave
                 break;
             case 'r-exc+':
                 [$target, $body, $touched] = $instance === null ? $none : [$instance, ['summary' => "Sample remote day $n", 'description' => "Sample remote notes $n"], [$touch('title', $occ[0]), $touch('description', $occ[0])]];
+                if ($instance !== null && !empty($step['moved'])) {
+                    // The day's own time moved too, two hours later (a day later for an all-day series), its length kept.
+                    $len = (new \DateTimeImmutable((string) ($g['end']['dateTime'] ?? $g['end']['date'])))->getTimestamp() - (new \DateTimeImmutable((string) ($g['start']['dateTime'] ?? $g['start']['date'])))->getTimestamp();
+                    $at = Clock::parse((string) $occ[0])->getTimestamp() + ($allDay ? 86400 : 7200);
+                    $body += $allDay ? ['start' => ['date' => gmdate('Y-m-d', $at)], 'end' => ['date' => gmdate('Y-m-d', $at + $len)]]
+                        : ['start' => ['dateTime' => self::inZone($at, $tz), 'timeZone' => $tz], 'end' => ['dateTime' => self::inZone($at + $len, $tz), 'timeZone' => $tz]];
+                    $touched[] = $touch('time', $occ[0]);
+                }
                 break;
             case 'r-exc-':
                 [$target, $body, $touched] = $none;
@@ -2576,8 +2672,13 @@ final class Interleave
         }
         // With the conflict choice on, a change or delete of an event in no series is x-choice's to judge (below); with it
         // off, it is refused here as any other write (google-conflict-choice.md, (e): "Off: ... every path is the 1.5.6 code").
-        $choice = Product::$conflictChoice && in_array($asked['kind'], ['single', 'single-del'], true);
-        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !$changedNothing && !($removal && ($s0['g']['digest'][$gid] ?? null) === null) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !$choice && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
+        $choice = $this->choiceOn && in_array($asked['kind'], ['single', 'single-del'], true);
+        // With it on, a change or delete of one day of a repeating event over a change at Google not yet read is x-choice's
+        // too, read as that day (google-conflict-choice.md, Slice 2); with it off, the 1.5.6 refusal below ("every day path
+        // is the code it was").
+        $dayChoice = $this->choiceOn && $this->daySent !== null && $kind === 'w-' && in_array($asked['kind'], ['this', 'del1'], true) && empty($asked['local'])
+            && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !$changedNothing && !$onPending && $failure === null;
+        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !$changedNothing && !($removal && ($s0['g']['digest'][$gid] ?? null) === null) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !$choice && !$dayChoice && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
             $this->ran('x-conflict', $do);
             // What protects the change made at Google is the refusal, whatever its reason: google_conflict, google_deleted for
             // a series deleted there (rule 8), or one decided here before Google is asked (stale_undo, invalid_recurrence_instance).
@@ -2611,6 +2712,10 @@ final class Interleave
             $this->checkChoice($do, $out, $s0, $s1, $context);
         }
         $this->singleSent = null;
+        // x-choice for one day of a repeating event: whether the step stored the read (a question, or a day no longer one).
+        $dayStored = $dayChoice && $this->checkDayChoice($do, $out, $s0, $s1, $context);
+        $daySent = $this->daySent;
+        $this->daySent = null;
 
         // x-pending: what a failure leaves.
         if ($failure !== null) {
@@ -2630,7 +2735,7 @@ final class Interleave
         // x-honest: a refusal with no pending change leaves both sides as they were; a write that changed something leaves an entry.
         // The conflict choice's question stores what it read from Google (google-conflict-choice.md, case 3: "the read is
         // stored"): x-choice judges what it leaves.
-        if ($isWrite && !$out['ok'] && $failure === null && !isset($out['extra']['pending']) && !in_array($do, ['finish', 'putback'], true) && !($choice && $error === 'google_changed')) {
+        if ($isWrite && !$out['ok'] && $failure === null && !isset($out['extra']['pending']) && !in_array($do, ['finish', 'putback'], true) && !($choice && $error === 'google_changed') && !$dayStored) {
             $this->ran('x-honest', 'refusal');
             $this->expect('x-honest', self::sameHere($s0, $s1) && $s0['g']['digest'] == $s1['g']['digest'], "step {$this->step} ($do): a refusal ($error) changes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
         }
@@ -2659,6 +2764,10 @@ final class Interleave
         // The conflict choice reads the event first and stores what it read, as a poll does, whether the change then goes
         // through or asks (google-conflict-choice.md, (e), the step): the event here is Google's again.
         $readBack = $readBack || ($choice && ($out['ok'] || $error === 'google_changed'));
+        // So does the choice for a day: the repeating event is read whole and stored (Slice 2, (e)).
+        // A repeating event deleted at Google is not that: a day's delete completes "as today" and nothing says the deletion
+        // is stored, so the series stays changed at Google since the last poll.
+        $readBack = $readBack || ($dayChoice && ($out['ok'] || $dayStored) && ($s0['g']['digest'][$gid] ?? null) !== null);
         if ($readBack) {
             $series = $do === 'finish' ? array_keys($this->recovered['gids'] ?? []) : [$gid];
             foreach (array_filter($series, static fn($g): bool => $g !== null) as $g) {
@@ -2683,7 +2792,8 @@ final class Interleave
             // Google Calendar), so the change's own entry starts from the rows with that read stored: a field Google changed
             // is the change's only where the change set it to something else. The store's entry (a source of Google's) is
             // never undone by a step here.
-            $read = $choice && $gid !== null ? $this->withReadStored($s0, (string) $gid) : null;
+            $read = $choice && $gid !== null ? $this->withReadStored($s0, (string) $gid)
+                : ($dayChoice && $out['ok'] && $daySent !== null && ($s0['g']['digest'][$gid] ?? null) !== null ? $this->dayReadStored($s0, $s1, $daySent) : null);
             $sources = [];
             if ($read !== null) {
                 [$in, $params] = Db::in($entries);
@@ -3032,6 +3142,341 @@ final class Interleave
         $others = static fn(array $l): array => array_diff_key($l, [$id => 1]);
         $this->expect('x-choice', $others($s0['l']) == $others($s1['l']), "step {$this->step} ($do): a change to one event changes no other row here", $context + ['diff' => self::diff($others($s0['l']), $others($s1['l']))]);
         $this->expect('x-choice', array_diff_key($s0['g']['digest'], [$gid => 1]) == array_diff_key($s1['g']['digest'], [$gid => 1]), "step {$this->step} ($do): a change to one event changes nothing else at Google", $context);
+    }
+
+    // ---- one day of a repeating event (google-conflict-choice.md, Slice 2), by the harness's own reading ------------------
+
+    /** The fields a day shows, raw as the rows store them, from a digest (gstate's or ldigest's): its record at the key, else the series' values there; null when the key is skipped. */
+    private static function dayRaw(array $digest, string $key): ?array
+    {
+        if (in_array($key, $digest['skips'], true)) {
+            return null;
+        }
+        $rec = $digest['records'][$key] ?? null;
+        if ($rec !== null) {
+            return ['title' => $rec[0], 'start' => $rec[1], 'end' => $rec[2], 'status' => $rec[3], 'allDay' => (int) $rec[4], 'description' => $rec[5], 'location' => $rec[6], 'url' => $rec[7], 'showAs' => $rec[8]];
+        }
+        return self::seriesRawAt($digest, $key);
+    }
+
+    /** The repeating event's own values at a day (RFC 5545 3.8.5.3: the key its start, the series' length from it), from a digest. */
+    private static function seriesRawAt(array $digest, string $key): array
+    {
+        $len = self::instantOf((string) $digest['end']) - self::instantOf((string) $digest['start']);
+        return ['title' => (string) $digest['title'], 'description' => (string) $digest['description'], 'location' => (string) $digest['location'], 'url' => (string) $digest['url'],
+            'status' => (string) $digest['status'], 'showAs' => (string) $digest['showAs'], 'start' => $key, 'end' => gmdate('Y-m-d H:i:s', self::instantOf($key) + $len), 'allDay' => (int) $digest['allDay']];
+    }
+
+    /** A day's raw fields as the comparison reads them, by the page's equalities (rowSix's). */
+    private static function rawSix(array $raw): array
+    {
+        return ['title' => self::titleOf($raw['title']), 'description' => trim((string) $raw['description']), 'location' => trim((string) $raw['location']), 'url' => trim((string) $raw['url']),
+            'status' => (string) $raw['status'] === 'tentative', 'showAs' => (string) $raw['showAs'] === 'free',
+            'time' => [self::instantOf((string) $raw['start']), self::instantOf((string) $raw['end']), (int) $raw['allDay'] === 1]];
+    }
+
+    /**
+     * What the person was shown of a day, read as the page says with no `over` (Slice 2, (b): "the day read as the series
+     * state reads it: an edited day's own fields from its row, a field it does not own from the repeating event's row, and
+     * an ordinary day the stored repeating event at that day (its fields, the day's start, the event's length)"). The time
+     * is the row's when the day owns any part of it (series-model.md, Own Fields: date, time, length, allDay).
+     */
+    private static function dayBase(array $rows, int $mid, string $key): array
+    {
+        $m = $rows[$mid];
+        $series = self::seriesRawAt(['title' => $m['title'], 'description' => $m['description'], 'location' => $m['location'], 'url' => $m['url'], 'status' => $m['status'],
+            'showAs' => $m['show_as'] ?? 'busy', 'start' => $m['start_utc'], 'end' => $m['end_utc'], 'allDay' => $m['all_day']], $key);
+        foreach ($rows as $r) {
+            if ((int) ($r['recurrence_parent_id'] ?? 0) !== $mid || (string) $r['recurrence_instance_utc'] !== $key) {
+                continue;
+            }
+            foreach (['title', 'description', 'location', 'url', 'status'] as $f) {
+                if (in_array($f, $r['own'], true)) {
+                    $series[$f] = (string) $r[$f];
+                }
+            }
+            if (in_array('showAs', $r['own'], true)) {
+                $series['showAs'] = (string) ($r['show_as'] ?? 'busy');
+            }
+            if (array_intersect(['date', 'time', 'length', 'allDay'], $r['own']) !== []) {
+                $series = ['start' => $r['start_utc'], 'end' => $r['end_utc'], 'allDay' => (int) $r['all_day']] + $series;
+            }
+        }
+        return $series;
+    }
+
+    /** The day row of a master at a key in a set of rows, or null. */
+    private static function dayRow(array $rows, int $mid, string $key): ?array
+    {
+        foreach ($rows as $r) {
+            if ((int) ($r['recurrence_parent_id'] ?? 0) === $mid && (string) $r['recurrence_instance_utc'] === $key) {
+                return $r;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The case's rows by identity as the day's read leaves them before the change is applied, for the change's own entry:
+     * the rows after the step (the store and the write; the write touches the day alone), with the day as the store left
+     * it: its fields Google's, the rest as it was before the step (its own list, tags and what is held here), or no row
+     * where neither it nor Google's record of it existed; a delete's skip taken off. The harness's own construction, as
+     * withReadStored is for one event.
+     */
+    private function dayReadStored(array $s0, array $s1, array $sent): array
+    {
+        $gid = (string) $sent['gid'];
+        $key = (string) $sent['key'];
+        $ident = "day:$gid:$key";
+        $before = $this->byIdentity($s1['rows']);
+        $was = $this->byIdentity($s0['rows']);
+        $g0 = $s0['g']['digest'][$gid] ?? null;
+        $raw = $g0 === null ? null : self::dayRaw($g0, $key);
+        $google = $raw === null ? [] : array_intersect_key($raw, array_flip(['title', 'description', 'location', 'url', 'status', 'showAs', 'start', 'end', 'allDay']));
+        if ($sent['action'] === 'delete' && isset($before["series:$gid"])) {
+            $before["series:$gid"]['skips'] = array_values(array_diff($before["series:$gid"]['skips'], [$key]));
+        }
+        if (isset($was[$ident])) {
+            $before[$ident] = $google + $was[$ident];
+        } elseif ($g0 !== null && isset($g0['records'][$key]) && isset($before[$ident])) {
+            $before[$ident] = $google + $before[$ident];
+        } else {
+            unset($before[$ident]);
+        }
+        ksort($before);
+        return $before;
+    }
+
+    /**
+     * x-choice for one day of a repeating event (google-conflict-choice.md, Slice 2; api-contract.md, "One day of a
+     * repeating event"), the conflict choice on, over a change at Google not yet read. The harness sends no `over` for a
+     * day, so what the person was shown is the day as stored (dayBase); what Google holds is the day's record in the
+     * stand-in, else the repeating event's values there (Slice 2, (c)); what the change sets is the request. Each field's
+     * outcome is the slice 1 comparison: not set, the same or kept; set, sent or asked. Then: the repeating event gone at
+     * Google, an edit google_deleted and a delete completed; the day no longer one of the repeating event's days after the
+     * read (skipped at Google, or neither a record of Google's nor a day of its rule), an edit google_conflict and a delete
+     * completed, nothing sent, the read stored; asked anywhere, 409 google_changed naming exactly the asked fields (was, now,
+     * yours, from) and `day`, the read stored, nothing of the request written and nothing sent; else the change goes
+     * through, the day holding each sent field's value and Google's for the rest, here and at Google, `kept` naming exactly
+     * this day's other changed fields, every other day as Google holds it. Returns whether the step stored the read and
+     * refused (a question, or a day no longer one).
+     */
+    private function checkDayChoice(string $do, array $out, array $s0, array $s1, array $context): bool
+    {
+        $sent = (array) $this->daySent;
+        $gid = (string) $sent['gid'];
+        $mid = (int) $sent['mid'];
+        $key = (string) $sent['key'];
+        $action = (string) $sent['action'];
+        $body = (array) $sent['body'];
+        $error = $out['ok'] ? null : (string) $out['error'];
+        $g0 = $s0['g']['digest'][$gid] ?? null;
+        $g1 = $s1['g']['digest'][$gid] ?? null;
+        $l0 = $this->ldigest($s0['rows'])[$gid] ?? null;
+        $l1 = $this->ldigest($s1['rows'])[$gid] ?? null;
+        $app = array_values(array_filter(array_slice($this->stand->fake->requests, $s0['req'], $s1['req'] - $s0['req']), static fn(array $q): bool => !in_array('X-Harness: remote', $q['headers'], true)));
+        $reads = count(array_filter($app, static fn(array $q): bool => $q['method'] === 'GET'));
+        $taken = $this->takenBetween($s0, $s1);
+        $kindOf = ($action === 'delete' ? 'delete' : ($action === 'relationship' ? 'Planned or Maybe' : ($action === 'useSeries' ? 'Use series value' : (isset($body['start']) ? 'drag' : 'edit'))))
+            . (self::dayRow($s0['rows'], $mid, $key) !== null ? ' of an edited day' . (!empty($sent['byRow']) ? ' by its row' : '') : ' of an ordinary day');
+        $context += ['day' => $key, 'action' => $kindOf];
+        if (!isset($s0['rows'][$mid]) || $l0 === null) {
+            return false;
+        }
+        // The repeating event deleted at Google (the unlikely list: "an edit of a day gets the google_deleted sentence it
+        // gets today; a delete of a day completes, as today").
+        if ($g0 === null) {
+            $this->ran('x-choice', "day: the repeating event deleted at Google, $kindOf");
+            $this->expect('x-choice', $action === 'delete' ? $out['ok'] : $error === 'google_deleted',
+                "step {$this->step} ($do): " . ($action === 'delete' ? 'a delete of a day of a repeating event deleted at Google completes' : 'a change to a day of a repeating event deleted at Google is refused google_deleted'), $context);
+            $this->expect('x-choice', $taken === [], "step {$this->step} ($do): nothing is sent for a day of a repeating event deleted at Google", $context + ['writes' => self::brief($taken)]);
+            return false;
+        }
+        // Still a day after the read (Slice 2, (d): "the day has a row, or the stored rule gives that day and no skip takes
+        // it"): a live record of Google's at the key, or a day of Google's rule that Google does not skip.
+        $gm = $g0['rule'];
+        $rule = 'FREQ=' . ($gm['FREQ'] ?? '') . implode('', array_map(static fn(string $k, string $v): string => ";$k=$v", array_keys(array_diff_key($gm, ['FREQ' => 1])), array_diff_key($gm, ['FREQ' => 1])));
+        $gRaw = self::dayRaw($g0, $key);
+        $isDay = $gRaw !== null && (isset($g0['records'][$key])
+            || Truth::isOccurrence(['start_utc' => $g0['start'], 'end_utc' => $g0['end'], 'rrule' => $rule, 'tzid' => $g0['zone'] ?? 'UTC', 'all_day' => $g0['allDay']], $key));
+        if (!$isDay) {
+            $this->ran('x-choice', "day: no longer a day of the repeating event, $kindOf");
+            $this->expect('x-choice', $action === 'delete' ? $out['ok'] : $error === 'google_conflict',
+                "step {$this->step} ($do): " . ($action === 'delete' ? 'a delete of a day no longer one of the repeating event once the read is stored completes' : 'a change to a day no longer one of the repeating event once the read is stored is refused google_conflict'),
+                $context + ['google' => $gRaw === null ? 'skipped' : 'not a day of the rule']);
+            $this->expect('x-choice', $taken === [], "step {$this->step} ($do): nothing is sent for a day no longer one of the repeating event", $context + ['writes' => self::brief($taken)]);
+            $this->expect('x-choice', $l1 == $g0, "step {$this->step} ($do): the read of the repeating event is stored when the day is no longer one of its days", $context + ['diff' => self::digestDiff((array) $g0, (array) $l1)]);
+            return !$out['ok'];
+        }
+        $B = self::rawSix(self::dayBase($s0['rows'], $mid, $key));
+        $shown = self::rawSix((array) self::dayRaw($l0, $key));
+        if ($shown !== $B) {
+            // The rows show the day otherwise than its own list reads it: the base is the page's reading; counted, so a run
+            // shows how often the two differ.
+            $this->ran('x-choice', 'day: the row shows a field it does not own otherwise than its series');
+        }
+        $G = self::rawSix($gRaw);
+        $mG = self::rawSix(self::seriesRawAt($g0, $key));
+        $m0 = self::rawSix(self::seriesRawAt($l0, $key));
+        // What the change sets, where it differs from what was shown ("a field sent at its base value is not wanted").
+        $W = [];
+        if ($action !== 'delete') {
+            foreach (['title', 'description', 'location', 'url', 'showAs'] as $f) {
+                if (array_key_exists($f, $body)) {
+                    $W[$f] = self::servedValue($f, $body[$f]);
+                }
+            }
+            if ($action === 'relationship') {
+                $W['status'] = ($body['relationship'] ?? '') === 'maybe';
+            }
+            if (isset($body['start'])) {
+                $W['time'] = self::timeOf(self::allDayRead(array_intersect_key($body, array_flip(self::TIME_KEYS))));
+            }
+            if ($action === 'useSeries') {
+                // "What is sent after the read is the repeating event's value as stored then" (case 12).
+                $f = (string) $body['useSeries'][0];
+                $W[$f] = $mG[$f];
+            }
+            $W = array_filter($W, static fn($v, string $f): bool => $v !== $B[$f], ARRAY_FILTER_USE_BOTH);
+            if ($W === []) {
+                $this->ran('x-choice', "day: nothing the change sets differs from what was shown, $kindOf (not judged)");
+                return false;
+            }
+        }
+        $outcome = [];
+        foreach (self::CHOICE_FIELDS as $f) {
+            $wanted = $action === 'delete' || array_key_exists($f, $W);
+            $outcome[$f] = !$wanted ? ($G[$f] === $B[$f] ? 'same' : 'kept')
+                : ($G[$f] === $B[$f] || ($action !== 'delete' && $G[$f] === $W[$f]) ? 'send' : 'ask');
+        }
+        $asks = array_keys(array_filter($outcome, static fn(string $o): bool => $o === 'ask'));
+        $kept = array_keys(array_filter($outcome, static fn(string $o): bool => $o === 'kept'));
+        sort($asks);
+        sort($kept);
+        // Where the change at Google was, for the tally: the repeating event's own fields, this day, another day.
+        $seriesPart = static fn(array $d): array => array_diff_key($d, ['records' => 1, 'skips' => 1]);
+        $others = static fn(array $d): array => [array_diff_key($d['records'], [$key => 1]), array_values(array_diff($d['skips'], [$key]))];
+        $where = array_keys(array_filter(['the whole event' => $seriesPart($l0) != $seriesPart($g0), 'this day' => $G !== $B, 'another day' => $others($l0) != $others($g0)]));
+        $from = [];
+        foreach ($asks as $f) {
+            // Slice 2, (f): series when the repeating event's own value at that day changed with this read and the day
+            // shows that new value; day otherwise.
+            $from[$f] = $mG[$f] !== $m0[$f] && $G[$f] === $mG[$f] ? 'series' : 'day';
+        }
+        $context += ['outcomes' => $outcome, 'where' => $where];
+        $this->ran('x-choice', "day: $kindOf over a change to " . ($where === [] ? 'nothing it shows' : implode(' and ', $where)) . ': ' . ($asks !== [] ? 'asks (from ' . implode(', ', array_unique($from)) . ')' : ($kept !== [] ? 'keeps' : 'sends')));
+        if ($asks === [] && !empty($sent['byRow']) && self::dayRow($s1['rows'], $mid, $key) === null && $action !== 'delete') {
+            // Slice 2, the unlikely list: "An edited day whose row is gone once the read is stored, with nothing to ask (its
+            // record went back to the repeating event's values in a way the comparison does not see): today's refusal
+            // (google_conflict, CONFLICT_MESSAGE), the read stored." The request names the row, which the store took away;
+            // only a day Google holds at the repeating event's own values loses it.
+            $this->ran('x-choice', "day: an edited day's row gone with the stored read, $kindOf");
+            $this->expect('x-choice', !isset($g0['records'][$key]), "step {$this->step} ($do): an edited day's row goes with the stored read only where Google holds the day at the repeating event's values", $context + ['google' => $gRaw]);
+            $this->expect('x-choice', $error === 'google_conflict', "step {$this->step} ($do): a change sent to an edited day's row that the stored read took away is refused google_conflict", $context);
+            $this->expect('x-choice', $taken === [] && $l1 == $g0, "step {$this->step} ($do): that refusal sends nothing and leaves the read stored", $context + ['writes' => self::brief($taken), 'diff' => self::digestDiff((array) $g0, (array) $l1)]);
+            return !$out['ok'];
+        }
+        $budget = $context + ['reads' => $reads, 'writes' => count($taken), 'requests' => array_map(static fn(array $q): string => $q['method'] . ' ' . rawurldecode(basename((string) $q['path'])), $app)];
+        $this->expect('x-choice', $reads >= 1, "step {$this->step} ($do): a change to a day reads the repeating event from Google first", $budget);
+        $toSend = $action === 'delete' || array_filter($W, static fn($v, string $f): bool => $G[$f] !== $v, ARRAY_FILTER_USE_BOTH) !== [];
+        $this->expect('x-choice', $asks !== [] ? $taken === [] : ($toSend ? count($taken) === 1 : count($taken) <= 1),
+            "step {$this->step} ($do): " . ($asks !== [] ? 'a change to a day that asks sends Google nothing' : 'a change to a day that goes through makes one write' . ($toSend ? '' : ' at most (nothing left to send)')), $budget);
+        $told = static function (array $list): array {
+            $o = [];
+            foreach ($list as $item) {
+                $o[(string) ($item['field'] ?? '')] = $item;
+            }
+            ksort($o);
+            return $o;
+        };
+        $keptRight = function (array $list, string $where) use ($kept, $G, $told, $context): void {
+            $byField = $told($list);
+            $this->expect('x-choice', array_keys($byField) == $kept, "step {$this->step}: $where names exactly this day's fields Google changed that the change did not set (kept)", $context + ['kept' => $list]);
+            foreach (array_intersect_key($byField, array_flip($kept)) as $f => $item) {
+                $this->expect('x-choice', self::servedValue($f, $item['now'] ?? null) === $G[$f], "step {$this->step}: $where gives a kept field of the day as Google holds it", $context + ['field' => $f, 'now' => $item['now'] ?? null]);
+            }
+        };
+        $ownTag = isset($body['tagNames']) ? (string) end($body['tagNames']) : null;
+        if ($asks !== []) {
+            $this->expect('x-choice', $error === 'google_changed', "step {$this->step} ($do): a change to a field of the day that Google changed to something else since it was shown asks: 409 google_changed", $context + ['asks' => $asks]);
+            if ($error === 'google_changed') {
+                $byField = $told((array) ($out['extra']['fields'] ?? []));
+                $this->expect('x-choice', array_keys($byField) == $asks, "step {$this->step} ($do): the question about a day names exactly the fields asked about", $context + ['fields' => $out['extra']['fields'] ?? null]);
+                foreach (array_intersect_key($byField, array_flip($asks)) as $f => $item) {
+                    $this->expect('x-choice', self::servedValue($f, $item['was'] ?? null) === $B[$f] && self::servedValue($f, $item['now'] ?? null) === $G[$f],
+                        "step {$this->step} ($do): the question gives each field of the day as shown (was) and at Google now (now)", $context + ['field' => $f, 'told' => $item, 'shown' => $B[$f], 'google' => $G[$f]]);
+                    $this->expect('x-choice', $action === 'delete' ? ($item['yours'] ?? null) === null : self::servedValue($f, $item['yours'] ?? null) === $W[$f],
+                        "step {$this->step} ($do): the question gives each field of the day as the change sets it (yours, null for a delete)", $context + ['field' => $f, 'told' => $item]);
+                    $this->expect('x-choice', ($item['from'] ?? null) === $from[$f], "step {$this->step} ($do): the question says where the change was made: series when the whole repeating event changed and the day shows it, day otherwise",
+                        $context + ['field' => $f, 'from' => $item['from'] ?? null, 'expected' => $from[$f]]);
+                }
+                $day = $out['extra']['day'] ?? null;
+                $this->expect('x-choice', is_array($day) && self::isWhole($day) && self::timeOf(self::allDayRead($day)) === $B['time'],
+                    "step {$this->step} ($do): the question names the day by its time as shown, whole (day)", $context + ['dayTold' => $day, 'shown' => $B['time']]);
+                $keptRight((array) ($out['extra']['kept'] ?? []), 'the question');
+            }
+            $this->expect('x-choice', $l1 == $g0, "step {$this->step} ($do): after the question the repeating event here is what Google holds (the read is stored)", $context + ['diff' => self::digestDiff((array) $g0, (array) $l1)]);
+            $this->expect('x-choice', $taken === [] && $s1['g'] == $s0['g'], "step {$this->step} ($do): after the question about a day Google holds what it held", $context + ['writes' => self::brief($taken)]);
+            if ($ownTag !== null) {
+                $tagged = array_filter($s1['rows'], static fn(array $r): bool => in_array($ownTag, $r['tags'], true));
+                $this->expect('x-choice', $tagged === [], "step {$this->step} ($do): nothing of the request is written here on a question, tags in the same request included", $context + ['tag' => $ownTag]);
+            }
+            return true;
+        }
+        $this->expect('x-choice', $out['ok'], "step {$this->step} ($do): a change to a day that asks about no field goes through", $context);
+        if (!$out['ok'] || $l1 === null || $g1 === null) {
+            return false;
+        }
+        if ($action === 'delete') {
+            $this->expect('x-choice', self::dayRaw($l1, $key) === null && self::dayRaw($g1, $key) === null, "step {$this->step} ($do): the delete removes the day here and at Google",
+                $context + ['here' => self::dayRaw($l1, $key), 'google' => self::dayRaw($g1, $key)]);
+        } else {
+            $E = [];
+            foreach (self::CHOICE_FIELDS as $f) {
+                $E[$f] = match ($outcome[$f]) { 'send' => $W[$f], 'kept' => $G[$f], default => $B[$f] };
+            }
+            $here = self::dayRaw($l1, $key);
+            $there = self::dayRaw($g1, $key);
+            $this->expect('x-choice', $here !== null && self::rawSix($here) === $E, "step {$this->step} ($do): here, the day holds each field sent at the change's value and the rest as Google holds them",
+                $context + ['here' => $here === null ? null : self::rawSix($here), 'expected' => $E]);
+            $this->expect('x-choice', $there !== null && self::rawSix($there) === $E, "step {$this->step} ($do): at Google, the day holds each field sent at the change's value and the rest as Google held them",
+                $context + ['google' => $there === null ? null : self::rawSix($there), 'expected' => $E]);
+            if ($ownTag !== null) {
+                $row = self::dayRow($s1['rows'], $mid, $key);
+                $want = (array) $body['tagNames'];
+                sort($want);
+                $this->expect('x-choice', $row !== null && $row['tags'] == $want, "step {$this->step} ($do): the tags in the same request are written on the day", $context + ['tags' => $row['tags'] ?? null]);
+            }
+            $answer = (array) ($out['answer'] ?? []);
+            $this->expect('x-choice', array_key_exists('kept', $answer), "step {$this->step} ($do): the answer for a day carries kept", $context + ['answer' => $answer]);
+            $keptRight((array) ($answer['kept'] ?? []), 'the answer');
+        }
+        // The write reached this day alone at Google, and every other day here shows as Google holds it (the read stored).
+        $strip = static fn(array $d): array => ['records' => array_diff_key($d['records'], [$key => 1]), 'skips' => array_values(array_diff($d['skips'], [$key]))] + $d;
+        $this->expect('x-choice', $strip($g1) == $strip($g0), "step {$this->step} ($do): a change to one day changes nothing else of the repeating event at Google", $context + ['diff' => self::digestDiff($strip($g0), $strip($g1))]);
+        $this->expect('x-choice', $l1 == $g1, "step {$this->step} ($do): after a change to one day the repeating event here is what Google holds, its other days included (the read is stored)", $context + ['diff' => self::digestDiff($g1, $l1)]);
+        return false;
+    }
+
+    /** Where two digests of a series differ, key by key (records and the rule by their own keys), for a finding's detail. */
+    private static function digestDiff(array $a, array $b): array
+    {
+        $out = [];
+        foreach (array_unique(array_merge(array_keys($a), array_keys($b))) as $k) {
+            if (($a[$k] ?? null) == ($b[$k] ?? null)) {
+                continue;
+            }
+            if (in_array($k, ['records', 'rule'], true) && is_array($a[$k] ?? null) && is_array($b[$k] ?? null)) {
+                foreach (array_unique(array_merge(array_keys($a[$k]), array_keys($b[$k]))) as $r) {
+                    if (($a[$k][$r] ?? null) != ($b[$k][$r] ?? null)) {
+                        $out[$k][$r] = [$a[$k][$r] ?? null, $b[$k][$r] ?? null];
+                    }
+                }
+                continue;
+            }
+            $out[$k] = [$a[$k] ?? null, $b[$k] ?? null];
+        }
+        return $out;
     }
 
     private function checkFailure(string $failure, array $out, array $s0, array $s1, array $asked, array $context): void

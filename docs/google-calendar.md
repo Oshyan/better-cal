@@ -6,6 +6,48 @@ Where the account may edit the calendar (Google's access role `writer` or `owner
 
 Better-Cal reads the account's access from Google at every poll and at the start of every change, from a request it makes anyway. When the calendar's owner lowers it to view only or busy times only, or stops sharing it, Better-Cal tells you once in Activity and in Review (a poll at that access is no failure of the calendar, so no "started failing" line or warning follows it), and the calendar works read-only here: changes, and undoing past changes, are refused with the reason, and nothing is sent. Better-Cal doesn't try to work around it. A change that was half done at that moment stays listed in Review, and its event takes no other change, until full editing is restored in Google Calendar or you remove the calendar. Better-Cal asks Google again at the next poll, when you choose Check again (on the Review notice, or beside the calendar's source in its settings), and when you undo a change on it or answer an invitation on it; if Google lets the account make changes again, they work at once. The Review notice can be dismissed; it comes back if the access changes again, or when something you try is refused because of it. When Google shows the account only busy times, it lists no details, so Better-Cal applies nothing it lists: the events here stay as they were and don't update until Google shows full details again, and the next poll after that catches up.
 
+## What Better-Cal Promises, and What It Doesn't
+
+The short version, as of 1.5.8. The sections below have the detail, and [the edge cases](design/google-edge-cases.md) list the rare circumstances found so far, how likely each is and what happens in each.
+
+**It promises:**
+
+- **Google Calendar first.** A change to a Google event goes to Google Calendar before anything is saved here, and the calendar shows what Google Calendar answers. If Google Calendar refuses, nothing changes here and the message says why. There's never a version of a Google event that exists only here.
+- **It reads before it writes.** Every change, undo, Finish and Put back reads the event in Google Calendar first. If the account can now only view the calendar, nothing is sent and Better-Cal says so (see the top of this page).
+- **No mail to guests.** Guest lists are never sent, and every write tells Google Calendar to send no updates. An answer to an invitation reaches the organizer only, as Google Calendar passes it on.
+- **Only what you changed is sent.** A change sends the fields it changes (title, notes, place, time, Planned or Maybe, Busy or Free, how it repeats, the link) and nothing else, so a change made in Google Calendar to another field stays. Guests, reminders and color are never sent ([What Writes Send](#what-writes-send)).
+- **What only Better-Cal holds stays.** Tags, people, reminders, your answer, an icon, a map pin you picked and trip links stay on an event, and on each day of a repeating event, whatever Google Calendar does to it. When a day goes because the repeating event no longer has it, Activity names it and what it held ([How Syncing Works](#how-syncing-works)).
+- **One event changed in Google Calendar since you saw it** (an event that doesn't repeat): a change to another field goes through and the toast names what changed there and was kept; a change to the same field asks, with both values, Cancel or Overwrite; a delete asks over any change ([When Someone Else Changes the Same Event](#when-someone-else-changes-the-same-event)).
+- **A change to all events of a repeating event shows first** what it does to each edited and deleted day, then carries those days across where Google Calendar would drop or overwrite them. It ends by reading Google Calendar back: where Google Calendar holds something other than what you asked, Activity and Review say what it holds and what was asked, with both values.
+- **A change that stops part way is not lost.** It is recorded before anything is sent. Review lists it as "Half done in Google Calendar" with Finish and Put back, and the repeating event takes no other change until one of them has run. Dismissing the notice hides it and changes nothing else.
+- **Undo** of a change to one event, or to one day of a repeating event, is a second write, sent only if the event hasn't changed in Google Calendar since.
+- **A poll never empties a calendar by accident.** A full listing with no events is not applied, and a listing of busy times only is not applied over the details held here.
+
+**It refuses, before sending anything, with a sentence saying why:**
+
+- A change to a repeating event, or to one of its days, when the repeating event changed in Google Calendar since the calendar here last read it. The message doesn't yet say what changed there.
+- A switch of a repeating event between timed and all-day at a time where Google Calendar would stop showing some of its days. It names the days and says what works: move the time first, then switch.
+- A change that would leave a repeating event only deleted days ("Delete it instead?"), since Google Calendar would delete the whole event.
+- Any change to a repeating event that has a change half done in Review.
+- Moving an event between a Google calendar and any other calendar (copy it, then delete the original).
+- Any change on a calendar the account can only view.
+
+**It drops, and says so:**
+
+- An edited day past the first 730 days of a repeating event with no end, which Google Calendar doesn't hold: left as Google Calendar has it, and named.
+- A change made in Google Calendar to a day while a half-done change waited for Finish, where Finish changes that day: replaced, or lost where the change gives the days other times, and named with the value Google Calendar held.
+- A day a poll removes that held tags, people or reminders: named in Activity.
+
+**It doesn't promise:**
+
+- **Nothing guards the seconds of its own change.** While a change to all events is being sent, the last write wins: a change made to the same repeating event in Google Calendar in those seconds may be written over. The calendar afterwards shows what Google Calendar holds.
+- **Undo of a change to all events, or to this and following,** is off for now ([#274](https://github.com/Oshyan/better-cal/issues/274)). It says so where its Undo would be.
+- **Notes go back as Better-Cal's copy.** When a change sends a day again, its notes are Better-Cal's cleaned copy, so markup made in Google Calendar (a non-breaking space, a link's attributes) can come back changed.
+- **What only Google Calendar holds on a day isn't carried.** A color or a guest set on one day in Google Calendar isn't sent again when a change makes Google Calendar drop that day's own record, and nothing says so.
+- **The days are worked out here.** Better-Cal works out a repeating event's days from its rule and doesn't compare them with Google Calendar's own list, so a fault in Google Calendar that hides days shows here as days Google Calendar doesn't show, with nothing said ([#266](https://github.com/Oshyan/better-cal/issues/266)).
+- **Same clock time in any zone** isn't something Google Calendar holds: such an event is sent at your Home zone's time.
+- **Finish and Put back after rare sequences.** A few sequences of two or three uncommon things are known to end wrongly or with an untrue sentence: Finish bringing back an event deleted in Google Calendar after the stop, for one. Each is listed in [the edge cases](design/google-edge-cases.md).
+
 ## One-time setup (the operator)
 
 Google requires each install to have its own OAuth client, so whoever runs a Better-Cal install sets one up once, in their own Google Cloud project. It takes about ten minutes.
@@ -102,7 +144,7 @@ Activity records each write ("Updated 'Team lunch' on Google calendar 'Book club
 
 ## When Someone Else Changes the Same Event
 
-Better-Cal reads Google first, before every change it makes: before a change, before Finish, before Put back and before an undo. If the event changed in Google Calendar since the calendar here last read it, the change is refused and nothing is sent, and the notice says so (it doesn't yet name what changed there: refresh to see it). A change's first write to the event also tells Google which version it was made from, and Google refuses it if that version is gone; the days of a change to all events, written right after it, go without that check. A change in Google Calendar to a field Better-Cal isn't changing is no conflict and stays as Google has it.
+Better-Cal reads Google first, before every change it makes: before a change, before Finish, before Put back and before an undo. For an event that doesn't repeat (since 1.5.7), what it read is compared with what you were shown: a change in Google Calendar to a field you aren't changing stays, and the toast names it with its value; a change to the same field stops your change, nothing is sent, and you're shown what Google Calendar holds now and what your change would make it, with Cancel or Overwrite; a delete asks over any change, with Cancel or Delete. For a repeating event, or one of its days, a change in Google Calendar since the calendar here last read it refuses the change and nothing is sent; that notice doesn't yet name what changed there (refresh to see it). A change's first write to the event also tells Google which version it was made from, and Google refuses it if that version is gone; the days of a change to all events, written right after it, go without that check. A change in Google Calendar to a field Better-Cal isn't changing is no conflict and stays as Google has it.
 
 While one of Better-Cal's own changes is being sent (a few requests, a few seconds for a change to all events of a repeating event), the last write wins: Better-Cal doesn't try to catch a change someone else makes to the same event inside that window. If someone renames a day of the series in Google Calendar in the same seconds, the change from here may write over it. What the calendar shows afterwards is what Google holds.
 

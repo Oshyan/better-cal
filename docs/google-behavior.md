@@ -2,7 +2,7 @@
 
 > **Draft, work in progress** (started 2026-11-10). Two parts of this page are not settled:
 >
-> - **What Better-Cal promises on a Google calendar.** What it will deliver, and what it explicitly won't, is being decided in [#243](https://github.com/Oshyan/better-cal/issues/243) before any more Google code is written, and other work may change it further. The two Better-Cal sections below describe 1.5.5 as shipped and should be read as a snapshot, not a promise.
+> - **What Better-Cal promises on a Google calendar.** The two Better-Cal sections below describe 1.5.8 as shipped. What it will promise from here is being decided in [#243](https://github.com/Oshyan/better-cal/issues/243), from [the edge cases](design/google-edge-cases.md), before any more Google code is written, so some of it may get smaller where a smaller promise is a surer one.
 > - **The research.** Google's issue tracker has not been searched in depth, and several outside reports here are single sources I haven't tested. [Still to Do](#still-to-do) lists what's missing.
 > - **The scope.** This page starts with Google because that's where the measurements are. The aim is wider: to show where Better-Cal improves on what's out there, including Thunderbird and CalDAV itself, which have known limits of their own. See [Beyond Google](#beyond-google). The page may be renamed or split when that's written.
 
@@ -114,32 +114,33 @@ So the common answer to Google's behavior is to accept it: send the one change, 
 
 ## What Better-Cal Does Instead
 
-> **Work in progress.** This describes 1.5.5 (2026-11-10) as shipped. What Better-Cal will promise on a Google calendar, and what it explicitly won't, is open until [#243](https://github.com/Oshyan/better-cal/issues/243) is decided, and other work may change it too. Expect this section to be rewritten, and some of it to get smaller where a smaller promise is a surer one.
+> This describes Better-Cal 1.5.8 (2026-11-16). The plain list of what it promises and what it doesn't is on [the connector's page](google-calendar.md#what-better-cal-promises-and-what-it-doesnt); the owner decides from [the edge cases](design/google-edge-cases.md) what changes next ([#243](https://github.com/Oshyan/better-cal/issues/243)).
 
 - **It tells you first.** A change to all events, or to this and following, shows what will happen to each edited and deleted day before anything is sent.
-- **It carries your edited and deleted days across.** After changing the event, Better-Cal reads back what Google holds and sends again each day that is not as you asked (dropped, overwritten, or left with its old end), one request per day. Then it reads the event again and compares it with what you asked for. I think a day changed on purpose should survive a change to the event's time, which is why it does the extra work.
-- **It reads Google before every change, and the last write wins while one is being sent.** Before a change, Finish, Put back or an undo, Better-Cal reads the event at Google, and every write carries the version tag it read, so a change made at Google since is refused and named in plain words. While one of its own changes is being sent (a few requests, a few seconds), it doesn't try to catch someone else's change to the same event: the last write wins, as with the other calendar apps this project surveyed ([the connector's page](google-calendar.md#when-someone-else-changes-the-same-event) has the detail).
-- **It records the change before sending it.** Several requests can stop partway (a lost connection, a refusal at step three). The change is written down first, and Review offers **Finish** or **Put back**.
+- **It carries your edited and deleted days across.** After its write to the event, Better-Cal reads back what Google holds and sends again every day that isn't as you asked, whatever Google did to it (dropped it, overwrote its title, cleared its notes, left its old end), once per day. It doesn't try to predict which of those Google did; it just compares. Then it reads the event once more, and where Google holds something other than what you asked, Activity and Review say what Google holds and what was asked, with both values, and never guess at why. I think a day changed on purpose should survive a change to the event's time, which is why it does the extra work.
+- **It reads Google before every change.** Before a change, Finish, Put back or an undo, Better-Cal reads the event in Google Calendar. For an event that doesn't repeat, a change made there to another field just stays (the toast says so), and a change to the same field stops yours and asks: Cancel or Overwrite, with both values shown. For a repeating event, any change made there since the last poll refuses yours, with nothing sent; that refusal doesn't yet say what changed.
+- **The last write wins while one of its own changes is being sent.** That's a few requests, a few seconds for a change to all events. It doesn't try to catch someone else's change to the same event inside that window, which is what the other calendar apps this project surveyed do too ([the connector's page](google-calendar.md#when-someone-else-changes-the-same-event) has the detail).
+- **It records the change before sending it.** Several requests can stop partway (a lost connection, a refusal at step three). The change is written down first, and Review offers **Finish** or **Put back**. Until one of them runs, the event takes no other change.
 - **A day keeps what only Better-Cal holds.** Tags, people, reminders and the rest stay on a day whatever Google does to its record.
-- **It always says "send no mail"** on its own writes, so an edit never mails a guest list by accident.
-- **It refuses what the probe showed Google refusing,** with the reason, before sending anything. A timed day inside an all-day event used to be one; measured again with the date cleared (2026-11-13, case 3.38), Google takes it, and so does Better-Cal.
+- **It always says "send no mail"** on its own writes, and never sends a guest list, so an edit never mails anyone by accident.
+- **It refuses where Google would do something you didn't ask for,** before sending anything, and says why. A switch between timed and all-day at a time where Google would stop showing some days (an event at midnight UTC with an edited or deleted day, measured 2026-11-13, cases 3.48 to 3.51 and 3.63 to 3.65) names those days and says what works: move the time first, then switch. A change that would leave only deleted days, which Google turns into deleting the whole event, asks "Delete it instead?". A timed day inside an all-day event used to be refused too; measured again with the date cleared (2026-11-13, case 3.38), Google takes it, and so does Better-Cal.
+- **It notices when your access changes.** It reads your access level from Google on every poll and every change, says once when it drops, and works read-only until editing is given back.
 - **An event that keeps the same clock time in any zone** is sent to Google pinned to your Home zone, and keeps the setting here.
-- **Every write can be undone,** by a second conditional write that puts back what was there, with one exception below.
+- **A change to one event, or to one day, can be undone,** by a second write that's sent only if nothing changed in Google Calendar since. Undo of a change to all events is the exception below.
 
 [The connector's own page](google-calendar.md) has the detail.
 
 ## Where Better-Cal Still Falls Short
 
-> **Work in progress,** as above: these are 1.5.5's limits, each marked with what 1.5.6 (2026-11-14) did about it. The section is rewritten once [#243](https://github.com/Oshyan/better-cal/issues/243) settles what is promised.
+Carrying days across is several requests where Google's way is one, and most of what's listed here comes from that. As of 1.5.8:
 
-Carrying days across is several requests where Google's way is one, and most of what's listed here comes from that.
-
-- **Undo of a change to all events on a Google calendar is off** ([#235](https://github.com/Oshyan/better-cal/issues/235)). Still off in 1.5.6: it comes back with the rebuild of a change to all events on stored state ([#274](https://github.com/Oshyan/better-cal/issues/274)).
-- **A change to all events that wrote more than one day could stop half done** (a switch between timed and all-day, a clock time changed and back), with Finish completing it ([#256](https://github.com/Oshyan/better-cal/issues/256)). Fixed in 1.5.6: the cause was a condition on each day's write that Google refuses after the event's own write, and a day's write now goes with none.
-- **A half-done change that can be neither finished nor put back** had no "leave it as Google has it" ([#244](https://github.com/Oshyan/better-cal/issues/244)). Dropped: since 1.5.6 it can be dismissed, like every Review notice.
-- **Better-Cal didn't notice when your access to a calendar was taken away at Google** ([#245](https://github.com/Oshyan/better-cal/issues/245)). Since 1.5.6 it reads the level from Google, says when it changes and works read-only until editing is given back.
-- **A change made in Google Calendar while one of ours is half done** is kept only when ours leaves every day where it was. Otherwise it's dropped, and named.
-- **A repeating event that starts in the hour a spring clock change skips** gained an extra first day when a field changed for all events ([#252](https://github.com/Oshyan/better-cal/issues/252)). That one was Better-Cal's bug, not Google's, and is fixed in 1.5.6: the change carries the days Google holds as deleted on the event.
+- **Undo of a change to all events on a Google calendar is off** ([#235](https://github.com/Oshyan/better-cal/issues/235)). It comes back with the rebuild of a change to all events on stored state ([#274](https://github.com/Oshyan/better-cal/issues/274)).
+- **The days are worked out here, not read from Google.** Better-Cal expands a repeating event's rule itself and doesn't check it against Google's own list of days. So when Google hides days after a switch made in Google Calendar, Better-Cal still shows them and says nothing ([#266](https://github.com/Oshyan/better-cal/issues/266), [#267](https://github.com/Oshyan/better-cal/issues/267)).
+- **A day's notes go back as Better-Cal's copy.** When a day is sent again, its notes are the cleaned copy Better-Cal stores, so markup made in Google Calendar can come back changed. The text itself stays.
+- **What only Google holds on a day isn't carried.** A color or a guest set on one day in Google Calendar isn't sent again when a change makes Google drop that day's record, and nothing says so. Fixing this means storing in full what Google held before a change (#274, A1).
+- **A change made in Google Calendar while one of ours is half done** isn't offered as a choice. Where our write to the event had already landed, Finish replaces it and names what it replaced; where the change gives the days other times, it's lost and named; otherwise it's kept.
+- **One day of a repeating event changed in Google Calendar** is refused without saying what changed ([#268](https://github.com/Oshyan/better-cal/issues/268)). The choice that one event gets isn't built for days yet.
+- **Finish and Put back go wrong after a few rare sequences,** each two or three uncommon things in a row: Finish bringing back an event deleted in Google Calendar after the stop, Finish replacing a title set there in the seconds after our write, a sentence saying Google changed when only the connection dropped, and a switch between timed and all-day that neither can complete. [The edge cases](design/google-edge-cases.md) list each, with how likely it is.
 
 The [changelog](../CHANGELOG.md) has each release's known limits in full.
 
@@ -168,7 +169,7 @@ This page isn't finished. What's missing, as of 2026-11-13:
 
 - **Search [Google's issue tracker](https://issuetracker.google.com) in depth** for each behavior above: whether it's filed, what Google answered, and whether any is marked as intended. Nothing here has been checked against it yet.
 - **Widen the page beyond Google:** CalDAV and the iCalendar standard, Thunderbird, and the big products (Outlook, Apple Calendar), each checked and linked the way the Google findings are. Decide then whether this stays one page or becomes several.
-- **Rewrite the two Better-Cal sections** once [#243](https://github.com/Oshyan/better-cal/issues/243) settles what is promised, what is refused and what is dropped with a sentence.
+- **Revise the two Better-Cal sections** once [#243](https://github.com/Oshyan/better-cal/issues/243) settles what is promised, what is refused and what is dropped with a sentence. They describe 1.5.8 as shipped.
 - **Test the Reported claims** worth testing, starting with the success-that-changes-nothing after a split, or drop them.
 - **Find a better source for the refresh time of followed calendars,** ideally Google's own.
 - **Find a live source for deleted days coming back over Google's CalDAV.** A calendar app's help page said so and called it a bug in Google's CalDAV; that page no longer resolved on 2026-11-10, so the claim is left out above.

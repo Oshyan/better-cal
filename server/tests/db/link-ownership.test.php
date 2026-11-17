@@ -723,9 +723,7 @@ return static function (Db $db): void {
             'Domain/People.php:updateLocked' => 'run: undo of a person merged, a day made since',
             'Domain/People.php:delete' => 'run: undo of a person deleted, a day made since; and onto a day that gave its people back',
             'Domain/Tags.php:snapshot' => 'run: undo of a tag merged and of one deleted, a day made since',
-            'Domain/Labels.php:eventLinkRows' => 'run: every "this event" edit and plan, undone',
-            'Domain/GoogleUndo.php:rowTables' => 'run: every Google writer above, undone',
-            'Domain/Undo.php:linksOf' => 'run: CalDAV PUT, import, every plan, undone',
+            'Domain/Undo.php:linksOf' => 'run: the one capture (#241): CalDAV PUT, import, every plan, every "this event" edit and every Google writer above, undone',
         ];
         $unjournaled = array_values(array_diff(array_keys($journals), array_keys($journalInventory)));
         sort($unjournaled);

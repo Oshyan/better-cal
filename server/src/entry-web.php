@@ -212,7 +212,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/quickadd", [$quickAddController, 'run']);
         $router->add('POST', "$base/undo", function (Request $req) use ($undo): Response {
             $undone = $undo->undoLatest((int) $req->user['id'], Domain\RequestAuthority::request($req));
-            return Response::json(['ok' => true, 'undone' => $undone]);
+            return Response::json(['ok' => true, 'undone' => array_diff_key($undone, ['kept' => true])] + array_intersect_key($undone, ['kept' => true]));
         });
 
         // Activity log: latest-first, filterable by source group and text.
@@ -230,8 +230,10 @@ function bc_handle_api(Request $request, array $cfg): void
             ]));
         });
         $router->add('POST', "$base/activity/:id/undo", function (Request $req, array $params) use ($undo): Response {
-            $undone = $undo->undoById((int) $req->user['id'], (int) $params['id'], (bool) ($req->body['force'] ?? false), Domain\RequestAuthority::request($req));
-            return Response::json(['ok' => true, 'undone' => $undone]);
+            $undone = $undo->undoById((int) $req->user['id'], (int) $params['id'], (bool) ($req->body['force'] ?? false), Domain\RequestAuthority::request($req),
+                is_array($req->body['over'] ?? null) ? $req->body['over'] : [], $req->header('X-Device-Tz'));
+            // `kept`: what Google Calendar changed that the undo left as it is (an undo through the conflict choice).
+            return Response::json(['ok' => true, 'undone' => array_diff_key($undone, ['kept' => true])] + array_intersect_key($undone, ['kept' => true]));
         });
         // Single-event occurrence, for activity jump-to-event.
         $router->add('GET', "$base/events/:id/occurrence", function (Request $req, array $params) use ($events, $db): Response {

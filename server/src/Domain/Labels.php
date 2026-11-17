@@ -208,13 +208,4 @@ final class Labels
         }
         return $best;
     }
-
-    /** Link rows for undo snapshots. @return array<string,list<array>> */
-    public function eventLinkRows(int $eventId): array
-    {
-        return [
-            'event_tags' => $this->db->all('SELECT * FROM event_tags WHERE event_id = ?', [$eventId]),
-            'event_people' => $this->db->all('SELECT * FROM event_people WHERE event_id = ?', [$eventId]),
-        ];
-    }
 }

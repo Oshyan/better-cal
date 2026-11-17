@@ -594,7 +594,7 @@ final class Events
         // The row and its links before and after, as a local edit keeps
         // them: every column it changed is in the entry, Google's sent back
         // to Google on undo, the rest put back here (GoogleUndo).
-        $before = ['events' => [$event]] + $this->labels->eventLinkRows($id);
+        $before = ['events' => [$event]] + Undo::linksOf($this->db, [$id]);
         $resp = null;
         if ($body !== []) {
             $googleId = self::requireGoogleId($event);
@@ -617,7 +617,7 @@ final class Events
             $this->ownAfterRowEdit($event, $in);
         });
         $left = $this->get($userId, $id);
-        $after = ['events' => [$left]] + $this->labels->eventLinkRows($id);
+        $after = ['events' => [$left]] + Undo::linksOf($this->db, [$id]);
         if ($googleFields !== []) {
             // The fields it changed at Google are named, so its undo sends
             // back those alone (GoogleUndo).
@@ -684,7 +684,7 @@ final class Events
         $googleFields = [];
         // The row and its links before, as googlePatchAll keeps them: none
         // for an ordinary day, whose row this edit makes.
-        $before = $existing !== null ? ['events' => [$existing]] + $this->labels->eventLinkRows((int) $existing['id']) : [];
+        $before = $existing !== null ? ['events' => [$existing]] + Undo::linksOf($this->db, [(int) $existing['id']]) : [];
         $changed = []; // the fields this edit changed, read from the request before placement
         if ($existing !== null) {
             // The day starts where the own list this edit leaves puts it.
@@ -808,7 +808,7 @@ final class Events
         // changed here, a row it made included, so its undo puts back
         // exactly that (GoogleUndo, Undo::restoreSnapshots).
         $stored = $rowId !== null ? $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$rowId]) : null;
-        $after = $stored !== null ? ['events' => [$stored]] + $this->labels->eventLinkRows((int) $stored['id']) : [];
+        $after = $stored !== null ? ['events' => [$stored]] + Undo::linksOf($this->db, [(int) $stored['id']]) : [];
         $summary = "Updated one occurrence of '" . (string) $master['title'] . "'";
         if ($undo === null) {
             // Held here alone: Google is sent nothing, and the entry undoes here.
@@ -913,7 +913,7 @@ final class Events
      *
      * @return array{event:array, read:array, items:list<array>, columns:array<string,mixed>}|null null: asked
      */
-    private function googleChoice(int $userId, array $calendar, array $event, array $baseRow, ?array $columns, ?RequestAuthority $authority, ?array $day = null): ?array
+    private function googleChoice(int $userId, array $calendar, array $event, array $baseRow, ?array $columns, ?RequestAuthority $authority, ?array $day = null, bool $undo = false): ?array
     {
         $wantedRow = array_merge($baseRow, $columns ?? []);
         // The one check of a time's values on a request carrying `over` (the
@@ -945,7 +945,7 @@ final class Events
                 if ($columns === null) {
                     return ['gone' => true]; // a delete of a day that is gone already has nothing left to do
                 }
-                $this->googleDeferred = new HttpError('google_conflict', GoogleConflict::dayGone((string) ($masterNow['title'] ?? $master['title'])), 409);
+                $this->googleDeferred = new HttpError('google_conflict', GoogleConflict::dayGone((string) ($masterNow['title'] ?? $master['title']), $undo), 409);
                 return null;
             }
             $row = $this->db->one('SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [(int) $master['id'], $key]);
@@ -964,8 +964,8 @@ final class Events
             $yours = $columns === null ? null : $this->servedFields($wantedRow);
             $fields = array_map(static fn(string $f): array => ['field' => $f, 'was' => $was[$f], 'now' => $now[$f], 'yours' => $yours === null ? null : $yours[$f]] + ($from === null ? [] : $from($f)), $asked);
             $shown = $day === null ? null : $was['time'];
-            $this->googleDeferred = new HttpError('google_changed', GoogleConflict::message((string) $was['title'], $fields, $columns === null, null, $shown), 409,
-                ($shown === null ? [] : ['day' => $shown]) + ['fields' => $fields, 'kept' => $kept]);
+            $this->googleDeferred = new HttpError('google_changed', GoogleConflict::message((string) $was['title'], $fields, $columns === null, null, $shown, $undo), 409,
+                ($shown === null ? [] : ['day' => $shown]) + ($undo ? ['name' => (string) $was['title']] : []) + ['fields' => $fields, 'kept' => $kept]); // name: the title an undo's sentences name the event by, which its caller was not shown
             return null;
         }
         $this->googleKept = $kept;
@@ -979,6 +979,40 @@ final class Events
         $out = ['read' => $step['read'], 'items' => $step['items'], 'columns' => $send + array_diff_key($columns ?? [], array_flip($fieldColumns)), 'kept' => $keptFields, 'gone' => false];
         // A day's write is conditional on the list, its own version found there (or read by its id): no single read.
         return $day === null ? ['event' => $stored] + $out : ['event' => $row, 'master' => $masterNow, 'read' => null] + $out;
+    }
+
+    /**
+     * The step for the undo of an edit to one event or one day
+     * (docs/design/google-conflict-choice.md, the page "Slice 3a", (b) and
+     * (c)): googleChoice, told only that the sentences are an undo's. The
+     * base is the row as stored ($row; a day as the series' state reads it,
+     * dayRow), under what the entry left ($left, the columns of the fields
+     * it changed), under what `over` says was shown; $wanted is the columns
+     * the undo puts back. Called outside a transaction (the undo's write to
+     * Google comes before its commit), so a question or a day's refusal is
+     * thrown here, the store kept. $day: the repeating event's row and the
+     * day's key.
+     *
+     * @param array<string,mixed> $left
+     * @param array<string,mixed> $wanted
+     * @param array{master:array, key:string}|null $day
+     * @return array{event:?array, read:?array, items:list<array>, columns:array<string,mixed>, kept:list<array>}
+     */
+    public function undoChoice(int $userId, array $calendar, array $row, array $left, array $wanted, array $over, ?RequestAuthority $authority, ?array $day = null): array
+    {
+        $event = $day === null ? $row : $this->dayRow($day['master'], $row, $day['key']);
+        $base = array_merge($event, $left);
+        $base = array_merge($base, $this->overColumns($userId, $base, $over));
+        $this->googleKept = [];
+        $step = $this->googleChoice($userId, $calendar, $event, $base, $wanted, $authority, $day, true);
+        $this->throwDeferred();
+        return ['kept' => $this->googleKept] + (array) $step;
+    }
+
+    /** The PATCH that sets $columns on $row (patchBody), for the undo's send. */
+    public static function undoBody(array $row, array $columns): array
+    {
+        return self::patchBody($row, $columns);
     }
 
     /** Whether one day of a repeating event goes through the conflict choice (the page "Slice 2"): the setting, the one switch. */
@@ -1958,7 +1992,7 @@ final class Events
         });
 
         $created = $this->get($userId, $id);
-        $this->undo->record($userId, 'event', $id, 'create', null, ['events' => [$created]] + $this->labels->eventLinkRows($id));
+        $this->undo->record($userId, 'event', $id, 'create', null, ['events' => [$created]] + Undo::linksOf($this->db, [$id]));
         ChangeLog::record($this->db, (int) $created['calendar_id'], (string) $created['uid'], ChangeLog::OP_ADD);
         return $this->serializeSingle($created);
     }
@@ -2495,7 +2529,7 @@ final class Events
     private function patchAll(int $userId, array $event, array $in): void
     {
         $id = (int) $event['id'];
-        $beforeLinks = $this->labels->eventLinkRows($id);
+        $beforeLinks = Undo::linksOf($this->db, [$id]);
         $fields = $this->columnPatch($event, $in);
         $movesCalendar = isset($fields['calendar_id']) && !empty($event['rrule']);
         $overridesBefore = $movesCalendar ? $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]) : [];
@@ -2526,7 +2560,7 @@ final class Events
             $id,
             'update',
             ['events' => array_merge([$event], $overridesBefore)] + $beforeLinks,
-            ['events' => array_merge([$after], array_values(array_filter($overridesAfter)))] + $this->labels->eventLinkRows($id)
+            ['events' => array_merge([$after], array_values(array_filter($overridesAfter)))] + Undo::linksOf($this->db, [$id])
         );
         ChangeLog::recordUpdate($this->db, $event, $after);
     }
@@ -2663,7 +2697,7 @@ final class Events
             $newId,
             'update',
             ['events' => $beforeRows] + $removedLinks,
-            ['events' => $afterRows] + $this->labels->eventLinkRows($newId),
+            ['events' => $afterRows] + Undo::linksOf($this->db, [$newId]),
             "Moved one occurrence of '" . (string) $source['title'] . "' to another calendar"
         );
         ChangeLog::record($this->db, (int) $created['calendar_id'], (string) $created['uid'], ChangeLog::OP_ADD);
@@ -2704,7 +2738,7 @@ final class Events
             }
             // The day's links are part of what this edit changes (tagNames,
             // people), so they are journaled with its row, as patchAll does.
-            $beforeLinks = $this->labels->eventLinkRows((int) $existing['id']);
+            $beforeLinks = Undo::linksOf($this->db, [(int) $existing['id']]);
             $this->db->tx(function () use ($existing, $userId, $fields, $in): void {
                 if ($fields !== []) {
                     $fields['updated_at'] = Time::nowDb();
@@ -2717,7 +2751,7 @@ final class Events
             });
             $after = $this->get($userId, (int) $existing['id']);
             $this->undo->record($userId, 'event', (int) $existing['id'], 'update', ['events' => [$existing]] + $beforeLinks,
-                ['events' => [$after]] + $this->labels->eventLinkRows((int) $existing['id']));
+                ['events' => [$after]] + Undo::linksOf($this->db, [(int) $existing['id']]));
             ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
             return;
         }

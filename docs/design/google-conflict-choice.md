@@ -203,6 +203,110 @@ Each path that follows only by sharing an entry has a scenario of its own: "a pl
 
 ---
 
+# Slice 3a: What the Undo of One Edit Promises
+
+Written 2026-11-16, against `main` at `8f5699a5`, before any of it was built. This page is what gets built for the undo of an edit to one event in no series, or to one day of a repeating event, on a Google calendar (`GoogleUndo::undo`, kind edit), and for undoing that undo (redo), which is the same function. It is the two pages above with one more reading, what the three values are for an undo, and nothing else new: the same seven fields, the same comparison, the same step, the same question shape, the same setting. Where it is simpler than the model below, this page wins. The undo of a change to all events (the model's kind 1), of a delete, of a create and of an answer, Finish and Put back are not in it and keep what they do today.
+
+Until this slice such an undo sent back only the fields the edit changed, but was refused whole ("Newer changes exist for this item; undoing would overwrite them. This event changed in Google Calendar since you last saw it.") when anything of the event or its repeating event had changed in Google Calendar since the last poll, and refused as stale when a later entry, a poll's included, had changed the same field.
+
+**The rule.** An undo of an edit is a forward change back. Base: the event or day as the entry left it, for the fields the entry changed. Wanted: those fields at their values before the entry. Now: what Google Calendar holds, read and stored by the same step. Then the forward rule, unchanged.
+
+### The cases, most likely first
+
+Each promise names its test: a **row** of the undo table (`server/tests/google-conflict-undo.php`, included by `server/tests/run.php`), or a **scenario** of the request-level database test (`server/tests/db/google-conflict-undo.test.php`), which makes the edit and the undo as the app does, against the stand-in for Google.
+
+1. **Nothing changed since the edit.** The undo goes through as before: one read, one conditional write of the fields the edit changed, no question, nothing kept. Rows: every field G = B. Scenario: "nothing changed since: the undo of a rename, of a drag and of a Maybe each send one write of that field alone; `kept` is empty" (an event, and a day).
+2. **Another field was changed since, in Google Calendar** (you renamed it; the organiser then moved it; you undo the rename). The undo goes through; the other change stays, here and there, and the toast names it as kept. This was refused whole. Rows: a field the undo does not put back, G ≠ B gives `kept`. Scenario: "the time changed in Google Calendar after a rename: the undo sends the title alone, the row holds Google Calendar's time and the old title, `kept` names the time".
+3. **Another field was changed since, here.** As before: the undo sends back its own fields and the later change stays. Nothing is named as kept, since the person made that change. Scenario: "the place changed here after a rename: the undo of the rename sends the title alone and keeps the place".
+4. **Another day of the repeating event was changed since** (for an undo of a change to one day). Not a change to this day: the undo goes through, nothing asked, nothing kept. This was refused whole. Scenario: "another day renamed in Google Calendar: the undo of a drag of this day goes through".
+5. **The same field was changed again since, in Google Calendar.** Nothing is sent and nothing is put back here. You are asked: "After this change to 'Weekly sync', the title was changed again: it's 'Team sync' now. Undo puts back 'Standup', replacing 'Team sync'." Cancel or Undo anyway. Cancel undoes nothing. The calendar shows what Google Calendar holds (the read is stored). Rows: a field the undo puts back, G ≠ B and G ≠ W gives `ask`. Scenarios: "the title changed again in Google Calendar: 409 `google_changed` with the field, nothing sent, the entry not undone, tags the edit changed not put back"; "Undo anyway after the question: one PATCH, the row holds the title from before the edit".
+6. **The same field was changed again since, here** (renamed, then renamed again; undo the first). The same question: the base is what the entry left, not what the row holds, so a later change made here asks exactly as one made there. This was the stale refusal with "Undo anyway" and no values. Scenario: "the title changed again here by a later edit: the undo of the first asks with the later title as now".
+7. **A poll stored the later change before the undo.** Still asked, for the same reason. Scenario: "a poll stored a second rename: the undo asks".
+8. **It already holds the value from before the edit** (someone put it back by hand, there or here). No question; the undo completes, and sends nothing for that field. Rows: G = W ≠ B gives `send`. Scenario: "the title already back in Google Calendar: the undo completes with no write".
+9. **The whole repeating event was changed since in a field the undo puts back on this day.** Asked, and told the change was to the whole repeating event (`from` series): "After this change to Tue, Nov 17 of 'Weekly sync', the title was changed again, for the whole repeating event: it's 'Standup' now. Undo puts back 'Weekly sync' for this day, replacing 'Standup'." Scenario: "the repeating event renamed in Google Calendar after this day was renamed: the undo asks with `from` series".
+10. **Redo.** Undoing the undo's own entry is this page again: base what the undo left, wanted what it found. Scenario: "redo after the undo: one write; redo after the title changed again in Google Calendar asks".
+11. **Planned or Maybe, and free or busy.** Two values each, so the undo of one never asks about itself; another field changed since is kept. Rows: the `status` and `showAs` rows.
+12. **The setting is off:** the undo is the code it was (the whole refusal, the stale check over every field). Scenario: "setting off: the undo of a rename after a change to its time in Google Calendar is refused with the sentence it had".
+
+### Unlikely: what the person sees, and nothing more is built
+
+- **Google Calendar changed again between the question and Undo anyway:** the question comes back with the newer value.
+- **The event was deleted in Google Calendar:** the `google_deleted` sentence, as before; nothing undone. Scenario: "the event deleted in Google Calendar: the undo is refused as deleted".
+- **A single event made repeating in Google Calendar:** the undo's whole refusal, as before; nothing stored.
+- **The day is no longer a day of the repeating event once the read is stored:** refused, `google_conflict`: "That day is no longer one of the days of 'Team sync': the repeating event was changed in Google Calendar. Nothing was undone, and the calendar shows it as Google Calendar has it now." The read stays stored. Scenario: "a day deleted in Google Calendar: its undo is refused with the day's sentence".
+- **The day's row went with the stored read and nothing asks** (its record went back to the repeating event's values in a way the comparison does not see): the undo's whole refusal, the read stored.
+- **A day the edit left with no row** (it made the day an ordinary day again), **and the redo of an undo that removed the day's row** (the undo of the first edit of an ordinary day): the entry holds nothing of the day as it left it, so there is no base. These keep the code they had: the whole refusal when anything of the repeating event changed in Google Calendar since the last poll, and the stale check. What is missing is listed in (b).
+- **The event's or day's row is gone here** (a later change removed it): as before (the stale check, then the code it had).
+- **A change in Google Calendar in the seconds between the read and the write:** Google's 412, the undo's whole refusal.
+- **A zone-only change, notes that differ only in formatting, view-only or busy-only access:** as the slice 1 page says.
+- **A plugin run's undo, the bare Undo, an API caller:** no dialog; see (f).
+
+### The contract builders share
+
+**(a) The fields, the comparison, the setting.** The slice 1 page's seven fields and equalities, `GoogleConflict::threeWay`, `google_conflict_choice`. Nothing is added to any of them. Which fields the undo puts back is the entry's `changed` (the Google body keys the edit changed), read as fields: `summary` title, `description`, `location`, `source` link, `status`, `transparency` free or busy, `start` and `end` together the time.
+
+**(b) Base, wanted, now.**
+
+| | An event in no series | A day of a repeating event |
+| --- | --- | --- |
+| Base, a field the undo puts back | The entry's after snapshot of the row; or the request's `over` for that field | The entry's after snapshot of the day's row; or `over` |
+| Base, any other field | The row as stored before the read | The day as stored before the read, as slice 2 reads it (`GoogleSeries::dayStored`) |
+| Wanted | The entry's before snapshot of the row, for the fields it changed | For a field the day owned before the entry: the before snapshot's value. For a field it did not own (and every field, for a day the entry gave a row): the repeating event's value at that day as stored, so the inverse of "gave the day a value of its own" stays "the day follows the repeating event again" (decisions.md, the undo of a Google edit) |
+| Now | The event in the read | The day in the read, as slice 2 reads it (`GoogleSeries::dayNow`) |
+
+What is sent is recomputed from the rows as stored after the read (a followed field takes the repeating event's value as stored then), for the fields the comparison said to send, as the PATCH that takes the stored event to the wanted values; a field already at its wanted value sends nothing.
+
+**A time is one value, and the entry holds it whole.** A row snapshot holds `start_utc`, `end_utc`, `all_day`, `tzid` and the clock-time flag, so base and wanted each have the whole time from one place, and the zone sent back is the snapshot's. The entry's Google body (`google.before`) holds each boundary with its zone too; the comparison does not read it. Nothing of a time is completed from another source. Not whole in the entry: **the day as an edit left it when that edit left the day no row** (an edit that made a day ordinary again; an undo that removed the row its edit made). The entry then has no after snapshot and no after body, only the fields it changed and their values before. Those entries are not compared (the unlikely list). Activity's list serves no time and no field value of an entry (a summary, its source and whether it can be undone), so nothing there is in parts; the question's values are served whole by the 409, as the forward question's are.
+
+**(c) The step.** `Events::googleChoice`, called by `GoogleUndo` with the base row, the wanted columns and, for a day, the repeating event and the day's key: `GoogleWriter::readAndStore`, `GoogleConflict::threeWay`, the store journaled as a poll's, the day precondition of slice 2 (d), the deferred 409, `kept`. It is told the change is an undo only so the 409's sentences are the undo's. The undo is not inside a transaction when it reads (its write to Google comes before its commit, as before), so the 409 is thrown as soon as the step returns; the store is its own write and stays.
+
+**(d) One question, not two.** `Undo::undoById` runs the stale check before the undo. For an entry that goes through the comparison, a later change to a compared field is the comparison's to judge: the stale check passes over a ground of the entry and a later entry's ground when both are compared fields (an event's `title`, `description`, `location`, `url`, `status`, `show_as`, `start_utc`, `end_utc`, `all_day`, `tzid`; a day's the same fields, as its grounds name them), and only for the fields this undo puts back. A place is one value, its text and its pin, for an event and a day alike: when the undo puts the text back the pin goes back with it, so a later change to either is this question's (asked when the text differs; a pin re-placed for the text the undo replaces goes with that text), never the stale refusal. Corrected 2026-11-16 after the independent harness check found an event's place changed here, then there and polled, refused as stale: the first build left the pin's columns, and a day's place, to the stale check. An edit that changed the pin alone puts back no compared field, and stays the stale check's. Scenario: "the place changed here, then in Google Calendar, a poll stores that: the undo asks about the place, for an event and for a day". An edit that changed nothing Google holds (a tag or a reminder on a day) is not compared and reads nothing. Everything else is still the stale check's: tags, people, reminders, the icon, coordinates, a trip flag, a later change that removed or re-made the row, a later change to the repeating event's days. So a later change of tags still gives `stale_undo` and Activity's "Undo anyway?" with `force`; `force` passes the stale check and never a question.
+
+**(e) The question, and Undo anyway.** 409 `google_changed`, the forward shape, with the entry named:
+
+```json
+{"error": {
+  "code": "google_changed",
+  "message": "After this change to 'Weekly sync', the title was changed again: it's 'Team sync' now. Undo puts back 'Standup', replacing 'Team sync'. Nothing was undone.",
+  "entry": 412,
+  "name": "Weekly sync",
+  "fields": [{"field": "title", "was": "Weekly sync", "now": "Team sync", "yours": "Standup"}],
+  "kept": []
+}}
+```
+
+`was` is the base (what the entry left), `now` what Google Calendar holds, `yours` what the undo puts back; `name` is the title the sentences name the event by (the base's; the caller of an undo was not shown one); a day's question carries `day` (the day's time as stored before the read) and each field its `from`, as slice 2 (f). Undo anyway is `POST /activity/:id/undo` for `entry` with `over` set to each asked field's `now` (a time whole, all four parts; in parts it is 400 `client_outdated`). The base for those fields is then `over`: if Google Calendar still holds it, the field is sent; if not, the question comes back with the newer value. There is no bare force past a question: `force` alone gets the same 409.
+
+**(f) Entries with no dialog.** The bare Undo (`POST /undo`) answers with the same 409, `entry` naming what it would have undone; a caller sends Undo anyway to that entry. A plugin run's undo (`Undo::undoRun`) never overwrites: an entry that would ask is listed in `refused` with code `google_changed` and the question's first sentence ("After this change to 'Weekly sync', the title was changed again: it's 'Team sync' now."), stays to undo, and is not counted as skipped; the rest of the run goes on. In strict mode it stops the run, as any refusal does. Scenarios: "the bare Undo over a second rename answers 409 with the entry"; "a plugin run's undo lists the entry as refused with the first sentence and undoes the rest".
+
+**(g) What is stored and recorded.** When it asks: the read, and nothing of the undo (no field, no tag, nothing of the snapshots; the entry stays to undo). When it goes through: what the entry changed here alone is put back from its snapshots, Google Calendar's answer is stored on top, the entry is marked undone, and the undo's own entry is recorded as before: kind edit, `undoes`, `changed` (the same keys), `before` the event's Google body as stored after the read, and the row with every link table before and after (`Undo::linksOf`). The 200 of `POST /activity/:id/undo` and `POST /undo` gains `kept: [{field, now}]` for an undo that went through the comparison, absent otherwise.
+
+**(h) Words.** The same module and table (`googleChangedAsk` in `web/src/lib/planwords.js` with `undo`, `GoogleConflict::question`, `server/tests/fixtures/google-changed-words.json`, rows marked `undo`):
+
+- One field: "After this change to 'Weekly sync', the title was changed again: it's 'Team sync' now. Undo puts back 'Standup', replacing 'Team sync'." Notes: "... the notes were changed again: they're 'Bring slides' now. Undo puts back 'Agenda', replacing 'Bring slides'." A time: "... the time was changed again: it's Tue, Nov 17, 10:30 AM to 11:30 AM now. Undo puts back Tue, Nov 17, 9:00 AM to 10:00 AM in its place."
+- Removed since: "After this change to 'Weekly sync', the location was removed. Undo puts back 'Room 2'." Nothing before the edit: "After this change to 'Weekly sync', the link was changed again: it's 'https://example.com/b' now. Undo removes it."
+- A day: "After this change to Tue, Nov 17 of 'Weekly sync', the title was changed again: ... Undo puts back 'Weekly sync' for this day, replacing 'Standup'."; a change to the whole repeating event adds ", for the whole repeating event" after "again".
+- Several fields: "After this change to 'Weekly sync', these were changed again:" and a line each: "Title: 'Team sync' now; Undo puts back 'Standup'." "Location: no location now; Undo puts back 'Room 2'." "Link: 'https://example.com/b' now; Undo removes it."
+- The dialog: titled "Undo anyway?", buttons Cancel and Undo anyway, foot "Cancel undoes nothing, and the event stays as it is now." (a day: "the day").
+- The 409's own message is the body and lines, then "Nothing was undone."
+- The toast after an undo that kept something: "Undone" and the kept line of slice 1.
+
+**(i) Siblings.**
+
+| Site | Disposition |
+| --- | --- |
+| `GoogleUndo::undo`, edit, an event or a day whose entry holds the row it left | Follows |
+| The same, redo | Follows (the undo's entry is an edit entry) |
+| Edit, a day the entry left with no row; redo of an undo that removed the row | Listed: no base in the entry; the code it had |
+| `GoogleUndo::undo`, delete, create, answer | Listed (the model's section 6): each needs its own sentence; the whole refusal as before |
+| Kind series (a change to all events and its undo) | Untouched: held back by `google_series_undo` |
+| The undo of a change held here alone on a Google calendar (tags, reminders) | Untouched: sends Google nothing, `Undo::apply` |
+| A local calendar's undo | Untouched |
+
+**(j) What the edit harness's undo expectation becomes** (for whoever teaches it, from this page alone). For the undo of an edit entry of one event or one day, with the conflict choice on and the entry holding the row it left: with B the harness's record of the compared fields the entry changed as the entry left them, W its record of them before the entry, G what the stand-in holds just before the undo, and for every other field B the product's rows before the undo: the undo asks (409 `google_changed`, `entry` the entry's id) exactly when some field the entry changed has G ≠ B and G ≠ W, listing exactly those with B, G and W; then Google is sent nothing, the rows hold G, the entry is not undone and nothing held here alone is put back. Otherwise Google and the rows hold W for each field the entry changed and G for every other, `kept` names exactly the other fields with G ≠ B, and the entry is undone. An unpolled change at Google to another field, another day, or the same field no longer makes the undo a `google_conflict` refusal; a later entry on a compared field no longer makes it `stale_undo`. With the setting off, and for every other kind of entry, the expectation is unchanged.
+
+---
+
 # A Change Over Someone Else's Change at Google
 
 Status of this revision (2026-11-13, third version, citations re-pointed at 1.5.6 on 2026-11-14 for sections 1, 2, 3, 5 and 7): every section is revised after the second independent read (`workfolder/reviews/google-156/read-models-2-report.md`) and the owner's rulings on it. Not done: a reader's pass over this version, and the live probes in section 8. The page above, for slice 1, outranks this model where they differ. Sections 4, 6, 8 and 9 still cite the pre-1.5.6 tree.

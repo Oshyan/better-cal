@@ -240,10 +240,26 @@ return static function (Db $db): void {
         } catch (HttpError $e) {
             $caught = $e->status . ' ' . $e->errorCode . ': ' . $e->getMessage();
         }
-        checkEq('the read before the PATCH shows the change, so nothing is sent: refused, rows and Activity as they were', [
-            '409 google_conflict: Newer changes exist for this item; undoing would overwrite them. This event changed in Google Calendar since you last saw it.',
-            [['GET', 'probe9z8y7x@google.com', null]], $before,
-        ], [$caught, $calls($t), $state()]);
+        // Since the undo of an edit goes through the conflict choice (docs/design/google-conflict-choice.md, "Slice 3a",
+        // case 5): the same field changed again in Google Calendar is asked about, the read stored, nothing sent or undone.
+        checkEq('the read shows the title changed again, so nothing is sent: asked, the read stored, the entry not undone', [
+            "409 google_changed: After this change to 'Sample review, renamed', the title was changed again: it's 'Sample review, renamed at Google' now. Undo puts back 'Sample review', replacing 'Sample review, renamed at Google'. Nothing was undone.",
+            [['GET', 'probe9z8y7x@google.com', null]], 'Sample review, renamed at Google', 0, true,
+        ], [$caught, $calls($t), (string) $row($t, 'probe9z8y7x')['title'], (int) $db->scalar('SELECT undone FROM mutations WHERE id = ?', [(int) $entry['id']]), $state() !== $before]);
+        // With the setting off it is the refusal it was, and nothing is stored.
+        $t->google->res['probe9z8y7x']['summary'] = 'Sample review, renamed again at Google';
+        $t->google->bump('probe9z8y7x@google.com');
+        $db->update('users', ['settings_json' => json_encode(['google_conflict_choice' => false] + (json_decode((string) $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$t->u]), true) ?: []))], 'id = ?', [$t->u]);
+        $before = $state();
+        $caught = null;
+        try {
+            $t->undo->undoById($t->u, (int) $entry['id'], true);
+        } catch (HttpError $e) {
+            $caught = $e->status . ' ' . $e->errorCode . ': ' . $e->getMessage();
+        }
+        checkEq('setting off: refused whole with the sentence it had, rows and Activity as they were', [
+            '409 google_conflict: Newer changes exist for this item; undoing would overwrite them. This event changed in Google Calendar since you last saw it.', $before,
+        ], [$caught, $state()]);
     });
 
     scenario('google undo: one occurrence of a series, changed and deleted, each undone at its instance id', function () use ($db, $setup, $row, $last, $google, $calls, $undone): void {

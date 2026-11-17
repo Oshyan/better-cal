@@ -1103,13 +1103,14 @@ function valueWords(field, v, other, ref) {
  * Two values are never joined by "to" (a time's own range has one): each
  * is its own clause, apart by a semicolon.
  */
-export function googleChangedAsk({ name, fields, remove = false, back = false, day = null, now = new Date() }) {
+export function googleChangedAsk({ name, fields, remove = false, back = false, day = null, undo = false, now = new Date() }) {
   const list = (fields || []).filter((f) => f && f.field);
   // The day is a date the question says, so it shares the year decision.
   const ref = yearRef([...list.filter((f) => f.field === 'time').flatMap((f) => [f.was, f.now, f.yours]), day], now);
   const said = (f, v, other) => valueWords(f.field, v, other, ref);
   // A value in a line: the value, or "no link" for an empty one.
   const side = (f, v, other) => (isEmptyValue(f.field, v) ? 'no ' + fieldNoun(f.field) : said(f, v, other));
+  if (undo) return undoAsk(list, name, day, ref, said, side);
   const since = 'Since ' + (day ? dayWords(day, ref) + ' of ' : '') + quoted(name || 'Untitled event') + ' was last shown to you, ';
   // Where in Google Calendar the change was made, when it was the whole repeating event's.
   const whole = (f) => (f.from === 'series' ? ', for the whole repeating event' : '');
@@ -1144,6 +1145,44 @@ export function googleChangedAsk({ name, fields, remove = false, back = false, d
     : 'Overwrite saves your change' + (day ? ' for this day only' : '') + '. Cancel saves nothing'
       + (back ? ' and takes you back to your change.' : ', and ' + (day ? 'the day' : 'the event') + ' shows as it is in Google Calendar now.');
   return { title, body, lines, foot, confirmLabel: remove ? 'Delete' : 'Overwrite', danger: remove };
+}
+
+/**
+ * The question of an undo (docs/design/google-conflict-choice.md, "Slice
+ * 3a", (h)): the fields the undo puts back that were changed again after
+ * the change being undone, here or in Google Calendar. Each is said as what
+ * it is now and what Undo puts back; an entry is not named (the person
+ * chose it), a day is, by its date. `list`: the 409's fields, `was` what
+ * the change left, `now` what it is, `yours` what Undo puts back. Held to
+ * the server's own message by the same table (GoogleConflict::question).
+ */
+function undoAsk(list, name, day, ref, said, side) {
+  const after = 'After this change to ' + (day ? dayWords(day, ref) + ' of ' : '') + quoted(name || 'Untitled event') + ', ';
+  const forDay = day ? ' for this day' : '';
+  const whole = (f) => (day && f.from === 'series' ? ', for the whole repeating event' : '');
+  // What Undo does with one field: puts back its value from before, or removes one the change added.
+  const back = (f) => (isEmptyValue(f.field, f.yours) ? 'Undo removes ' + objectPronoun(f.field) + forDay : 'Undo puts back ' + said(f, f.yours, f.now) + forDay);
+  let body;
+  let lines = [];
+  if (list.length === 1) {
+    const f = list[0];
+    const the = 'the ' + fieldNoun(f.field) + ' ' + wasWere(f.field);
+    if (isEmptyValue(f.field, f.now)) {
+      body = after + the + ' removed' + whole(f) + '.' + (isEmptyValue(f.field, f.yours) ? '' : ' ' + stop(back(f)));
+    } else {
+      const second = isEmptyValue(f.field, f.yours) ? back(f) + '.'
+        : f.field === 'time' ? back(f) + ' in its place.' : stop(back(f) + ', replacing ' + said(f, f.now, f.yours));
+      body = after + the + ' changed again' + whole(f) + ': ' + (isPlural(f.field) ? "they're " : "it's ") + said(f, f.now, f.yours) + ' now. ' + second;
+    }
+  } else {
+    body = after + 'these were changed again:';
+    lines = list.map((f) => labelOf(f.field) + whole(f) + ': ' + side(f, f.now, f.yours) + ' now; ' + stop(back(f)));
+  }
+  return {
+    title: 'Undo anyway?', body, lines,
+    foot: 'Cancel undoes nothing, and the ' + (day ? 'day' : 'event') + ' stays as it is now.',
+    confirmLabel: 'Undo anyway', danger: false,
+  };
 }
 
 /**

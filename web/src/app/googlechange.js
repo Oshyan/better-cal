@@ -38,9 +38,9 @@
 // The setting is on as shipped; with it off for an account (an operator's
 // switch) no answer carries google_changed or kept, and nothing here shows.
 
-import { adoptEvent, state, set } from './store.js';
-import { api, ApiError, refreshWindow } from './api.js';
-import { confirmTurn } from './ConfirmDialog.js';
+import { adoptEvent, state, set, toast } from './store.js';
+import { api, ApiError, refreshWindow, afterUndo, undoFailedWords } from './api.js';
+import { confirmTurn, askConfirm } from './ConfirmDialog.js';
 import { googleChangedAsk } from '../lib/planwords.js';
 
 /** What sendEventChange resolves to when the person chose Cancel at the question: nothing was sent. */
@@ -328,6 +328,54 @@ export async function sendEventChange(occ, path, method, body = {}, { remove = f
     if (turn) turn.release();
     if (inLine) inLine.then((t) => t.release());
   }
+}
+
+/**
+ * Undo one Activity entry. The undo of an edit to one event or one day on a
+ * Google calendar is a change like any (docs/design/google-conflict-choice.md,
+ * "Slice 3a"): when a field it puts back was changed again since, the server
+ * asks (409 google_changed) and the person chooses here, Cancel or Undo
+ * anyway. Undo anyway sends the undo again with `over`, what the question
+ * showed as it is now, so a still newer change asks again; there is no force
+ * past a question. `force` is Activity's answer to its own stale question
+ * and passes only that. Resolves to the answer, or CANCELLED; any other
+ * refusal throws, as api() does. The window is fetched again when the
+ * server asks: it stored what Google Calendar holds.
+ */
+export async function sendUndo(id, { force = false } = {}) {
+  let body = force ? { force: true } : {};
+  for (;;) {
+    try {
+      return await api('/activity/' + id + '/undo', { method: 'POST', body });
+    } catch (e) {
+      const fields = askedFields(e);
+      if (!fields) throw e;
+      refreshWindow();
+      if (!await askConfirm(googleChangedAsk({ name: e.data.error.name, fields, day: askedDay(e), undo: true }))) return CANCELLED;
+      body = { ...body, over: nowOf(fields) };
+    }
+  }
+}
+
+// A toast's Undo: just the entries its change made, newest first. One a
+// later change stands on isn't overwritten from a toast: the log offers
+// that, with a warning. A question (sendUndo) is asked here; Cancel stops
+// with what was undone before it.
+export async function undoEntries(ids) {
+  try {
+    const kept = [];
+    let undone = 0;
+    for (const id of [...ids].sort((a, b) => b - a)) {
+      const answer = await sendUndo(id);
+      if (answer === CANCELLED) break;
+      undone += 1;
+      kept.push(...(keptOf(answer) || []));
+    }
+    if (undone) toast('Undone', { kept: kept.length ? kept : null });
+  } catch (e) {
+    toast(e.code === 'stale_undo' ? 'Not undone: this was changed again after that. To undo it anyway and overwrite the newer change, use Undo on the Activity page.' : undoFailedWords(e), { error: true });
+  }
+  await afterUndo();
 }
 
 /** A 200's `kept`, for the caller's toast (store.js toast words it); null when nothing stayed. */

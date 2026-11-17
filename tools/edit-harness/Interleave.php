@@ -4863,7 +4863,15 @@ final class Interleave
     {
         $this->ran('x-agree', $do);
         $here = $this->ldigest($s1['rows']);
+        // The last live day of a repeating event deleted here: Google cancels the event itself (probe 12.4, 2026-11-17),
+        // and the app leaves the event to the next poll, which removes it here (the owner's ruling, 2026-11-17;
+        // google-edge-cases.md, row 7). Until that poll the rows here still hold the event with no live day, and the
+        // polls below remove exactly its rows.
+        $emptied = $do === 'w-del1' ? $this->emptiedAtGoogle($s1['rows']) : [];
         foreach ($here as $gid => $l) {
+            if (isset($emptied[$gid])) {
+                continue;
+            }
             $g = $s1['g']['digest'][$gid] ?? null;
             if ($g === null || $g != $l) {
                 $this->fail('x-agree', "step {$this->step} ($do): the rows here and Google disagree on " . (isset($l['single']) ? 'an event' : 'a series'), $context + ['gid' => $gid, 'google' => $g, 'here' => $l]);
@@ -4891,7 +4899,38 @@ final class Interleave
         }
         $this->stand->knobs->listed = null;
         $after = $this->lstate($this->rows());
+        foreach ($s1['rows'] as $id => $r) {
+            $gid = (string) ($r['google_event_id'] ?? '');
+            $parent = $r['recurrence_parent_id'] !== null ? ($s1['rows'][(int) $r['recurrence_parent_id']]['google_event_id'] ?? '') : '';
+            if (isset($emptied[$gid]) || ($parent !== '' && isset($emptied[(string) $parent]))) {
+                unset($before[$id]); // the event Google cancelled goes with the poll, as the ruling says
+            }
+        }
         $this->expect('x-agree', self::same($before, $after), "step {$this->step} ($do): a delta poll and then a whole read change no row", $context + ['diff' => self::diff($before, $after)]);
+    }
+
+    /**
+     * The repeating events of the case that Google holds cancelled while here they have no live day left: every
+     * occurrence of the rule (the harness's own evaluator) skipped, and no live day row. By Google id.
+     *
+     * @return array<string,true>
+     */
+    private function emptiedAtGoogle(array $rows): array
+    {
+        $out = [];
+        foreach (self::masters($rows) as $m) {
+            $gid = (string) ($m['google_event_id'] ?? '');
+            if ($gid === '' || ($this->stand->fake->events[$gid]['status'] ?? '') !== 'cancelled') {
+                continue;
+            }
+            $skips = array_flip(Recurrence::decodeExdates($m['exdates_json'] ?? null));
+            $live = array_filter(array_column(Truth::expand($m)['occ'], 'key'), static fn(string $k): bool => !isset($skips[$k]));
+            $days = array_filter($rows, static fn(array $r): bool => (int) ($r['recurrence_parent_id'] ?? 0) === (int) $m['id'] && ($r['status'] ?? '') !== 'cancelled');
+            if ($live === [] && $days === []) {
+                $out[$gid] = true;
+            }
+        }
+        return $out;
     }
 
     // ---- helpers ----------------------------------------------------------------------

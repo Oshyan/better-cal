@@ -645,6 +645,48 @@ return static function (Db $db): void {
         H::done($t);
     });
 
+    // A change by the day's own row that leaves the day with nothing of its own (seed 37440, interleaving case 103):
+    // the write is a success, the day is an ordinary day of its repeating event again, here and in Google Calendar,
+    // and the answer is never "not found". With the conflict choice on and off.
+    foreach ([true, false] as $on) {
+        $mode = $on ? 'the conflict choice on' : 'the conflict choice off';
+        scenario("a day's last own value taken back by its own row, $mode: Maybe then Planned, a title put back, a time dragged back", function () use ($fresh, $on, $day, $occ, $over, $timeKeys, $whole, $mark, $writes, $methods, $dayRow, $atG, $mode): void {
+            $t = $fresh($on);
+            $gidOf = static fn(string $date): string => $t->gid . '_' . str_replace('-', '', $date) . 'T180000Z';
+            // Maybe, then Planned.
+            $o = $occ($t, '2027-03-10');
+            [$status] = $day($t, 'relationship', $o, ['relationship' => 'maybe', 'over' => $over($o, ['status'])]);
+            $o = $occ($t, '2027-03-10');
+            checkEq("$mode: Maybe gives the day a row of its own, tentative", [200, 'tentative', true], [$status, $dayRow($t, '2027-03-10')['status'] ?? null, (int) $o['eventId'] !== $t->id]);
+            $m = $mark($t);
+            [$status, $json] = $day($t, 'relationship', $o, ['relationship' => 'planned', 'over' => $over($o, ['status'])]);
+            checkEq("$mode: Planned by the day's own row: 200, one PATCH; Google Calendar holds it confirmed; the day is an ordinary day here, shown Planned",
+                [200, ['PATCH'], 'confirmed', null, 'confirmed', $t->id],
+                [isset($json['error']) ? $status . ' ' . $json['error']['code'] : $status, $methods($writes($t, $m)), $atG($t, $gidOf('2027-03-10'))['status'] ?? null, $dayRow($t, '2027-03-10'), $occ($t, '2027-03-10')['status'] ?? null, (int) $occ($t, '2027-03-10')['eventId']]);
+            $t->s->poll();
+            checkEq("$mode: the next poll changes nothing: still an ordinary day, Planned", [null, 'confirmed'], [$dayRow($t, '2027-03-10'), $occ($t, '2027-03-10')['status'] ?? null]);
+            // A title put back to the repeating event's.
+            $o = $occ($t, '2027-03-17');
+            $day($t, 'patch', $o, ['title' => 'Planning day', 'over' => $over($o, ['title'])]);
+            $o = $occ($t, '2027-03-17');
+            $m = $mark($t);
+            [$status, $json] = $day($t, 'patch', $o, ['title' => 'Team sync', 'over' => $over($o, ['title'])]);
+            checkEq("$mode: a title put back by the day's own row: 200, one PATCH; Google Calendar holds the repeating event's title for the day",
+                [200, ['PATCH'], 'Team sync', 'Team sync'],
+                [isset($json['error']) ? $status . ' ' . $json['error']['code'] : $status, $methods($writes($t, $m)), $atG($t, $gidOf('2027-03-17'))['summary'] ?? null, $occ($t, '2027-03-17')['title'] ?? null]);
+            // A time dragged back to the day's own place.
+            $o = $occ($t, '2027-03-24');
+            $day($t, 'patch', $o, $whole('2027-03-24T20:00:00+00:00', '2027-03-24T21:00:00+00:00') + ['over' => $over($o, $timeKeys)]);
+            $o = $occ($t, '2027-03-24');
+            $m = $mark($t);
+            [$status, $json] = $day($t, 'patch', $o, $whole('2027-03-24T18:00:00+00:00', '2027-03-24T19:00:00+00:00') + ['over' => $over($o, $timeKeys)]);
+            checkEq("$mode: a time dragged back by the day's own row: 200, one PATCH; Google Calendar and the calendar here show the day at the repeating event's time",
+                [200, ['PATCH'], strtotime('2027-03-24T18:00:00+00:00'), strtotime('2027-03-24T18:00:00+00:00')],
+                [isset($json['error']) ? $status . ' ' . $json['error']['code'] : $status, $methods($writes($t, $m)), strtotime((string) ($atG($t, $gidOf('2027-03-24'))['start']['dateTime'] ?? '')), strtotime((string) $occ($t, '2027-03-24')['start'])]);
+            H::done($t);
+        });
+    }
+
     // Case 14: the setting off (an operator's switch): the code it was.
     scenario('setting off, a day: the refusal for each of the above', function () use ($fresh, $day, $occ, $over, $timeKeys, $allKeys, $whole, $atGoogle, $dayId, $mark, $writes, $db): void {
         $cases = [

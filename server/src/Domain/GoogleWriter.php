@@ -984,8 +984,11 @@ final class GoogleWriter
             'SELECT * FROM events WHERE calendar_id = ? AND deleted_at IS NULL',
             [(int) $calendar['id']]
         )), $changes, $sentRecurrence);
-        // No feed roll-up in Activity for a write's answer: the caller records what the person did.
-        $this->feeds->sync($calendar, $snapshot, journal: $journal);
+        // No feed roll-up in Activity for a write's answer: the caller records
+        // what the person did. A row the answer makes was made by that write,
+        // under its source (Feeds::sync, madeVia); a read stored before a
+        // change was read from Google.
+        $this->feeds->sync($calendar, $snapshot, journal: $journal, madeVia: $journal ? null : ActivityContext::get());
     }
 
     /**

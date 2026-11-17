@@ -1329,9 +1329,16 @@ final class Feeds
      * Sync parsed VEVENTs into the calendar: update changed, insert new,
      * delete events whose uid disappeared from the feed.
      *
+     * $madeVia: the source of the write made here whose answer this is
+     * (GoogleWriter::apply, GoogleSeries); a row it inserts was made by that
+     * write and says so (events.created_via; decisions.md, "How an event
+     * came to exist is the source of the write that made it, on any
+     * calendar"). Null for what was read from elsewhere (a poll, a read
+     * before a change), whose new rows arrived from outside: 'feed'.
+     *
      * @param list<array<string,mixed>> $parsed
      */
-    public function sync(array $calendar, array $parsed, bool $journal = true, ?float $deadline = null, array $skipped = []): int
+    public function sync(array $calendar, array $parsed, bool $journal = true, ?float $deadline = null, array $skipped = [], ?string $madeVia = null): int
     {
         // Keep direct callers inside the same boundary as Ics::parse. Google
         // and tests can hand parsed shapes to this method without passing
@@ -1460,7 +1467,7 @@ final class Feeds
         unset($daysOf);
         self::assertSyncDeadline($deadline);
         $undo = new Undo($this->db);
-        $undo->write($userId, function () use ($parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, $strangers, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$removedEvents, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
+        $undo->write($userId, function () use ($parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, $strangers, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$removedEvents, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar, $madeVia): void {
             Events::parkInstanceKeys($this->db, $park);
             // A held day that is no instance of the series this list brings
             // lets go of its key too (keys are unique per calendar, uid and
@@ -1547,7 +1554,7 @@ final class Feeds
                         'calendar_id' => $calendarId,
                         'uid' => $ev['uid'],
                         'source' => 'feed',
-                        'created_via' => 'feed',
+                        'created_via' => $madeVia ?? 'feed',
                     ]);
                     // A day's row starts with its series' tags and people, a
                     // copy it does not own, as every row a writer here makes

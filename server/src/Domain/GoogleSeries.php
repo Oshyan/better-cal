@@ -3208,7 +3208,8 @@ final class GoogleSeries
             $had[(int) $r['id']] = true;
         }
         $snapshot = GoogleSync::applyChanges(GoogleSync::rowsToParsed($others), GoogleSync::toParsedList($items), true);
-        $this->feeds->sync($calendar, $snapshot, journal: false);
+        // The series as the write left them: a row it makes is the write's (Feeds::sync, madeVia).
+        $this->feeds->sync($calendar, $snapshot, journal: false, madeVia: ActivityContext::get());
         if ($pendingId !== null && $uids !== []) {
             [$in, $params] = Db::in(array_keys($uids));
             $made = [];

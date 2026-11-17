@@ -2018,7 +2018,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         status TEXT DEFAULT 'confirmed', show_as TEXT NOT NULL DEFAULT 'busy', source TEXT DEFAULT 'local', attendance TEXT DEFAULT 'none', score REAL,
         style_json TEXT, dynamic_json TEXT, icon TEXT, is_container INTEGER DEFAULT 0, reminders_json TEXT,
         invite_json TEXT, created_via TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT, google_event_id TEXT, override_fields TEXT,
-        moved_from_uid TEXT, moved_from_key TEXT
+        came_from_uid TEXT, came_from_key TEXT, came_from_how TEXT
     )");
     $adb->run('CREATE TABLE tags (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
     $adb->run('CREATE TABLE people (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');

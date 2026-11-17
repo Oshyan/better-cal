@@ -28,8 +28,12 @@ trait PlanUntouched
      * instance id, and the calendar's poll bookkeeping after the read-back.
      */
     private const GOOGLE_BOOKKEEPING = ['events' => ['google_etag', 'google_event_id'], 'calendars' => ['content_changed_at', 'google_sync_token', 'last_polled_at', 'last_poll_status', 'last_poll_error', 'last_ok_at']];
-    /** What leaving the series writes on a row kept as an event of its own. */
-    private const DETACH = ['recurrence_parent_id', 'recurrence_instance_utc', 'uid', 'rrule', 'exdates_json', 'google_event_id', 'override_fields', 'source'];
+    /**
+     * What leaving the series writes on a row kept as an event of its own,
+     * where it came from included (decisions.md, "An event made out of
+     * another keeps where it came from").
+     */
+    private const DETACH = ['recurrence_parent_id', 'recurrence_instance_utc', 'uid', 'rrule', 'exdates_json', 'google_event_id', 'override_fields', 'source', 'came_from_uid', 'came_from_key', 'came_from_how'];
     private const PLACEMENT_COLUMNS = ['start_utc', 'end_utc', 'all_day', 'tzid', 'recurrence_instance_utc'];
     private const PLACEMENT_OWN = ['date', 'time', 'length', 'allDay'];
     private const FIELD_COLUMNS = ['title' => 'title', 'location' => 'location', 'description' => 'description', 'url' => 'url', 'reminders' => 'reminders_json', 'status' => 'status'];

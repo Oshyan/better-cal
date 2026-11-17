@@ -771,6 +771,9 @@ trait SeriesPlans
             $row['override_fields'] = null;
             $row['created_via'] = ActivityContext::get();
             $row = array_merge($row, $w['part'], $pw['master']);
+            // The later part came from the series, from the day it starts at
+            // (the day acted on, its key under the series as it was).
+            $row = self::cameFrom($row, (string) $master['uid'], empty($in['instanceStart']) ? null : self::instanceKey((string) $in['instanceStart'], $master), 'split');
             $newId = $this->db->insert('events', $row);
             $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
             $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
@@ -803,6 +806,9 @@ trait SeriesPlans
     {
         return function () use ($w, $id, $userId, $byId, $in, &$created, &$createdEdited): void {
             $now = Time::nowDb();
+            // The series as it was before this write: what a day it keeps
+            // as an event of its own came from (cameFrom, 'kept').
+            $source = $w['detach'] !== [] || $w['create'] !== [] ? $this->db->one('SELECT * FROM events WHERE id = ?', [$id]) : null;
             if ($w['master'] !== []) {
                 $this->db->update('events', $w['master'] + ['updated_at' => $now], 'id = ?', [$id]);
             }
@@ -823,10 +829,10 @@ trait SeriesPlans
             $park = array_merge($park, array_keys($w['detach']));
             self::parkInstanceKeys($this->db, $park);
             foreach ($w['detach'] as $rid => $cols) {
-                $this->db->update('events', [
+                $this->db->update('events', self::cameFrom([
                     'recurrence_parent_id' => null, 'recurrence_instance_utc' => null, 'uid' => Ids::ulid(), 'rrule' => null,
                     'exdates_json' => null, 'google_event_id' => null, 'override_fields' => null, 'source' => 'local', 'updated_at' => $now,
-                ] + $cols, 'id = ?', [$rid]);
+                ], (string) $source['uid'], isset($byId[$rid]['recurrence_instance_utc']) ? (string) $byId[$rid]['recurrence_instance_utc'] : null, 'kept') + $cols, 'id = ?', [$rid]);
             }
             $series = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
             foreach ($w['overrides'] as $rid => $cols) {
@@ -845,7 +851,8 @@ trait SeriesPlans
             }
             $after = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
             foreach ($w['create'] as $placed) {
-                $row = $this->copyForChild($after);
+                $row = self::cameFrom($this->copyForChild($after), (string) $source['uid'],
+                    empty($in['instanceStart']) ? null : self::instanceKey((string) $in['instanceStart'], $source), 'kept');
                 $row['uid'] = Ids::ulid();
                 $row['recurrence_parent_id'] = null;
                 $row['recurrence_instance_utc'] = null;

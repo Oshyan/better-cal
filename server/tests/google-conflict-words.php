@@ -20,7 +20,10 @@ if (!function_exists('check')) {
     $fields = [];
     foreach ($table['rows'] as $row) {
         checkEq('Conflict words, the app\'s table: ' . $row['case'], ['body' => $row['body'], 'lines' => $row['lines']],
-            GoogleConflict::question($row['name'], $row['fields'], $row['remove'], $now, $row['day'] ?? null));
+            array_intersect_key(GoogleConflict::question($row['name'], $row['fields'], $row['remove'], $now, $row['day'] ?? null, !empty($row['undo'])), ['body' => 1, 'lines' => 1]));
+        if (!empty($row['undo'])) {
+            continue; // an undo's rows (the page "Slice 3a", (h)) are not among a change's and a delete's, counted below
+        }
         foreach ($row['fields'] as $f) {
             $fields[$f['field'] . ($row['remove'] ? ', a delete' : ', a change')] = true;
         }

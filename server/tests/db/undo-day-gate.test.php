@@ -335,8 +335,11 @@ return static function (Db $db): void {
         checkEq("$name: (setup) the tagged day is 6 Jan of the all-day series", ['2027-01-06 00:00:00'], array_keys(($w->rows)()));
         $result = ($w->undo)($redo);
         $row = $w->db->one('SELECT all_day FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$w->id, '2027-01-06 00:00:00']);
-        checkEq("$name: the redo goes through with one PATCH, and the day is timed here again (probe 3.38)", ['done', ['PATCH'], 0],
-            [$result, array_column(($w->sent)(), 0), (int) ($row['all_day'] ?? -1)]);
+        // Since "Slice 3a" (docs/design/google-conflict-choice.md, case 6): the day's time was changed again after the
+        // undo (the change to all events made it all-day), so the redo asks before it replaces that; nothing is sent.
+        checkEq("$name: the redo asks about the time, changed again since by the change to all events; nothing is sent and the day stays all-day",
+            [true, [], 1],
+            [str_starts_with((string) $result, "google_changed: After this change to Wed, Jan 6, 2027, the time was changed again: it's all day on Wed, Jan 6, 2027 now."), array_column(($w->sent)(), 0), (int) ($row['all_day'] ?? -1)]);
     });
     foreach (['a time and zone of its own (21:00 New York held in Berlin)' => ['start' => '2027-01-07T03:00:00+01:00', 'end' => '2027-01-07T04:00:00+01:00', 'tzid' => 'Europe/Berlin'],
         'moved to the 8th at the series clock' => ['start' => '2027-01-08T20:00:00-05:00', 'end' => '2027-01-08T21:00:00-05:00']] as $shape => $edit) {

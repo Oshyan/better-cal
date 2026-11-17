@@ -1360,7 +1360,7 @@ final class Undo
      * series as this change found it doesn't have is "day:<key>|*" of it,
      * and is said by name, since undoing would remove that day.
      */
-    private function staleFor(array $mutation): ?string
+    private function staleFor(array $mutation, bool $compared = false): ?string
     {
         $id = (int) $mutation['id'];
         $reverts = [];
@@ -1420,6 +1420,11 @@ final class Undo
                             }
                         }
                         foreach (array_keys($mine[$row] ?? []) as $own) {
+                            // A field the conflict choice compares, changed again since: its question, not this one
+                            // (docs/design/google-conflict-choice.md, "Slice 3a", (d)).
+                            if ($compared && self::comparedGround((string) $own) && self::comparedGround($col)) {
+                                continue;
+                            }
                             if (self::conflicts((string) $own, $col, strstr($row, ':', true) ?: '')) {
                                 return 'Newer changes exist for this item; undoing would overwrite them';
                             }
@@ -1429,6 +1434,21 @@ final class Undo
             }
         } while (count($page) === 2000);
         return null;
+    }
+
+    /**
+     * Whether a ground is a field the conflict choice compares with what
+     * Google Calendar holds (GoogleConflict::COLUMNS, and the zone a time is
+     * sent with): an event's column, or that field of one day of a series.
+     * A day's place is not one: its ground covers the pin with the text,
+     * and the pin is held here alone, so it stays the stale check's. Pure.
+     */
+    private static function comparedGround(string $ground): bool
+    {
+        if (str_starts_with($ground, self::DAY)) {
+            return in_array(explode('|', substr($ground, strlen(self::DAY)), 2)[1] ?? '', ['when', 'title', 'description', 'url', 'status', 'showAs'], true);
+        }
+        return in_array($ground, ['title', 'description', 'location', 'url', 'status', 'show_as', 'start_utc', 'end_utc', 'all_day', 'tzid'], true);
     }
 
     /** The occurrence key a day's or skip's ground names, or null. Pure. */
@@ -2302,7 +2322,7 @@ final class Undo
      *
      * @return array{entity:string,op:string}
      */
-    public function undoById(int $userId, int $mutationId, bool $force = false, ?RequestAuthority $authority = null): array
+    public function undoById(int $userId, int $mutationId, bool $force = false, ?RequestAuthority $authority = null, array $over = []): array
     {
         // An entry that is undone says so, whatever recorded it: that is the
         // true answer to "undo this", and the flag is one column in every
@@ -2333,10 +2353,15 @@ final class Undo
             // check here is the journal's; Google's own (If-Match) follows.
             // A day that left its series is said so first, plainly.
             GoogleUndo::refuseLeftSeriesOf($this->db, $this, $mutation);
-            if (!$force && ($why = $this->staleFor($mutation)) !== null) {
+            // The undo of an edit to one event or one day is compared field by
+            // field with what Google Calendar holds (GoogleUndo::compared): for
+            // those fields that comparison is the question, and the stale check
+            // stays for what it does not read. $over: what its question showed.
+            $compared = GoogleUndo::compared($this->db, $this, $mutation, $this->google);
+            if (!$force && ($why = $this->staleFor($mutation, $compared)) !== null) {
                 throw HttpError::badRequest($why, 'stale_undo');
             }
-            return (new GoogleUndo($this->db, $this, $this->google))->undo($mutation, $authority, $force);
+            return (new GoogleUndo($this->db, $this, $this->google))->undo($mutation, $authority, $force, $compared, $over);
         }
         if ((string) $mutation['entity'] === 'plugin_edit') {
             // Sends to the plugin's source first: not inside a transaction.
@@ -2389,6 +2414,13 @@ final class Undo
                 }
                 if ($e instanceof HttpError && $e->errorCode === 'undo_conflict') {
                     $refused[] = ['id' => (int) $row['id'], 'code' => $e->errorCode, 'message' => $e->getMessage()];
+                    continue;
+                }
+                // A run's undo never overwrites: an entry whose undo would ask (the conflict choice) is
+                // listed with the question's first sentence and stays to undo.
+                if ($e instanceof HttpError && $e->errorCode === 'google_changed' && is_array($e->extra['fields'] ?? null)) {
+                    $refused[] = ['id' => (int) $row['id'], 'code' => $e->errorCode,
+                        'message' => GoogleConflict::question('', $e->extra['fields'], false, null, is_array($e->extra['day'] ?? null) ? $e->extra['day'] : null, true)['first']];
                     continue;
                 }
                 $skipped++; // log-only entries and already-undone rows

@@ -851,21 +851,6 @@ export function afterUndo() {
   return refreshWindow();
 }
 
-// A toast's Undo: just the entries its change made, newest first. One a
-// later change stands on isn't overwritten from a toast: the log offers
-// that, with a warning.
-export async function undoEntries(ids) {
-  try {
-    for (const id of [...ids].sort((a, b) => b - a)) {
-      await api('/activity/' + id + '/undo', { method: 'POST', body: {} });
-    }
-    toast('Undone');
-  } catch (e) {
-    toast(e.code === 'stale_undo' ? 'Not undone: this was changed again after that. To undo it anyway and overwrite the newer change, use Undo on the Activity page.' : undoFailedWords(e), { error: true });
-  }
-  await afterUndo();
-}
-
 
 // A refused undo in words: the server's own sentence where it is one written for the person (it says what happened and
 // what to do), else "Undo failed: " and the error.

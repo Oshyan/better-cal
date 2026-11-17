@@ -48,7 +48,12 @@ const DELETE_FOOT = 'Delete deletes it here and in Google Calendar. Cancel keeps
   for (const row of table.rows) {
     const fields = row.fields.map((f) => (f.field === 'time' ? { ...f, was: onThisClock(f.was), now: onThisClock(f.now), yours: onThisClock(f.yours) } : f));
     // A day of a repeating event: the day it names on this clock too.
-    const a = googleChangedAsk({ name: row.name, fields, remove: row.remove, day: row.day ? onThisClock(row.day) : null, now: new Date(y, m - 1, d) });
+    const a = googleChangedAsk({ name: row.name, fields, remove: row.remove, day: row.day ? onThisClock(row.day) : null, undo: !!row.undo, now: new Date(y, m - 1, d) });
+    // An undo's question (the page "Slice 3a", (h)): its dialog, read as prose.
+    if (row.undo) {
+      assert.deepEqual([a.title, a.confirmLabel, a.foot], ['Undo anyway?', 'Undo anyway', 'Cancel undoes nothing, and the ' + (row.day ? 'day' : 'event') + ' stays as it is now.'], 'the undo dialog: ' + row.case);
+      assert.ok(!/series|at Google|—/.test([a.body, ...a.lines, a.foot].join(' ')), 'the undo words never say series, at Google or use a dash: ' + row.case);
+    }
     assert.deepEqual({ body: a.body, lines: a.lines }, { body: row.body, lines: row.lines }, 'the server\'s table: ' + row.case);
   }
 }

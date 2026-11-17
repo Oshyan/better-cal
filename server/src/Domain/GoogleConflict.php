@@ -123,19 +123,22 @@ final class GoogleConflict
      * $asks: [{field, was, now, yours}] in the served form; $title: the
      * title the person was shown; $now: the day the year is said against.
      */
-    public static function message(string $title, array $asks, bool $delete, ?\DateTimeImmutable $now = null, ?array $day = null): string
+    public static function message(string $title, array $asks, bool $delete, ?\DateTimeImmutable $now = null, ?array $day = null, bool $undo = false): string
     {
-        ['body' => $body, 'lines' => $lines] = self::question($title, $asks, $delete, $now, $day);
+        ['body' => $body, 'lines' => $lines] = self::question($title, $asks, $delete, $now, $day, $undo);
+        if ($undo) {
+            return implode(' ', [$body, ...$lines]) . ' Nothing was undone.';
+        }
         $what = $day === null ? 'the event' : 'that day';
         return implode(' ', [$body, ...$lines]) . ' '
             . ($delete ? "It wasn't deleted; open $what to see it, and delete it again if you still mean to." : "It wasn't changed; open $what to see it and make the change again.");
     }
 
     /** The 409 of a day that is no longer one of its repeating event's days once the read is stored (the page "Slice 2", the unlikely cases). */
-    public static function dayGone(string $title): string
+    public static function dayGone(string $title, bool $undo = false): string
     {
         return 'That day is no longer one of the days of ' . self::quoted($title !== '' ? $title : 'Untitled event')
-            . ": the repeating event was changed in Google Calendar. Your change wasn't saved, and the calendar shows it as Google Calendar has it now.";
+            . ': the repeating event was changed in Google Calendar. ' . ($undo ? 'Nothing was undone' : "Your change wasn't saved") . ', and the calendar shows it as Google Calendar has it now.';
     }
 
     /**
@@ -161,9 +164,14 @@ final class GoogleConflict
      * semicolon; the time values said together say the year both or
      * neither. Times are said on the clock each value is served on.
      *
-     * @return array{body:string, lines:list<string>}
+     * $undo: the question of an undo (the page "Slice 3a", (h)): the same
+     * fields, said as what was changed again after the change being undone
+     * and what Undo puts back; `first` is its first sentence, what a plugin
+     * run's undo lists (Undo::undoRun).
+     *
+     * @return array{body:string, lines:list<string>, first?:string}
      */
-    public static function question(string $name, array $asks, bool $delete, ?\DateTimeImmutable $now = null, ?array $day = null): array
+    public static function question(string $name, array $asks, bool $delete, ?\DateTimeImmutable $now = null, ?array $day = null, bool $undo = false): array
     {
         $now ??= new \DateTimeImmutable();
         $list = array_values(array_filter($asks, static fn(mixed $a): bool => is_array($a) && isset($a['field']) && in_array($a['field'], self::FIELDS, true)));
@@ -182,6 +190,34 @@ final class GoogleConflict
         $since = 'Since ' . ($dayDates === null ? '' : $dayDates[0]->format('D, M j' . ($withYear ? ', Y' : '')) . ' of ')
             . self::quoted($name !== '' ? $name : 'Untitled event') . ' was last shown to you, ';
         $whole = static fn(array $a): string => $day !== null && ($a['from'] ?? null) === 'series' ? ', for the whole repeating event' : '';
+        if ($undo) {
+            $after = 'After this change' . ($dayDates === null ? '' : ' to ' . $dayDates[0]->format('D, M j' . ($withYear ? ', Y' : ''))) . ', ';
+            $forDay = $day === null ? '' : ' for this day';
+            $plural = static fn(string $f): bool => (self::NOUNS[$f][1] ?? false) === true;
+            // What Undo does with one field: puts back its value from before, or removes one the change added.
+            $back = static fn(array $a): string => self::isEmpty($a['field'], $a['yours'] ?? null)
+                ? 'Undo removes ' . ($plural($a['field']) ? 'them' : 'it') . $forDay
+                : 'Undo puts back ' . $said($a['field'], $a['yours'] ?? null, $a['now'] ?? null) . $forDay;
+            if (count($list) !== 1) {
+                $names = array_map(static fn(array $a): string => 'the ' . self::nounOf($a['field']), $list);
+                $last = (string) array_pop($names);
+                return ['body' => $after . 'these were changed again:',
+                    'lines' => array_map(static fn(array $a): string => self::labelOf($a['field']) . $whole($a) . ': ' . $side($a['field'], $a['now'] ?? null, $a['yours'] ?? null) . ' now; ' . self::stop($back($a)), $list),
+                    'first' => $after . ($names === [] ? 'these were' : implode(', ', $names) . ' and ' . $last . ' were') . ' changed again.'];
+            }
+            $a = $list[0];
+            $f = (string) $a['field'];
+            $there = $a['now'] ?? null;
+            $the = 'the ' . self::nounOf($f) . ' ' . ($plural($f) ? 'were' : 'was');
+            if (self::isEmpty($f, $there)) {
+                $first = $after . $the . ' removed' . $whole($a) . '.';
+                return ['body' => $first . (self::isEmpty($f, $a['yours'] ?? null) ? '' : ' ' . self::stop($back($a))), 'lines' => [], 'first' => $first];
+            }
+            $first = $after . $the . ' changed again' . $whole($a) . ': ' . ($plural($f) ? "they're " : "it's ") . $said($f, $there, $a['yours'] ?? null) . ' now.';
+            $second = self::isEmpty($f, $a['yours'] ?? null) ? $back($a) . '.'
+                : ($f === 'time' ? $back($a) . ' in its place.' : self::stop($back($a) . ', replacing ' . $said($f, $there, $a['yours'] ?? null)));
+            return ['body' => $first . ' ' . $second, 'lines' => [], 'first' => $first];
+        }
         if (count($list) !== 1) {
             $lines = array_map(static fn(array $a): string => self::labelOf($a['field']) . $whole($a) . ': ' . ($delete
                 ? self::stop('was ' . $side($a['field'], $a['was'] ?? null, $a['now'] ?? null) . '; now ' . $side($a['field'], $a['now'] ?? null, $a['was'] ?? null))

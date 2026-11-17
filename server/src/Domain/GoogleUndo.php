@@ -436,10 +436,10 @@ final class GoogleUndo
      *
      * @return array{entity:string,op:string}
      */
-    public function undo(array $mutation, ?RequestAuthority $authority = null, bool $force = false): array
+    public function undo(array $mutation, ?RequestAuthority $authority = null, bool $force = false, bool $compared = false, array $over = []): array
     {
         try {
-            return $this->undoOne($mutation, $authority, $force);
+            return $this->undoOne($mutation, $authority, $force, $compared, $over);
         } catch (HttpError $e) {
             // The access rule refused it (GoogleWriter::admit, recheck): said as an undo's refusal.
             if (GoogleWriter::isReadOnly($e) && is_string($e->extra['access'] ?? null)) {
@@ -451,7 +451,7 @@ final class GoogleUndo
     }
 
     /** @return array{entity:string,op:string} */
-    private function undoOne(array $mutation, ?RequestAuthority $authority, bool $force): array
+    private function undoOne(array $mutation, ?RequestAuthority $authority, bool $force, bool $compared = false, array $over = []): array
     {
         $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
         if (!self::carries(is_array($details) ? $details : null)) {
@@ -498,7 +498,14 @@ final class GoogleUndo
                 // it did not own before goes back to following its series:
                 // the series' value there now, not the one it showed then.
                 $changed = self::changedOf($g);
-                $dayKey = GoogleWriter::instanceOf($googleId)['key'] ?? null;
+                if ($compared) {
+                    // Through the conflict choice (compared): the stale check left the compared fields to it.
+                    if ($row === null || $leftRow === null) {
+                        throw self::conflict(); // the row went between the check and here
+                    }
+                    return $this->undoCompared($mutation, $calendar, $googleId, $day['key'], $row, $wasRow, $leftRow, $changed, $over, $authority, $summary);
+                }
+                $dayKey =GoogleWriter::instanceOf($googleId)['key'] ?? null;
                 $at = static fn(?array $r): ?array => $r === null || $dayKey === null || ($r['recurrence_instance_utc'] ?? null) === null ? $r : array_merge($r, ['recurrence_instance_utc' => (string) $dayKey]);
                 $send = self::inverse($this->beforeOver($g['before'], $at($wasRow), $row ?? $at($leftRow)), $changed);
                 // The event as it is now: its row, or, a day with no row
@@ -533,7 +540,7 @@ final class GoogleUndo
                 }
                 $resp = $send === [] ? null : self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $send, $beforeSend, $current, items: $items));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $send, $googleId, $now, $row, $rowId, $changed, $userId, $summary, $mutation, $local): void {
-                    $was = $this->rowTables($rowId);
+                    $was = $this->rowWithLinks($rowId);
                     // The row put back first (made again under its id, or
                     // removed, as the edit found it), Google's answer stored
                     // on top, as a poll would store it.
@@ -549,7 +556,7 @@ final class GoogleUndo
                     $this->record($userId, $this->rowId($calendar, $googleId, (int) $mutation['entity_id']), $summary,
                         self::details(self::EDIT, $calendar, $googleId, $now, $row['google_etag'] ?? null, $resp !== null ? self::etagOf($resp) : null,
                             ['undoes' => (int) $mutation['id'], 'changed' => $changed]),
-                        null, 'update', [$was, $this->rowTables($rowId)]);
+                        null, 'update', [$was, $this->rowWithLinks($rowId)]);
                 });
                 return ['entity' => 'event', 'op' => 'update'];
 
@@ -1109,14 +1116,160 @@ final class GoogleUndo
         });
     }
 
-    /** An event row and its tags and people, as an edit's entry keeps them. @return array<string,list<array>> */
-    private function rowTables(int $id): array
+    /** An event row and everything that hangs off it, by the one capture (Undo::removedRows, #241). @return array<string,list<array>> */
+    private function rowWithLinks(int $id): array
     {
-        return [
-            'events' => $this->db->all('SELECT * FROM events WHERE id = ?', [$id]),
-            'event_tags' => $this->db->all('SELECT * FROM event_tags WHERE event_id = ?', [$id]),
-            'event_people' => $this->db->all('SELECT * FROM event_people WHERE event_id = ?', [$id]),
-        ];
+        return Undo::removedRows($this->db, $this->db->all('SELECT * FROM events WHERE id = ?', [$id]));
+    }
+
+    /**
+     * Whether an entry's undo goes through the conflict choice
+     * (docs/design/google-conflict-choice.md, the page "Slice 3a"): an edit
+     * to one event or one day, the setting on, the entry holding the row as
+     * it left it (its base; an edit that left a day no row holds none), and
+     * the event or day still having its row here. Asked once, by
+     * Undo::undoById after its day gate (refuseLeftSeriesOf), which hands
+     * the answer to the stale check and to undo() alike, so the fields the
+     * stale check leaves to the comparison are always compared.
+     */
+    public static function compared(Db $db, Undo $undo, array $mutation, ?GoogleWriter $writer = null): bool
+    {
+        $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
+        if (!self::carries(is_array($details) ? $details : null) || (string) $details['google']['kind'] !== self::EDIT
+            || !Settings::googleConflictChoice($db, (int) $mutation['user_id'])
+            // An edit that changed nothing Google holds (tags, a reminder) sends nothing back and reads nothing.
+            || self::comparedFields(self::changedOf($details['google'])) === []
+            || !is_array(json_decode((string) ($mutation['after_json'] ?? ''), true)['tables']['events'][0] ?? null)) {
+            return false;
+        }
+        $calendar = $db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $details['google']['calendarId'], (int) $mutation['user_id']]);
+        if ($calendar === null || !GoogleWriter::bound($calendar)) {
+            return false;
+        }
+        $self = new self($db, $undo, $writer);
+        $at = $self->dayAt($mutation, $calendar, (string) $details['google']['googleId']);
+        return $self->writer()->rowByGoogleId((int) $calendar['id'], $at['googleId']) !== null;
+    }
+
+    /**
+     * The fields an edit changed, as the comparison names them: its body
+     * keys (details `changed`) read as fields, a start or end the time. Pure.
+     *
+     * @param list<string> $changed
+     * @return list<string>
+     */
+    private static function comparedFields(array $changed): array
+    {
+        return array_values(array_filter(GoogleConflict::FIELDS, static fn(string $f): bool => array_intersect(GoogleWriter::keysOf([$f]), $changed) !== []));
+    }
+
+    /** The columns of the compared fields $fields in $row, a time with its zone (one value). Pure. */
+    private static function columnsOf(array $fields, array $row): array
+    {
+        $out = [];
+        foreach ($fields as $field) {
+            foreach (array_merge(GoogleConflict::COLUMNS[$field], $field === 'time' ? ['tzid'] : []) as $column) {
+                $out[$column] = $row[$column] ?? null;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * What the undo of an edit puts back, as columns (the page "Slice 3a",
+     * (b), Wanted): each of $fields at its value in the row before the
+     * edit ($wasRow); for a day, a field it did not own then (every field,
+     * for a day the edit gave a row) at its repeating event's value there
+     * as stored now, so the day follows it again (beforeOver's rule, in
+     * columns).
+     *
+     * @param list<string> $fields
+     */
+    private function wantedBack(array $fields, ?array $wasRow, array $row, ?array $master, ?string $key): array
+    {
+        $base = $wasRow ?? $row;
+        $target = null;
+        if ($master !== null && $key !== null) {
+            $base = array_merge($base, ['recurrence_instance_utc' => $key]);
+            $target = empty($master['rrule']) ? null : Feeds::ofSeries($base, null, $master);
+        }
+        if ($target === null) {
+            if ($wasRow === null) {
+                throw self::conflict();
+            }
+            return self::columnsOf($fields, $wasRow);
+        }
+        $followed = Feeds::followed($base, $target);
+        $owned = $wasRow === null ? [] : GoogleWriter::keysOf(OwnFields::googleHeld(OwnFields::stored($wasRow)));
+        $out = [];
+        foreach ($fields as $field) {
+            $out += self::columnsOf([$field], array_intersect(GoogleWriter::keysOf([$field]), $owned) !== [] ? $wasRow : $followed);
+        }
+        return $out;
+    }
+
+    /**
+     * The undo of an edit to one event or one day, as a forward change back
+     * (the page "Slice 3a"): base what the entry left ($leftRow) for the
+     * fields it changed, wanted those fields as they were before it, now
+     * what Google Calendar holds, read, compared and stored by the one step
+     * (Events::undoChoice). A field changed again since asks (409
+     * google_changed, the entry named, nothing sent or put back); one
+     * changed there that the undo does not put back is kept; the rest is
+     * sent, over the rows as stored after the read, and what the edit
+     * changed here alone is put back from its snapshots as before.
+     *
+     * @param list<string> $changed
+     * @return array{entity:string,op:string,kept:list<array>}
+     */
+    private function undoCompared(array $mutation, array $calendar, string $googleId, ?string $key, array $row, ?array $wasRow, array $leftRow, array $changed, array $over, ?RequestAuthority $authority, string $summary): array
+    {
+        $userId = (int) $mutation['user_id'];
+        $writer = $this->writer();
+        $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
+        // The fields the edit changed: its body keys, read as the comparison's fields.
+        $fields = self::comparedFields($changed);
+        $master = empty($row['recurrence_parent_id']) ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]);
+        if (!empty($row['recurrence_parent_id']) && ($master === null || empty($master['google_event_id']) || $key === null)) {
+            throw self::conflict();
+        }
+        $events = new Events($this->db, new Recurrence(), $this->undo, new Labels($this->db), new Filters($this->db, $this->undo, new \BetterCal\Infra\JobQueue($this->db)), new Trips($this->db, $this->undo), null, $writer);
+        try {
+            $step = $events->undoChoice($userId, $calendar, $row, self::columnsOf($fields, $leftRow), $this->wantedBack($fields, $wasRow, $row, $master, $key), $over, $authority,
+                $master === null ? null : ['master' => $master, 'key' => $key]);
+        } catch (HttpError $e) {
+            if ($e->errorCode === 'google_changed') {
+                throw new HttpError('google_changed', $e->getMessage(), 409, ['entry' => (int) $mutation['id']] + $e->extra);
+            }
+            // The step's whole refusal (made repeating there, a 412): said as an undo's.
+            throw $e->errorCode === 'google_conflict' && $e->getMessage() === GoogleWriter::CONFLICT_MESSAGE ? self::conflict() : $e;
+        }
+        $stored = $step['event'] ?? null;
+        if ($stored === null) {
+            throw self::conflict(); // the day's row went with the stored read and nothing asked
+        }
+        // What is sent: the fields to send at their wanted values over the rows as stored now.
+        $send = array_intersect_key($this->wantedBack($fields, $wasRow, $stored, $step['master'] ?? null, $key), $step['columns']);
+        $body = $send === [] ? [] : Events::undoBody($stored, $send);
+        $now = self::bodyOf($stored);
+        if ($body !== [] && is_array($now['start'] ?? null)) {
+            $body = GoogleWriter::overForm($body, isset($now['start']['date']));
+        }
+        $rowId = (int) $stored['id'];
+        $this->undo->checkRestore($mutation, true);
+        $resp = $body === [] ? null : self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $body, $beforeSend, $step['read'] ?? null, items: $step['items'] ?? null));
+        $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $body, $googleId, $now, $stored, $rowId, $changed, $userId, $summary, $mutation): void {
+            $was = $this->rowWithLinks($rowId);
+            $this->undo->restoreSnapshots($mutation, true);
+            if ($resp !== null) {
+                $writer->apply($calendar, [$resp], GoogleWriter::sendsRecurrence($body));
+            }
+            $this->record($userId, $this->rowId($calendar, $googleId, (int) $mutation['entity_id']), $summary,
+                self::details(self::EDIT, $calendar, $googleId, $now, $stored['google_etag'] ?? null, $resp !== null ? self::etagOf($resp) : null,
+                    ['undoes' => (int) $mutation['id'], 'changed' => $changed]),
+                null, 'update', [$was, $this->rowWithLinks($rowId)]);
+        });
+        return ['entity' => 'event', 'op' => 'update', 'kept' => $step['kept']];
     }
 
     /** The row Google knows by $googleId here, or $fallback. */

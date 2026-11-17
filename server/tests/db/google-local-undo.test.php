@@ -295,9 +295,12 @@ return static function (Db $db): void {
         $entry = (int) $last($s)['id'];
         $s->events->patch($s->u, $s->id, ['description' => 'Sample agenda, second']);
         $s->t->calls = [];
-        checkEq('refused stale, the second description kept here and at Google, no call', [
-            'stale_undo', ['Sample review', 'Sample agenda, second'], ['Sample review', 'Sample agenda, second'], [],
-        ], [refusal(fn() => $s->undo->undoById($s->u, $entry)), $local($s->id), $remote($s, 'smpl4single'), $s->t->calls]);
+        // Since "Slice 3a" (docs/design/google-conflict-choice.md, case 6) a compared field changed again is the conflict
+        // choice's question, with its values, where it was the stale refusal: one read, nothing written.
+        checkEq('asked (the notes were changed again), the second description kept here and at Google, nothing written', [
+            'google_changed', ['Sample review', 'Sample agenda, second'], ['Sample review', 'Sample agenda, second'], [],
+        ], [refusal(fn() => $s->undo->undoById($s->u, $entry)), $local($s->id), $remote($s, 'smpl4single'),
+            array_values(array_filter(array_column($s->t->calls, 0), static fn($m): bool => $m !== 'GET'))]);
     });
 
     $dayTags = static fn(int $masterId, string $key): array => array_column($db->all('SELECT t.name FROM events e JOIN event_tags et ON et.event_id = e.id JOIN tags t ON t.id = et.tag_id

@@ -3062,7 +3062,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   if (!hadWindow) globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { href: 'http://app.test/' } };
   const realFetch = globalThis.fetch;
   const { defaultTargetCalendarId, deleteCalendar } = await import('../src/app/actions.js');
-  const { undoEntries: undoOwn } = await import('../src/app/api.js');
+  const { undoEntries: undoOwn } = await import('../src/app/googlechange.js');
   const { state: st, set: put } = await import('../src/app/store.js');
   const saved = { calendars: st.calendars, settings: st.settings, toasts: st.toasts };
   const cals = [
@@ -3091,7 +3091,8 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq("undo: a change that can't be undone says so, in the server's words", st.toasts.some((t) => t.text.startsWith('This entry is log-only')), true);
   // A write's answer says which journal entries it made; a toast's Undo
   // undoes just those, newest first, whatever came after.
-  const { api: call, entriesOf, undoEntries } = await import('../src/app/api.js');
+  const { api: call, entriesOf } = await import('../src/app/api.js');
+  const { undoEntries } = await import('../src/app/googlechange.js');
   const posted = [];
   globalThis.fetch = async (url, o) => {
     const u = new URL(String(url), 'http://app.test');
@@ -3196,7 +3197,8 @@ console.log('--- chronological ordering across timezone offsets ---');
   if (!hadWindow) globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { href: 'http://app.test/' } };
   const realFetch = globalThis.fetch;
   const { fileCalendar, placeCalendarInList, setFolderSort, updateCalendar, toggleCalendarVisible } = await import('../src/app/actions.js');
-  const { loadCalendars, undoEntries } = await import('../src/app/api.js');
+  const { loadCalendars } = await import('../src/app/api.js');
+  const { undoEntries } = await import('../src/app/googlechange.js');
   const { isOwed } = await import('../src/app/reloads.js');
   const calendarsOwed = () => isOwed('calendars');
   const { state: st, set: put } = await import('../src/app/store.js');

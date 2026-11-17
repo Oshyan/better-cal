@@ -3,7 +3,7 @@
 
 import { html, useRef, useLayoutEffect, useEffect } from '../../vendor/index.js';
 import { useStore, dismissToast } from './store.js';
-import { undoEntries } from './api.js';
+import { undoEntries } from './googlechange.js';
 import { Icon } from '../ui/icons.js';
 
 // A readable measure for a toast's message, in its own ems.

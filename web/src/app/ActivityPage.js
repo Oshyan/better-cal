@@ -10,6 +10,7 @@ import { occDayKey } from '../lib/dates.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 import { askConfirm } from './ConfirmDialog.js';
+import { sendUndo, keptOf, CANCELLED } from './googlechange.js';
 
 // Source key -> label + manual/automated group. mail:* tiers collapse into
 // the "mail" filter server-side but keep their tier in the badge.
@@ -128,9 +129,14 @@ export function ActivityPage() {
   const undoEntry = async (entry, force) => {
     setBusyId(entry.id);
     try {
-      await api('/activity/' + entry.id + '/undo', { method: 'POST', body: force ? { force: true } : {} });
+      // A field changed again since is asked about there (sendUndo); Cancel undoes nothing.
+      const answer = await sendUndo(entry.id, { force });
+      if (answer === CANCELLED) {
+        afterUndo();
+        return;
+      }
       setEntries((prev) => prev.map((x) => (x.id === entry.id ? { ...x, undone: true, undoable: false } : x)));
-      toast('Undone: ' + entry.summary);
+      toast('Undone: ' + entry.summary, { kept: keptOf(answer) });
       afterUndo();
     } catch (e) {
       if (e.code === 'stale_undo') {

@@ -20,7 +20,7 @@ if (!function_exists('check')) {
     $fields = [];
     foreach ($table['rows'] as $row) {
         checkEq('Conflict words, the app\'s table: ' . $row['case'], ['body' => $row['body'], 'lines' => $row['lines']],
-            GoogleConflict::question($row['name'], $row['fields'], $row['remove'], $now));
+            GoogleConflict::question($row['name'], $row['fields'], $row['remove'], $now, $row['day'] ?? null));
         foreach ($row['fields'] as $f) {
             $fields[$f['field'] . ($row['remove'] ? ', a delete' : ', a change')] = true;
         }

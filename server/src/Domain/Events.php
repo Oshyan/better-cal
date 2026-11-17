@@ -550,6 +550,16 @@ final class Events
         // or refused, so nothing of it is taken from the base; with no
         // `over` the base is the row, as in 1.5.6.
         $base = $this->requestBase($userId, $event, $this->requestOver);
+        // An edited day changed by its own row is one day of a repeating
+        // event (the page "Slice 2"): its base is the day's (dayBase).
+        $day = null;
+        if (!empty($event['recurrence_parent_id']) && $this->choosesDayOverGoogle($userId)) {
+            $master = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $event['recurrence_parent_id']]);
+            if ($master !== null && !empty($master['google_event_id'])) {
+                $day = ['master' => $master, 'key' => (string) $event['recurrence_instance_utc']];
+                $base = $this->dayBase($userId, $this->dayRow($master, $event, $day['key']));
+            }
+        }
         $columns = $this->columnPatch($base, $in);
         [$googleFields, $localFields] = self::splitGoogleFields($columns);
         // Only what Google holds goes to Google; a change of nothing it
@@ -564,15 +574,21 @@ final class Events
         $this->tripRules($id, $localFields, putBack: true);
         $read = null;
         $items = null;
-        if ($body !== [] && $this->choosesOverGoogle($userId, $event)) {
+        if ($body !== [] && ($day !== null || $this->choosesOverGoogle($userId, $event))) {
             // The conflict choice: Google read and stored first, then the
             // fields to send, or a question and nothing of the request written.
             // Its read is the write's condition (patch, below): one read.
-            $step = $this->googleChoice($userId, $calendar, $event, $base, $googleFields, $authority);
+            $step = $this->googleChoice($userId, $calendar, $event, $base, $googleFields, $authority, $day);
             if ($step === null) {
                 return;
             }
+            if ($step['event'] === null) {
+                // The day's row went with the read and nothing was asked: today's refusal, the read kept.
+                $this->googleDeferred = new HttpError('google_conflict', GoogleWriter::CONFLICT_MESSAGE, 409);
+                return;
+            }
             ['event' => $event, 'read' => $read, 'items' => $items, 'columns' => $googleFields] = $step;
+            $in = self::withoutKept($in, $step['kept']);
             $body = $googleFields === [] ? [] : self::patchBody($event, $googleFields);
         }
         // The row and its links before and after, as a local edit keeps
@@ -635,6 +651,28 @@ final class Events
             }
             return;
         }
+        // The conflict choice for one day (the page "Slice 2"), when the edit
+        // changes what Google holds of it: the repeating event read and
+        // stored, then a question and nothing written, or the rows as stored
+        // and the request without what Google Calendar changed and it did not.
+        $items = null;
+        if ($this->choosesDayOverGoogle($userId)) {
+            $dayRow = $this->dayRow($master, $existing, $instanceUtc);
+            $base = $this->dayBase($userId, $dayRow);
+            [$wantedCols] = $this->placedThis($base, $this->columnPatch($base, $in, $instanceUtc, forOverride: true), $master, $in);
+            [$wantedGoogle] = self::splitGoogleFields($wantedCols);
+            if ($wantedGoogle !== [] && self::patchBody($dayRow, $wantedGoogle) !== []) {
+                $step = $this->googleChoice($userId, $calendar, $dayRow, $base, $wantedGoogle, $authority, ['master' => $master, 'key' => $instanceUtc]);
+                if ($step === null) {
+                    return;
+                }
+                ['master' => $master, 'event' => $existing, 'items' => $items] = $step;
+                $in = self::withoutKept($in, $step['kept']);
+                if (array_diff(array_keys($in), ['scope', 'instanceStart']) === []) {
+                    return; // everything it set, Google Calendar had changed and it had not: nothing left to write
+                }
+            }
+        }
         // An edited day never takes the flag this way (forOverride): the
         // rows stand as the commit will leave them.
         $this->tripRules();
@@ -659,7 +697,7 @@ final class Events
                 $googleId = !empty($existing['google_event_id'])
                     ? (string) $existing['google_event_id']
                     : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
-                $resp = $this->google()->patch($calendar, $googleId, $body, $this->googleBeforeSend($authority));
+                $resp = $this->google()->patch($calendar, $googleId, $body, $this->googleBeforeSend($authority), items: $items);
                 $undo = [$googleId, GoogleUndo::bodyOf($existing), $existing['google_etag'] ?? null];
             }
         } else {
@@ -668,13 +706,7 @@ final class Events
             // with the occurrence as it should now be. A change held here
             // alone (tags, people, reminders, attendance) sends nothing,
             // so Google keeps no record of the day equal to its series.
-            $duration = Recurrence::durationSeconds($master);
-            $instStart = Time::fromDb($instanceUtc);
-            $override = $this->copyForChild($master);
-            $override['rrule'] = null;
-            $override['exdates_json'] = null;
-            $override['start_utc'] = Time::toDb($instStart);
-            $override['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
+            $override = $this->occurrenceRow($master, $instanceUtc);
             [$patch, $changed] = $this->placedThis($override, $this->columnPatch($override, $in, $instanceUtc, forOverride: true), $master, $in);
             [$patchGoogle, $localFields] = self::splitGoogleFields($patch);
             // Before: the occurrence as it showed, the series' at that date.
@@ -684,7 +716,7 @@ final class Events
             $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
             $body = self::patchBody($occurrence, $patchGoogle);
             if ($body !== []) {
-                $resp = $this->google()->patch($calendar, $instanceId, $body, $this->googleBeforeSend($authority));
+                $resp = $this->google()->patch($calendar, $instanceId, $body, $this->googleBeforeSend($authority), items: $items);
             }
             // Journaled as a write to that resource either way: the row it
             // makes here is undone with the fields it changed at Google,
@@ -880,7 +912,7 @@ final class Events
      *
      * @return array{event:array, read:array, items:list<array>, columns:array<string,mixed>}|null null: asked
      */
-    private function googleChoice(int $userId, array $calendar, array $event, array $baseRow, ?array $columns, ?RequestAuthority $authority): ?array
+    private function googleChoice(int $userId, array $calendar, array $event, array $baseRow, ?array $columns, ?RequestAuthority $authority, ?array $day = null): ?array
     {
         $wantedRow = array_merge($baseRow, $columns ?? []);
         // The one check of a time's values on a request carrying `over` (the
@@ -894,16 +926,45 @@ final class Events
         $wanted = $columns === null
             ? array_fill_keys(GoogleConflict::FIELDS, GoogleConflict::DELETE)
             : array_intersect_key(GoogleConflict::mapOf($wantedRow), array_flip(GoogleConflict::fieldsIn($columns)));
-        $step = $this->google()->readAndStore($calendar, self::requireGoogleId($event), GoogleConflict::mapOf($baseRow), $wanted, $this->googleBeforeSend($authority));
-        $stored = $this->get($userId, (int) $event['id']);
-        $kept = $this->keptOf($stored, GoogleConflict::having($step['outcomes'], 'kept'));
+        $row = null; // the day's own row once the read is stored, when it has one
+        $from = null; // where each change to a day was made (GoogleConflict::from)
+        if ($day === null) {
+            $step = $this->google()->readAndStore($calendar, self::requireGoogleId($event), GoogleConflict::mapOf($baseRow), $wanted, $this->googleBeforeSend($authority));
+            $stored = $this->get($userId, (int) $event['id']);
+        } else {
+            // One day of a repeating event (the page "Slice 2"): the repeating
+            // event read and stored whole, then the day as stored after it.
+            ['master' => $master, 'key' => $key] = $day;
+            $step = $this->google()->readAndStore($calendar, self::requireGoogleId($master), GoogleConflict::mapOf($baseRow), $wanted, $this->googleBeforeSend($authority),
+                ['id' => (string) $master['google_event_id'], 'uid' => (string) $master['uid'], 'key' => $key]);
+            $masterNow = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $master['id']]);
+            // (d): still a day of the repeating event as stored after the read,
+            // by the one reading of what an occurrence is (requireInstance).
+            if ($step['outcomes'] === null || $masterNow === null || !$this->stillDay($masterNow, $key)) {
+                if ($columns === null) {
+                    return ['gone' => true]; // a delete of a day that is gone already has nothing left to do
+                }
+                $this->googleDeferred = new HttpError('google_conflict', GoogleConflict::dayGone((string) ($masterNow['title'] ?? $master['title'])), 409);
+                return null;
+            }
+            $row = $this->db->one('SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [(int) $master['id'], $key]);
+            $stored = $this->dayRow($masterNow, $row, $key);
+            $seriesWas = GoogleConflict::mapOf(GoogleSeries::dayStored($master, null, $key));
+            $seriesNow = GoogleConflict::mapOf(GoogleSeries::dayStored($masterNow, null, $key));
+            $storedMap = GoogleConflict::mapOf($stored);
+            $from = static fn(string $f): array => ['from' => GoogleConflict::from($f, $seriesWas, $seriesNow, $storedMap)];
+        }
+        $keptFields = GoogleConflict::having($step['outcomes'], 'kept');
+        $kept = $this->keptOf($stored, $keptFields);
         $asked = GoogleConflict::having($step['outcomes'], 'ask');
         if ($asked !== []) {
             $was = $this->servedFields($baseRow);
             $now = $this->servedFields($stored);
             $yours = $columns === null ? null : $this->servedFields($wantedRow);
-            $fields = array_map(static fn(string $f): array => ['field' => $f, 'was' => $was[$f], 'now' => $now[$f], 'yours' => $yours === null ? null : $yours[$f]], $asked);
-            $this->googleDeferred = new HttpError('google_changed', GoogleConflict::message((string) $was['title'], $fields, $columns === null), 409, ['fields' => $fields, 'kept' => $kept]);
+            $fields = array_map(static fn(string $f): array => ['field' => $f, 'was' => $was[$f], 'now' => $now[$f], 'yours' => $yours === null ? null : $yours[$f]] + ($from === null ? [] : $from($f)), $asked);
+            $shown = $day === null ? null : $was['time'];
+            $this->googleDeferred = new HttpError('google_changed', GoogleConflict::message((string) $was['title'], $fields, $columns === null, null, $shown), 409,
+                ($shown === null ? [] : ['day' => $shown]) + ['fields' => $fields, 'kept' => $kept]);
             return null;
         }
         $this->googleKept = $kept;
@@ -914,8 +975,80 @@ final class Events
             }
         }
         $fieldColumns = array_merge(...array_values(GoogleConflict::COLUMNS));
-        return ['event' => $stored, 'read' => $step['read'], 'items' => $step['items'],
-            'columns' => $send + array_diff_key($columns ?? [], array_flip($fieldColumns))];
+        $out = ['read' => $step['read'], 'items' => $step['items'], 'columns' => $send + array_diff_key($columns ?? [], array_flip($fieldColumns)), 'kept' => $keptFields, 'gone' => false];
+        // A day's write is conditional on the list, its own version found there (or read by its id): no single read.
+        return $day === null ? ['event' => $stored] + $out : ['event' => $row, 'master' => $masterNow, 'read' => null] + $out;
+    }
+
+    /** Whether one day of a repeating event goes through the conflict choice (the page "Slice 2"): the setting, the one switch. */
+    private function choosesDayOverGoogle(int $userId): bool
+    {
+        return Settings::googleConflictChoice($this->db, $userId);
+    }
+
+    /** Whether $key is still a day of the repeating event $master as stored (the page "Slice 2", (d)): requireInstance's reading, asked of the key itself. */
+    private function stillDay(array $master, string $key): bool
+    {
+        if (empty($master['rrule'])) {
+            return false;
+        }
+        $at = Time::fromDb($key);
+        try {
+            return $this->requireInstance(['instanceStart' => (int) $master['all_day'] === 1 ? Time::dayOf($at, true, null) : Time::iso($at)], $master) === $key;
+        } catch (HttpError $e) {
+            if ($e->errorCode !== 'invalid_recurrence_instance') {
+                throw $e;
+            }
+            return false;
+        }
+    }
+
+    /** One occurrence of a repeating event as a row of its own, not yet stored: the series' fields at that day. */
+    private function occurrenceRow(array $master, string $instanceUtc): array
+    {
+        $start = Time::fromDb($instanceUtc);
+        $row = $this->copyForChild($master);
+        $row['rrule'] = null;
+        $row['exdates_json'] = null;
+        $row['start_utc'] = Time::toDb($start);
+        $row['end_utc'] = Time::toDb($start->add(new \DateInterval('PT' . Recurrence::durationSeconds($master) . 'S')));
+        return $row;
+    }
+
+    /**
+     * One day of a repeating event as a row, as the series' state reads it
+     * (the page "Slice 2", (b); GoogleSeries::dayStored): its own row with
+     * each field it does not own read from the repeating event, or, an
+     * ordinary day, the repeating event's row at that day.
+     */
+    private function dayRow(array $master, ?array $row, string $key): array
+    {
+        return array_merge($row ?? ['id' => 0] + $this->occurrenceRow($master, $key), GoogleSeries::dayStored($master, $row, $key));
+    }
+
+    /** The row a request for one day was made against: the day as stored (dayRow), with what `over` says the person was shown (overColumns). */
+    private function dayBase(int $userId, array $dayRow): array
+    {
+        return $this->requestOver === [] ? $dayRow : array_merge($dayRow, $this->overColumns($userId, $dayRow, $this->requestOver));
+    }
+
+    /** The request's keys that set each compared field. */
+    private const FIELD_KEYS = ['title' => ['title'], 'description' => ['description'], 'location' => ['location'], 'url' => ['url'], 'status' => ['status'], 'showAs' => ['showAs'],
+        'time' => ['start', 'end', 'allDay', 'tzid', 'typed']];
+
+    /**
+     * A request without the keys of the fields the conflict choice kept: a
+     * field set at the value the person was shown, which Google Calendar has
+     * changed since, is not written (sending it would put the old value back).
+     *
+     * @param list<string> $kept
+     */
+    private static function withoutKept(array $in, array $kept): array
+    {
+        foreach ($kept as $field) {
+            $in = array_diff_key($in, array_flip(self::FIELD_KEYS[$field] ?? []));
+        }
+        return $in;
     }
 
     /** A time's keys, one value (the page "1.5.7, Slice 1", (b), T1): the clock-time flag is a field of its own. */
@@ -991,11 +1124,25 @@ final class Events
      */
     public function requestBase(int $userId, array $row, array $over, ?array $body = null): array
     {
-        if ($over === [] || !$this->choosesOverGoogle($userId, $row)) {
+        $single = empty($row['rrule']) && empty($row['recurrence_parent_id']);
+        if ($over === [] || !Settings::googleConflictChoice($this->db, $userId)) {
             return $row;
         }
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $row['calendar_id']]);
         if ($calendar === null || !GoogleWriter::bound($calendar)) {
+            return $row;
+        }
+        if (!$single) {
+            // One day of a repeating event (the page "Slice 2", (b)): its
+            // base is built where the day is known (dayBase); here the
+            // request is checked as it came in, a time whole in `over` and
+            // in the body. A change to all events or from a day on carries
+            // no `over` that is read.
+            $scope = (string) ($body['scope'] ?? '');
+            if ($body !== null && (!empty($row['recurrence_parent_id']) ? !in_array($scope, ['all', 'following'], true) : $scope === 'this')) {
+                self::wholeTime($over);
+                self::wholeTime(array_diff_key($body, ['over' => true]));
+            }
             return $row;
         }
         self::wholeTime($over);
@@ -1057,6 +1204,23 @@ final class Events
         return array_map(static fn(string $f): array => ['field' => $f, 'now' => $served[$f]], $fields);
     }
 
+    /**
+     * `kept` for fields of the event $id as it shows: a day of a repeating
+     * event as the series' state reads it (dayRow, the reading the question
+     * uses), any other event its row.
+     *
+     * @param list<string> $fields
+     */
+    public function keptOfEvent(int $userId, int $id, array $fields): array
+    {
+        if ($fields === []) {
+            return [];
+        }
+        $row = $this->get($userId, $id);
+        $master = empty($row['recurrence_parent_id']) ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]);
+        return $this->keptOf($master === null ? $row : $this->dayRow($master, $row, (string) $row['recurrence_instance_utc']), $fields);
+    }
+
     /** What the last change to one Google event left as Google changed it (`kept` of a 200); [] when nothing. */
     public function kept(): array
     {
@@ -1104,17 +1268,23 @@ final class Events
         // while the local cache rejects the resulting exclusion list.
         $this->withExdate($master, $instanceUtc);
         $allDay = (int) $master['all_day'] === 1;
-        $override = $this->db->one(
+        $dayRow = fn(array $master): ?array => $this->db->one(
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
             [(int) $master['id'], $instanceUtc]
         );
+        $step = $this->googleDayDelete($userId, $calendar, $master, $dayRow($master), $instanceUtc, $authority);
+        if ($step === null) {
+            return;
+        }
+        ['master' => $master, 'items' => $items] = $step;
+        $override = $dayRow($master);
         $googleId = $override !== null && !empty($override['google_event_id'])
             ? (string) $override['google_event_id']
             : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
         $shown = $override ?? $master;
         $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => (string) ($shown['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed'],
             $override['google_etag'] ?? null, null, ['local' => $override !== null ? $this->googleUndo()->localOf($override) : []]);
-        $gone = $this->googleRemove($calendar, $googleId, $authority);
+        $gone = $this->googleRemove($calendar, $googleId, $authority, null, $items);
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], false, [GoogleWriter::tombstone((string) $master['uid'], $instanceUtc)]));
         // What it changed, as on a local calendar: the series' skipped days
         // (and the day's row, when it had one: its snapshot says so), not the series whole.
@@ -1122,18 +1292,60 @@ final class Events
             [[Undo::keyOf('events', ['id' => (int) $master['id']]), Undo::SKIP . $instanceUtc]], note: $gone ? GoogleWriter::ALREADY_GONE : null);
     }
 
+    /**
+     * The conflict choice for a delete of one day (the page "Slice 2", case
+     * 9): a delete wants every field, so any change to that day in Google
+     * Calendar since it was shown is asked about. Null: asked, or the day
+     * was gone already once the read was stored, and there is nothing left
+     * to do. Else the repeating event's row as stored and the read for the
+     * delete's condition; with the setting off, or the repeating event gone
+     * at Google (the removal then completes as it did), the row as given and
+     * no read.
+     *
+     * @return array{master:array, items:?list<array>}|null
+     */
+    private function googleDayDelete(int $userId, array $calendar, array $master, ?array $row, string $key, ?RequestAuthority $authority): ?array
+    {
+        if (!$this->choosesDayOverGoogle($userId) || empty($master['google_event_id'])) {
+            return ['master' => $master, 'items' => null];
+        }
+        try {
+            $day = $this->dayRow($master, $row, $key);
+            $step = $this->googleChoice($userId, $calendar, $day, $this->dayBase($userId, $day), null, $authority, ['master' => $master, 'key' => $key]);
+        } catch (HttpError $e) {
+            if (!GoogleWriter::gone($e)) {
+                throw $e;
+            }
+            return ['master' => $master, 'items' => null];
+        }
+        return $step === null || $step['gone'] ? null : ['master' => $step['master'], 'items' => $step['items']];
+    }
+
     private function googleDeleteOverride(int $userId, array $calendar, array $override, ?RequestAuthority $authority = null): void
     {
+        $items = null;
         if (!empty($override['recurrence_parent_id'])) {
             $parent = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $override['recurrence_parent_id']]);
             if ($parent !== null) {
                 $this->withExdate($parent, (string) $override['recurrence_instance_utc']);
+                $step = $this->googleDayDelete($userId, $calendar, $parent, $override, (string) $override['recurrence_instance_utc'], $authority);
+                if ($step === null) {
+                    return;
+                }
+                $items = $step['items'];
+                $stored = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $override['id']]);
+                if ($stored === null) {
+                    // The day's row went with the read and nothing was asked: today's refusal, the read kept.
+                    $this->googleDeferred = new HttpError('google_conflict', GoogleWriter::CONFLICT_MESSAGE, 409);
+                    return;
+                }
+                $override = $stored;
             }
         }
         $googleId = self::requireGoogleId($override);
         $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => GoogleUndo::bodyOf($override)['status']],
             $override['google_etag'] ?? null, null, ['local' => $this->googleUndo()->localOf($override)]);
-        $gone = $this->googleRemove($calendar, $googleId, $authority);
+        $gone = $this->googleRemove($calendar, $googleId, $authority, null, $items);
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], false, [GoogleWriter::tombstone((string) $override['uid'], (string) $override['recurrence_instance_utc'])]));
         // The day's skip is its ground, as googleDeleteThis records it: the undo takes that skip back.
         $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $override['title'] . "'", $calendar, (int) $override['id'], $undo, null,

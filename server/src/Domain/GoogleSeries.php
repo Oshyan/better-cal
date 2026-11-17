@@ -210,6 +210,49 @@ final class GoogleSeries
         return $x;
     }
 
+    /**
+     * One day of a series as stored here, as the series' state reads it
+     * (stateOf): an edited day's own fields from its row and every field it
+     * does not own from the series (exceptionOf), an ordinary day (no row,
+     * or a row that owns nothing Google holds) the series' values at that
+     * day (plainAt). The base of the conflict choice for a day
+     * (docs/design/google-conflict-choice.md, the page "Slice 2", (b)). Pure.
+     *
+     * @return array<string,mixed> the Google-held columns (cols)
+     */
+    public static function dayStored(array $master, ?array $row, string $key): array
+    {
+        $x = $row === null ? null : self::exceptionOf($row, OwnFields::stored($row), $master);
+        if ($x !== null) {
+            return $x;
+        }
+        $m = self::cols($master) + ['rrule' => (string) ($master['rrule'] ?? '')];
+        return self::cols(self::plainAt($m, $key, self::lengthOf($m)));
+    }
+
+    /**
+     * One day of a series as a read holds it ($items: the list by the
+     * series' iCalendar UID): the day's record when Google holds one live,
+     * else the series' values at that day (plainAt); null when the read has
+     * no such day (skipped there, or no day of the series as read). What a
+     * day is "now" to the conflict choice (the page "Slice 2", (c)). Pure.
+     */
+    public static function dayNow(array $items, string $googleId, string $key): ?array
+    {
+        $h = self::held($items, $googleId);
+        $m = $h['master'];
+        if ($m === null) {
+            return null;
+        }
+        if (isset($h['records'][$key])) {
+            return $h['records'][$key];
+        }
+        if (isset($h['skips'][$key]) || !self::named($m, $key, (int) $m['all_day'] === 1)) {
+            return null;
+        }
+        return self::plainAt($m, $key, self::lengthOf($m));
+    }
+
     /** The series as stored: a target (the before side of a plan, or the undo stage's target); a day with only local data is an ordinary day. */
     public static function stateOf(array $master, array $rows): array
     {
@@ -3162,8 +3205,13 @@ final class GoogleSeries
      *
      * @param array<string,list<array>> $readbacks iCalendar UID => the series' resources
      * @param list<array> $targets
+     *
+     * $journal: a read stored before a change to one day (the conflict
+     * choice, GoogleWriter::readAndStore) is stored with the Activity entry
+     * a poll's has, so an older entry's undo sees it; a change's own
+     * read-back is not (the caller records what the person did).
      */
-    public function store(array $calendar, array $readbacks, array $targets, ?int $pendingId = null): void
+    public function store(array $calendar, array $readbacks, array $targets, ?int $pendingId = null, bool $journal = false): void
     {
         // A read-back listed below reader (access dropped to busy times only during the change) is never applied
         // (GoogleWriter::shows): what is held here stays as it was.
@@ -3208,7 +3256,7 @@ final class GoogleSeries
             $had[(int) $r['id']] = true;
         }
         $snapshot = GoogleSync::applyChanges(GoogleSync::rowsToParsed($others), GoogleSync::toParsedList($items), true);
-        $this->feeds->sync($calendar, $snapshot, journal: false);
+        $this->feeds->sync($calendar, $snapshot, journal: $journal);
         if ($pendingId !== null && $uids !== []) {
             [$in, $params] = Db::in(array_keys($uids));
             $made = [];

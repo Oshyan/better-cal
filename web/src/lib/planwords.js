@@ -1025,10 +1025,24 @@ export function timeValueWords(t, now = new Date()) {
   // One all-day date says its year as a timed day does, only when asked
   // (the popover's own form for it always does).
   const oneDay = t.allDay && s.toDateString() === new Date(e.getTime() - 1).toDateString();
-  const range = oneDay ? (otherYear(s, e, true, now) ? fmtDateFull(s) : fmtDayMedium(s)) : fmtRange(s, e, !!t.allDay, now);
+  const range = oneDay ? dateWords(s, otherYear(s, e, true, now)) : fmtRange(s, e, !!t.allDay, now);
   // A sentence's spaces are plain: Intl puts a narrow one before AM and PM.
   const plainSpaces = range.replace(/[\u00a0\u202f]/g, ' ');
   return t.allDay ? 'all day on ' + plainSpaces : plainSpaces;
+}
+
+/** One date as a sentence says it: "Tue, Nov 17", or "Tue, Jan 5, 2027" with its year. */
+const dateWords = (d, withYear) => (withYear ? fmtDateFull(d) : fmtDayMedium(d)).replace(/[\u00a0\u202f]/g, ' ');
+
+/**
+ * The day of a repeating event a question is about, by its date ("Tue, Nov
+ * 17"): `day` is its time as it was shown ({start, end, allDay}), `ref` the
+ * question's reference day (yearRef), so the day says its year when the
+ * question's other dates say theirs.
+ */
+function dayWords(day, ref) {
+  const [s, e] = timeDates(day);
+  return dateWords(s, otherYear(s, e, !!day.allDay, ref));
 }
 
 /** A sentence's full stop, left out after a quoted value that already ends one: "'Bring the agenda.'". */
@@ -1076,28 +1090,35 @@ function valueWords(field, v, other, ref) {
 }
 
 /**
- * The question when a change or a delete of one event finds that event
- * changed in Google Calendar since it was shown: {title, body, lines, foot,
- * confirmLabel, danger} for the app's confirm dialog. `fields` from the
- * 409; `name`, the event's title as it was shown; `remove`, a delete;
- * `back`, whether Cancel returns the person to a form holding their change.
- * One field is said in sentences; several get a line each. Two values are
- * never joined by "to" (a time's own range has one): each is its own
- * clause, apart by a semicolon.
+ * The question when a change or a delete of one event, or of one day of a
+ * repeating event, finds it changed in Google Calendar since it was shown:
+ * {title, body, lines, foot, confirmLabel, danger} for the app's confirm
+ * dialog. `fields` from the 409; `name`, the event's title as it was shown;
+ * `remove`, a delete; `back`, whether Cancel returns the person to a form
+ * holding their change; `day`, the 409's day ({start, end, allDay, tzid},
+ * the day as it was shown) when the question is about one day: the lead
+ * names it, a field whose `from` is 'series' says the change was made to
+ * the whole repeating event, and the foot says Overwrite or Delete is for
+ * this day only. One field is said in sentences; several get a line each.
+ * Two values are never joined by "to" (a time's own range has one): each
+ * is its own clause, apart by a semicolon.
  */
-export function googleChangedAsk({ name, fields, remove = false, back = false, now = new Date() }) {
+export function googleChangedAsk({ name, fields, remove = false, back = false, day = null, now = new Date() }) {
   const list = (fields || []).filter((f) => f && f.field);
-  const ref = yearRef(list.filter((f) => f.field === 'time').flatMap((f) => [f.was, f.now, f.yours]), now);
+  // The day is a date the question says, so it shares the year decision.
+  const ref = yearRef([...list.filter((f) => f.field === 'time').flatMap((f) => [f.was, f.now, f.yours]), day], now);
   const said = (f, v, other) => valueWords(f.field, v, other, ref);
   // A value in a line: the value, or "no link" for an empty one.
   const side = (f, v, other) => (isEmptyValue(f.field, v) ? 'no ' + fieldNoun(f.field) : said(f, v, other));
-  const since = 'Since ' + quoted(name || 'Untitled event') + ' was last shown to you, ';
+  const since = 'Since ' + (day ? dayWords(day, ref) + ' of ' : '') + quoted(name || 'Untitled event') + ' was last shown to you, ';
+  // Where in Google Calendar the change was made, when it was the whole repeating event's.
+  const whole = (f) => (f.from === 'series' ? ', for the whole repeating event' : '');
   const one = list.length === 1 ? list[0] : null;
   let body;
   let lines = [];
   if (one) {
     const f = one.field;
-    const changed = (how) => subjectOf(f) + ' ' + wasWere(f) + ' ' + how + ' in Google Calendar';
+    const changed = (how) => subjectOf(f) + ' ' + wasWere(f) + ' ' + how + ' in Google Calendar' + whole(one);
     const It = upperFirst(pronoun(f));
     if (remove) {
       body = since + stop(isEmptyValue(f, one.now) ? changed('removed') + '; ' + pronoun(f) + ' ' + wasWere(f) + ' ' + said(one, one.was)
@@ -1111,16 +1132,17 @@ export function googleChangedAsk({ name, fields, remove = false, back = false, n
     }
   } else {
     body = since + 'these were changed in Google Calendar:';
-    lines = list.map((f) => labelOf(f.field) + ': ' + (remove
+    lines = list.map((f) => labelOf(f.field) + whole(f) + ': ' + (remove
       ? stop('was ' + side(f, f.was, f.now) + '; now ' + side(f, f.now, f.was))
       : side(f, f.now, f.yours) + ' in Google Calendar; ' + side(f, f.yours, f.now) + ' in your change.'));
   }
-  const title = remove ? 'Delete it anyway?'
+  const title = remove ? (day ? 'Delete this day anyway?' : 'Delete it anyway?')
     : one && nounOf(one.field) ? 'The ' + nounOf(one.field) + ' ' + wasWere(one.field) + ' changed in Google Calendar'
     : 'Changed in Google Calendar';
   const foot = remove
-    ? 'Delete deletes it here and in Google Calendar. Cancel keeps it, as it is in Google Calendar now.'
-    : 'Overwrite saves your change. Cancel saves nothing' + (back ? ' and takes you back to your change.' : ', and the event shows as it is in Google Calendar now.');
+    ? 'Delete deletes ' + (day ? 'this day' : 'it') + ' here and in Google Calendar. Cancel keeps it, as it is in Google Calendar now.'
+    : 'Overwrite saves your change' + (day ? ' for this day only' : '') + '. Cancel saves nothing'
+      + (back ? ' and takes you back to your change.' : ', and ' + (day ? 'the day' : 'the event') + ' shows as it is in Google Calendar now.');
   return { title, body, lines, foot, confirmLabel: remove ? 'Delete' : 'Overwrite', danger: remove };
 }
 
@@ -1154,6 +1176,19 @@ export function keptWords(kept, { there = false, now = new Date() } = {}) {
   const lead = list.length === 1 ? 'A separate change ' + where + ' was kept: ' : 'Separate changes ' + where + ' were kept: ';
   return lead + joined + '.';
 }
+
+// ---- "Use series value" on one day -------------------------------------------
+//
+// An edited day gives fields back to its repeating event and takes its
+// values. Each field by its one name (fieldNoun): "Uses the repeating
+// event's title", "Uses the repeating event's date, time and notes".
+
+/** The toast when a day gave `fields` back: "Uses the repeating event's title". */
+export const useSeriesWords = (fields) => "Uses the repeating event's " + fieldList(fields);
+/** The toast when the server gave none of `fields` back: "Nothing changed: this day still has its own title" */
+export const stillOwnWords = (fields) => 'Nothing changed: this day still has its own ' + fieldList(fields);
+/** What a day's own-field control does, for its label: "Use the repeating event's title". */
+export const useSeriesLabel = (fields) => "Use the repeating event's " + (fields ? fieldList(fields) : 'values');
 
 /** A run of deletes stopped at a question the person cancelled, after some went: "Stopped. Already deleted: 'Sample hike' and 'Sample dinner'." */
 // Where a change went, on its toast, after what it did and which occurrences: one sent to Google Calendar happened

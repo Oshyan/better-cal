@@ -1,11 +1,14 @@
-// A change or delete of one event, and what Google Calendar did to it since
-// it was shown (docs/design/google-conflict-choice.md, slice 1). Every request
-// that changes or deletes one event goes out through sendEventChange:
+// A change or delete of one event, or of one day of a repeating event, and
+// what Google Calendar did to it since it was shown
+// (docs/design/google-conflict-choice.md, slices 1 and 2). Every request that
+// changes or deletes one event or one day goes out through sendEventChange:
 //
 // - a time is one value: start, end, all-day and zone together (timeOf). A
-//   request that changes the time of an event in no series sends it whole,
-//   and `over` names it whole; a part is never left for the server to fill
-//   from what it stores;
+//   request that changes the time of an event in no series, or of one day
+//   (scope 'this'), sends it whole, and `over` names it whole; a part is
+//   never left for the server to fill from what it stores. A change to more
+//   than one day of a repeating event (scope 'all' or 'following', or an
+//   answer with no scope) keeps its own shape and sends no `over`;
 // - it carries `over`, for each field the request changes, the value the app
 //   showed (overOf: from the record or occurrence on screen, never from the
 //   editor's form), so the server compares Google's value with what the
@@ -19,8 +22,9 @@
 //   and each asked field's value to what the question showed as the
 //   person's, and a second google_changed asks again with the newer values;
 //   Cancel sends nothing, and what shows stays what was stored; an editor
-//   open on the event keeps the person's fields, and its base becomes what
-//   the question showed (shownAfter), so its next Save goes through unless
+//   open on the event or day keeps the person's fields and its identity
+//   (sameItem), and its base becomes what the question showed (shownAfter),
+//   so its next Save names the same event and day and goes through unless
 //   Google changed again;
 // - questions are asked one at a time, in the order they came
 //   (ConfirmDialog.js confirmTurn): one that came while another was open
@@ -50,9 +54,19 @@ const CLIENT_OUTDATED = 'client_outdated';
 // Planned or Maybe (`relationship`) is the event's status.
 const FIELD_OF_KEY = {
   title: 'title', description: 'description', location: 'location', url: 'url',
-  status: 'status', relationship: 'status', start: 'time', end: 'time', allDay: 'time', tzid: 'time',
+  status: 'status', relationship: 'status', showAs: 'showAs', start: 'time', end: 'time', allDay: 'time', tzid: 'time',
 };
-const FIELDS = ['title', 'description', 'location', 'url', 'status', 'time'];
+// "Use series value" names a day's own fields (docs/design/series-model.md,
+// Own Fields), not request keys: its date, time, length and all-day setting
+// are all the time.
+const FIELD_OF_OWN = {
+  title: 'title', description: 'description', location: 'location', url: 'url', status: 'status', showAs: 'showAs',
+  date: 'time', time: 'time', length: 'time', allDay: 'time',
+};
+// Free or busy (`showAs`) is served with the record only, not in the
+// window's list shape: a copy from the window leaves it out of `over`, as
+// it does the notes, and the server reads its base from what it stores.
+const FIELDS = ['title', 'description', 'location', 'url', 'status', 'showAs', 'time'];
 // The time's keys, as the API serves them for the event: one value.
 // `floating` (same clock time in any zone) is a field of its own beside it,
 // as the API writes it (api-contract.md, Floating times), never a part.
@@ -83,17 +97,32 @@ export function timeOf(shown, change = {}) {
 const touchesTime = (body) => TIME_KEYS.some((k) => k in (body || {}));
 
 /**
+ * Whether a request is compared with what was shown: a change or delete of
+ * an event in no series, or of one day of a repeating event (scope 'this').
+ * Anything else sent for a repeating event (all events, this and following,
+ * an answer with no scope) keeps its own shape and sends no `over`.
+ */
+export const comparedOne = (occ, body) => !!occ && (!occ.recurring || (body || {}).scope === 'this');
+
+/** The fields a request changes: its keys' fields, and the fields "Use series value" names. */
+const fieldsOf = (body) => [...new Set([
+  ...Object.keys(body || {}).map((k) => FIELD_OF_KEY[k]),
+  ...(Array.isArray((body || {}).useSeries) ? body.useSeries.map((n) => FIELD_OF_OWN[n]) : []),
+].filter(Boolean))];
+
+/**
  * The `over` of a request: for each field it changes (every field, for a
  * delete), the value the occurrence `occ` showed, under the keys the API
- * serves. Only an event in no series: a day of a repeating event shows its
- * own start, not the row's, and the server compares only single events.
- * The time goes whole (timeOf), its four keys. A field the occurrence
- * doesn't hold (the notes of one shown from the window, without its
- * record) is left out, and the server reads its base from the row.
+ * serves. An event in no series, or one day of a repeating event (its
+ * occurrence shows the day's own values and time); none for a change to
+ * more than one day (comparedOne). The time goes whole (timeOf), its four
+ * keys. A field the occurrence doesn't hold (the notes of one shown from
+ * the window, without its record) is left out, and the server reads its
+ * base from what it stores.
  */
 export function overOf(occ, body, { remove = false } = {}) {
-  if (!occ || occ.recurring) return {};
-  const fields = remove ? FIELDS : [...new Set(Object.keys(body || {}).map((k) => FIELD_OF_KEY[k]).filter(Boolean))];
+  if (!comparedOne(occ, body)) return {};
+  const fields = remove ? FIELDS : fieldsOf(body);
   const over = {};
   for (const f of fields) {
     if (f === 'time') Object.assign(over, shownTime(occ));
@@ -116,12 +145,13 @@ function shownTime(occ) {
 }
 
 /**
- * A request's body with its time whole (timeOf over the event as shown):
- * an event in no series only. A series' requests keep their own shapes (a
+ * A request's body with its time whole (timeOf over the event or day as
+ * shown), beside whatever else it carries (a day's scope and instanceStart
+ * stay as they are). A change to more than one day keeps its own shape (a
  * change of the series' start alone means something to its plan).
  */
 function wholeBody(occ, body) {
-  if (!occ || occ.recurring || !touchesTime(body)) return body;
+  if (!comparedOne(occ, body) || !touchesTime(body)) return body;
   shownTime(occ);
   const t = timeOf(occ, body);
   if (!t) throw new Error('The time of this change has no zone; nothing was sent.');
@@ -132,12 +162,16 @@ function wholeBody(occ, body) {
  * Overwrite: the same request again, for each asked field said to have
  * seen what Google holds now (`over` from its `now`) and sending what the
  * question showed as the person's (the body's keys from its `yours`; a
- * time its four keys, whole, through timeOf). A delete's `yours` is null: its body stays.
- * Everything else in the body (a scope, tags) is as it was.
+ * time its four keys, whole, through timeOf), for each field the body
+ * sets. A delete's `yours` is null, and "Use series value" sets no value
+ * (it names fields): their bodies stay, and only `over` changes.
+ * Everything else in the body (a scope and a day's instanceStart, tags) is
+ * as it was.
  */
 function overwriteOf(send, fields) {
   const body = { ...send };
-  for (const f of fields || []) if (f.yours != null) Object.assign(body, valueOf(f, f.yours));
+  const sets = new Set(Object.keys(send).map((k) => FIELD_OF_KEY[k]).filter(Boolean));
+  for (const f of fields || []) if (f.yours != null && sets.has(f.field)) Object.assign(body, valueOf(f, f.yours));
   return { ...body, over: { ...(send.over || {}), ...nowOf(fields) } };
 }
 
@@ -167,19 +201,33 @@ export function shownAfter(occ, fields) {
 }
 
 /**
- * An editor open on the event when a question shows: its form stays the
- * person's (nothing here touches it; EditorDrawer seeds once per opening,
- * lib/editfields.js sameOpening), and what it has been shown, the base its
- * next Save sends as `over` (editorBase), takes the question's values.
+ * Whether two copies are of the same thing being changed: its identity,
+ * which event and, for a repeating event, which day (the id a request goes
+ * to and the day's instanceStart, its start as the copy was given). A
+ * single event's identity is its id alone. An editor's identity is fixed
+ * for its opening (state.editor.occ); what it has been shown is its base
+ * (editorBase), and only a question moves that.
+ */
+export const sameItem = (a, b) => !!a && !!b && a.eventId === b.eventId && (!a.recurring || a.start === b.start);
+
+/**
+ * An editor open on the event or day when a question about it shows: its
+ * form stays the person's (nothing here touches it; EditorDrawer seeds once
+ * per opening, lib/editfields.js sameOpening), and what it has been shown,
+ * the base its next Save sends as `over` (editorBase), takes the question's
+ * values. Its identity stays: the next Save names the same event and day.
  */
 function editorShown(occ, fields) {
   const ed = state.editor;
-  if (!ed || !ed.occ || ed.occ.eventId !== occ.eventId || ed.occ.recurring) return;
+  if (!ed || !sameItem(ed.occ, occ)) return;
   set({ editor: { ...ed, shown: shownAfter(ed.shown || ed.occ, fields) } });
 }
 
 const askedFields = (e) => (e && e.code === 'google_changed' && e.data && e.data.error && Array.isArray(e.data.error.fields) && e.data.error.fields.length
   ? e.data.error.fields : null);
+// The day a question is about, as it was shown ({start, end, allDay, tzid}):
+// only a question about one day of a repeating event carries one.
+const askedDay = (e) => (e.data.error.day && e.data.error.day.start ? e.data.error.day : null);
 
 /**
  * What the server stored when it asked, shown: the event fetched again and
@@ -187,7 +235,12 @@ const askedFields = (e) => (e && e.code === 'google_changed' && e.data && e.data
  * local change off (a drag's moved block, a Maybe's mark). The window is
  * fetched again too. Never the copy from before the action: Google may
  * hold something else now. If the event can't be read, the window still
- * is, and shows what it holds.
+ * is, and shows what it holds. A day of a repeating event is not adopted
+ * from its record (one record serves many days, each its own start). When
+ * no record was put in place, the window's answer is what shows the event
+ * as stored, so the question waits for it: a dragged day's block is where
+ * Google Calendar has it once the question opens, never where it was
+ * before the drag. With a record in place, the refetch only confirms.
  */
 async function showStored(occ, revert) {
   let stored = null;
@@ -197,12 +250,17 @@ async function showStored(occ, revert) {
   } catch { /* the window's answer shows it */ }
   if (revert) revert();
   if (stored) adoptEvent(stored);
-  refreshWindow();
+  const refreshed = refreshWindow();
+  if (!stored) await refreshed;
 }
 
 /**
- * Send one change or delete of the event `occ` showed: `body` with its
- * `over`. Resolves to the answer, or CANCELLED when the server asked and the
+ * Send one change or delete of the event or day `occ` names: `body` with
+ * its `over`, from `base`, what the person was shown of it (the editor's
+ * base after a question, editorBase), else `occ` itself. `occ` is the
+ * identity (the event, and for a repeating event the day, the request is
+ * about): it is what an open editor is matched by and what is shown again
+ * at a question. Resolves to the answer, or CANCELLED when the server asked and the
  * person chose Cancel. At a question the event shows as the server stored
  * it before the question opens (showStored), whatever the answer. `back`:
  * the surface the change was made in stays open holding it (the editor, the
@@ -210,9 +268,10 @@ async function showStored(occ, revert) {
  * failure throws, as api() does; a google_changed without its fields throws
  * too, its message whole (failWords).
  */
-export async function sendEventChange(occ, path, method, body = {}, { remove = false, revert = null, back = false } = {}) {
-  const whole = wholeBody(occ, body);
-  const over = overOf(occ, whole, { remove });
+export async function sendEventChange(occ, path, method, body = {}, { remove = false, revert = null, back = false, base = null } = {}) {
+  const seen = base || occ;
+  const whole = wholeBody(seen, body);
+  const over = overOf(seen, whole, { remove });
   let send = Object.keys(over).length ? { ...whole, over } : whole;
   let shown = false;
   // The dialog's turn (ConfirmDialog.js confirmTurn): its place in line
@@ -248,7 +307,7 @@ export async function sendEventChange(occ, path, method, body = {}, { remove = f
           // itself if Google holds again what was shown, or the failure.
           if (turn.waited) continue;
         }
-        const ask = googleChangedAsk({ name: occ.title, fields, remove, back });
+        const ask = googleChangedAsk({ name: seen.title, fields, remove, back, day: askedDay(e) });
         const yes = await turn.ask(ask);
         turn = null; // the answer gave it back
         if (!yes) return CANCELLED;

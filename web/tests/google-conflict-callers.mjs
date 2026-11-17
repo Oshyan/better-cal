@@ -35,7 +35,7 @@ options.debounceRendering = (cb) => Promise.resolve().then(cb);
 const { render, html } = await import('../vendor/index.js');
 const { state, set, subscribe, adoptEvent, invalidateRecords } = await import('../src/app/store.js');
 const { EditorDrawer } = await import('../src/app/EditorDrawer.js');
-const { deleteEvent, moveEvent, resizeEvent, updateEvent, moveTrip, maybePromptExtendTrip } = await import('../src/app/actions.js');
+const { deleteEvent, moveEvent, resizeEvent, updateEvent, moveTrip, maybePromptExtendTrip, setRelationship, useSeriesValue } = await import('../src/app/actions.js');
 const { AppReloadBanner } = await import('../src/app/updates.js');
 const { askConfirm } = await import('../src/app/ConfirmDialog.js');
 const { toISOWithOffset, parseISO, dayKeyOf } = await import('../src/lib/dates.js');
@@ -50,7 +50,8 @@ console.error = (...a) => { if (!String(a[0]).startsWith('Rich text editor faile
 
 const realFetch = globalThis.fetch;
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
-const changed = (fields) => json(409, { error: { code: 'google_changed', message: 'Changed in Google Calendar', fields, kept: [] } });
+// `day`: a question about one day of a repeating event names it, as it was shown.
+const changed = (fields, day = null) => json(409, { error: { code: 'google_changed', message: 'Changed in Google Calendar', ...(day ? { day } : {}), fields, kept: [] } });
 
 // Answer each question as it shows, from `reply`; record what it said.
 const asked = [];
@@ -59,7 +60,7 @@ const off = subscribe((st) => {
   const a = st.confirmAsk;
   if (!a || a._seen) return;
   a._seen = true;
-  asked.push({ title: a.title, body: a.body });
+  asked.push({ title: a.title, body: a.body, foot: a.foot, confirmLabel: a.confirmLabel });
   if (!reply.length) return; // left open for the test to answer
   const yes = reply.shift();
   queueMicrotask(() => a.resolve(yes));
@@ -78,12 +79,15 @@ const dayOf = (iso) => dayKeyOf(parseISO(iso));
 // 6th) are in another zone than the event opened with, so a base that takes
 // a question's time takes its zone too.
 const timeOf = (key) => { const d = Number(key.slice(8)); return { start: at(d, '10:00'), end: at(d, '11:00'), allDay: false, tzid: d >= 5 ? 'Asia/Tokyo' : 'America/Los_Angeles' }; };
-const opening = {
+// The event the editor opens on: one in no series, then (the same table,
+// OPENINGS below) one day of a repeating event.
+const single = {
   instanceId: '7:open', eventId: 7, calendarId: 3, recurring: false, rrule: null, full: true,
   title: 'Sample review', url: 'https://example.test/one', location: 'Room 2', description: 'Bring the agenda',
-  status: 'confirmed', relationship: 'planned', ...timeOf('2027-03-03'), tags: ['alpha'], people: [],
+  status: 'confirmed', relationship: 'planned', showAs: 'busy', ...timeOf('2027-03-03'), tags: ['alpha'], people: [],
   isContainer: false, reminderSource: 'event', reminders: [{ minutes: 30 }],
 };
+let opening = single;
 
 const ed = dom.doc.createElement('div');
 dom.doc.body.appendChild(ed);
@@ -115,6 +119,10 @@ const FIELDS = {
   status: { google: true, O: 'confirmed', G: 'tentative', D: 'tentative', G2: 'confirmed',
     put: async (v) => { ed.querySelectorAll('.bc-ed-segbtn').find((b) => b.textContent.includes(v === 'tentative' ? 'Maybe' : 'Planned')).click(); await settle(); },
     sent: (b) => b.status, over: (o) => o.status, occ: (v) => ({ status: v, relationship: v === 'tentative' ? 'maybe' : 'planned' }) },
+  // Free or busy: two values too, held by the record the editor opens.
+  showAs: { google: true, O: 'busy', G: 'free', D: 'free', G2: 'busy',
+    put: async (v) => { ed.querySelectorAll('.bc-ed-segbtn').find((b) => b.textContent.trim() === (v === 'free' ? 'Free' : 'Busy')).click(); await settle(); },
+    sent: (b) => b.showAs, over: (o) => o.showAs, occ: (v) => ({ showAs: v }) },
   tags: { google: false, O: 'alpha', D: 'alpha, beta',
     put: (v) => type(ed.querySelectorAll('input').find((i) => i.getAttribute('aria-label') === 'Tags, comma separated'), v), sent: (b) => (b.tagNames ? b.tagNames.join(', ') : undefined) },
   calendar: { google: false, O: 3, D: 4,
@@ -150,9 +158,13 @@ globalThis.fetch = async (url, init = {}) => {
   const body = JSON.parse(init.body);
   sent.push(body);
   const over = body.over || {};
-  const ask = NAMES.filter((f) => FIELDS[f].google && FIELDS[f].sent(body) !== undefined && FIELDS[f].over(over) !== model.google[f]);
+  // A change to all events of a repeating event is compared with nothing
+  // (it carries no `over`): saved as sent.
+  const compared = body.scope === undefined || body.scope === 'this';
+  const ask = NAMES.filter((f) => compared && FIELDS[f].google && FIELDS[f].sent(body) !== undefined && FIELDS[f].over(over) !== model.google[f]);
   if (ask.length) return changed(ask.map((f) => ({ field: f === 'notes' ? 'description' : f === 'link' ? 'url' : f, was: wireOf(f, FIELDS[f].over(over)), now: wireOf(f, model.google[f]), yours: wireOf(f, FIELDS[f].sent(body)) })));
-  return json(200, { kept: [], occurrence: { ...storedOcc(), instanceId: '7:saved' } });
+  // A day's answer carries no occurrence: the window's refetch shows it.
+  return json(200, opening.recurring ? { kept: [] } : { kept: [], occurrence: { ...storedOcc(), instanceId: '7:saved' } });
 };
 
 const mount = async () => {
@@ -185,7 +197,9 @@ const readRequest = (body) => ({
 });
 // Only the fields of the table, never another key of a row: `typed` and
 // `allDay` go with a time, locationLat/Lng with a place.
-const ROW_KEYS = new Set(['over', 'title', 'start', 'end', 'allDay', 'tzid', 'typed', 'location', 'locationLat', 'locationLng', 'url', 'description', 'status', 'tagNames', 'calendarId', 'isContainer', 'reminders']);
+const ROW_KEYS = new Set(['over', 'title', 'start', 'end', 'allDay', 'tzid', 'typed', 'location', 'locationLat', 'locationLng', 'url', 'description', 'status', 'showAs', 'tagNames', 'calendarId', 'isContainer', 'reminders']);
+// A day's request names the day beside them.
+const IDENTITY_KEYS = new Set(['scope', 'instanceStart']);
 
 let checks = 0;
 // T1, T2 (a time is one value): a request that sends any part of a time
@@ -220,8 +234,11 @@ async function save(label, answer) {
   assert.ok(sent.length >= 1, label + ': a request is sent');
   for (const b of sent) checks += wholeTimes(b, label);
   assert.deepEqual(readRequest(sent[0]), { fields: want.first.fields, over: want.first.over }, label + ': exactly what differs from the base, over from the base');
-  for (const k of Object.keys(sent[0])) assert.ok(ROW_KEYS.has(k), label + ': only rows of changed fields go: ' + k);
-  checks += 2;
+  for (const k of Object.keys(sent[0])) assert.ok(ROW_KEYS.has(k) || (opening.recurring && IDENTITY_KEYS.has(k)), label + ': only rows of changed fields go: ' + k);
+  // What is being edited is fixed for the opening: a day's every request
+  // names the day it opened on, whatever a question showed since.
+  for (const b of sent) assert.deepEqual([b.scope, b.instanceStart], opening.recurring ? ['this', opening.start] : [undefined, undefined], label + ': every request names what the editor opened');
+  checks += 3;
   if (!want.asks.length) {
     assert.equal(state.editor, null, label + ': saved, the editor closes');
     checks++;
@@ -269,21 +286,81 @@ const steps = {
   },
 };
 
+// The same rule for one day of a repeating event (slice 2, (l)): one base
+// per opening, moved only by a question, and the day the editor opened on
+// named by every Save. A day's calendar is left out: picking another one
+// sets Apply to all events (#186), a save to every day, compared with
+// nothing (section D).
+const OPENINGS = [
+  { name: 'an event in no series', occ: single, skip: [] },
+  { name: 'a day of a repeating event', occ: { ...single, instanceId: '7:day', recurring: true, rrule: 'FREQ=WEEKLY' }, skip: ['calendar'] },
+];
 let rows = 0;
-for (const f of NAMES) {
-  for (const [name, path] of Object.entries(PATHS)) {
-    if (!FIELDS[f].google && /what Google holds|poll/.test(name)) continue; // a local field has no value at Google
-    const list = path(f, steps);
-    if (!list) continue;
-    model = { form: {}, base: {}, google: {} };
-    for (const g of NAMES) { model.form[g] = FIELDS[g].O; model.base[g] = FIELDS[g].O; model.google[g] = FIELDS[g].O; }
-    await mount();
-    // A Save that closes the editor ends the path (a two-valued field can
-    // hold nothing but Google's value after its question).
-    for (const step of list) { if (!state.editor) break; await step(f + ', ' + name); }
-    rows++;
+for (const op of OPENINGS) {
+  opening = op.occ;
+  for (const f of NAMES) {
+    if (op.skip.includes(f)) continue;
+    for (const [name, path] of Object.entries(PATHS)) {
+      if (!FIELDS[f].google && /what Google holds|poll/.test(name)) continue; // a local field has no value at Google
+      const list = path(f, steps);
+      if (!list) continue;
+      model = { form: {}, base: {}, google: {} };
+      for (const g of NAMES) { model.form[g] = FIELDS[g].O; model.base[g] = FIELDS[g].O; model.google[g] = FIELDS[g].O; }
+      await mount();
+      // A Save that closes the editor ends the path (a two-valued field can
+      // hold nothing but Google's value after its question).
+      for (const step of list) { if (!state.editor) break; await step(op.name + ', ' + f + ', ' + name); }
+      rows++;
+    }
   }
 }
+
+// A Save to all events after a question about the day: compared with
+// nothing (no `over`), it sends what it would have sent had no question
+// been asked, its difference from the day as the editor opened. Read
+// against the same edits saved with no question first, never a list. (A
+// Google calendar offers no "this and following": scopes.js.)
+{
+  opening = OPENINGS[1].occ;
+  const toAll = async () => { const sel = ed.querySelector('select[aria-label="Apply to"]'); sel.value = 'all'; sel.dispatch('change'); await settle(); };
+  const submit = async () => { q('form').dispatch('submit'); await turns(() => !state.editor || asked.length, 2000); await settle(); };
+  for (const f of ['title', 'time', 'location']) {
+    // What the person types after the question: their own value still, or
+    // what the question showed as Google's.
+    for (const after of ['D', 'G']) {
+      const label = 'all events after a question about the day\'s ' + f + ', the form at ' + (after === 'D' ? 'the person\'s value' : 'Google\'s');
+      model = { form: {}, base: {}, google: {} };
+      for (const g of NAMES) { model.form[g] = FIELDS[g].O; model.base[g] = FIELDS[g].O; model.google[g] = FIELDS[g].O; }
+      // No question: the edits, Apply to all events, Save.
+      await mount();
+      await FIELDS[f].put(FIELDS[f][after]);
+      await toAll();
+      sent.length = 0; asked.length = 0; reply = [];
+      await submit();
+      const unasked = sent[0];
+      // The question first: the change to this day asked about, Cancel,
+      // then the same edits and Save to all events.
+      model.google[f] = FIELDS[f].G;
+      await mount();
+      await FIELDS[f].put(FIELDS[f].D);
+      sent.length = 0; asked.length = 0; reply = [false];
+      await submit();
+      assert.equal(asked.length, 1, label + ': asked about the day');
+      await FIELDS[f].put(FIELDS[f][after]);
+      await toAll();
+      sent.length = 0; asked.length = 0; reply = [];
+      await submit();
+      assert.equal(sent.length, 1, label + ': one request');
+      assert.equal(sent[0].over, undefined, label + ': no over');
+      assert.deepEqual(sent[0], unasked, label + ': what it would have sent with no question');
+      assert.equal(state.editor, null, label + ': saved');
+      checks += 4;
+      rows++;
+      model.google[f] = FIELDS[f].O;
+    }
+  }
+}
+opening = single;
 render(null, ed);
 set({ editor: null, editorDirty: false });
 await settle();
@@ -306,10 +383,12 @@ globalThis.fetch = async (url, init = {}) => {
   const held = google[id];
   if (!held) return json(404, { error: { code: 'not_found', message: 'That event no longer exists' } });
   // A field's value in `over`, in the event held, or in the request.
-  const value = (k, o) => (k === 'time' ? ('start' in o ? { start: o.start, end: o.end, allDay: !!o.allDay } : undefined) : o[k]);
+  const value = (k, o) => (k === 'time' ? ('start' in o ? { start: o.start, end: o.end, allDay: !!o.allDay, tzid: o.tzid } : undefined) : o[k]);
   const over = body.over || {};
   const differs = ['title', 'location', 'time'].filter((k) => value(k, over) !== undefined && JSON.stringify(value(k, over)) !== JSON.stringify(value(k, held)));
-  if (differs.length) return changed(differs.map((k) => ({ field: k, was: value(k, over), now: value(k, held), yours: init.method === 'DELETE' ? null : (value(k, body) ?? value(k, over)) })));
+  // A question about one day names the day as it was shown.
+  const day = body.scope === 'this' ? { start: over.start, end: over.end, allDay: !!over.allDay, tzid: over.tzid } : null;
+  if (differs.length) return changed(differs.map((k) => ({ field: k, was: value(k, over), now: value(k, held), yours: init.method === 'DELETE' ? null : (value(k, body) ?? value(k, over)), from: day ? 'day' : undefined })), day);
   if (init.method === 'DELETE') delete google[id];
   return json(200, { kept: [] });
 };
@@ -349,6 +428,28 @@ const put = (...list) => set({ occ: new Map(list.map((o) => [o.instanceId, o])),
   await retry;
 }
 
+// Two at once, one of them a day of a repeating event: the same line, the
+// day's question in its turn, from a request sent again that names the day.
+{
+  google = { 7: ev(7, { title: 'Sample event 7 (moved)' }), 8: ev(8, { title: 'Sample event 8 (moved)' }) };
+  const day8 = { ...ev(8), recurring: true };
+  put(ev(7), day8);
+  requests.length = 0; asked.length = 0; reply = [];
+  const a7 = deleteEvent(ev(7));
+  const a8 = deleteEvent(day8, 'this');
+  await turns(() => showing());
+  assert.match(showing().body, /'Sample event 7' was last shown/, 'Q, a day: the first question names its event');
+  assert.equal(asked.length, 1, 'Q, a day: one question at a time');
+  await answer(false);
+  await a7;
+  await turns(() => showing());
+  assert.match(showing().body, /'Sample event 8' was last shown/, 'Q, a day: then the day\'s question');
+  assert.deepEqual(requests.map((r) => r.id), [7, 8, 8], 'Q, a day: the day asks from a request sent again when its turn came');
+  await answer(true);
+  await a8;
+  assert.equal(google[8], undefined, 'Q, a day: Delete settles it');
+}
+
 // A drag and a delete at once, the delete's event changed again in Google
 // Calendar while it waited: its question shows what Google holds when it
 // is shown, not what the first answer said.
@@ -369,6 +470,36 @@ const put = (...list) => set({ occ: new Map(list.map((o) => [o.instanceId, o])),
   assert.match(showing().body, /now 'Sample event 8 \(renamed again\)'/, 'Q: the waiting question shows what Google holds when it is shown');
   await answer(false);
   await del;
+}
+
+// A drag of one day of a repeating event and a delete of another event at
+// once: the day's question first, naming the day; its Overwrite names the
+// same day; then the delete's, asked from a request sent again.
+{
+  const day = ev(9, { recurring: true, rrule: 'FREQ=WEEKLY' });
+  google = { 9: { ...day, ...timeOf('2027-03-05') }, 8: ev(8, { title: 'Sample event 8 (renamed)' }) };
+  put(day, ev(8));
+  requests.length = 0; asked.length = 0; reply = [];
+  const drag = moveEvent({ instanceId: day.instanceId, newStart: at(4, '10:00'), newEnd: at(4, '11:00') });
+  await turns(() => showing());
+  const del = deleteEvent(ev(8));
+  await turns(() => requests.length >= 2);
+  await settle();
+  assert.equal(asked.length, 1, 'Q, a day: one question at a time');
+  assert.match(showing().body, /^Since Wed, Mar 3(, 2027)? of 'Sample event 9' was last shown to you, /, 'Q, a day: its question names the day');
+  assert.equal(showing().foot, 'Overwrite saves your change for this day only. Cancel saves nothing, and the day shows as it is in Google Calendar now.', 'Q, a day: Overwrite is for this day');
+  await answer(true);
+  assert.equal(await drag, true, 'Q, a day: Overwrite goes through');
+  await turns(() => showing());
+  assert.match(showing().body, /^Since 'Sample event 8' was last shown/, 'Q, a day: then the delete\'s question, of an event in no series');
+  await answer(false);
+  await del;
+  // The day's Overwrite and the delete sent again on its turn go out together, in either order.
+  assert.deepEqual(requests.map((r) => r.id).sort(), [8, 8, 9, 9], 'Q, a day: the day, the delete, the day\'s Overwrite, the delete sent again on its turn');
+  assert.deepEqual(requests.slice(0, 2).map((r) => r.id), [9, 8], 'Q, a day: the day first');
+  const days = requests.filter((r) => r.id === 9).map((r) => [r.body.scope, r.body.instanceStart]);
+  assert.deepEqual(days, [['this', day.start], ['this', day.start]], 'Q, a day: the Overwrite names the same day');
+  assert.deepEqual(TIME.map((k) => requests.filter((r) => r.id === 9)[1].body.over[k]), TIME.map((k) => google[9][k]), 'Q, a day: its over is the day as Google Calendar has it, whole');
 }
 
 // A question waiting for one whose event is deleted meanwhile: its request
@@ -687,6 +818,165 @@ console.log('Google conflict, the editor\'s time: ' + eRows + ' edit and event r
   render(null, banner);
   set({ appUpdateReady: false, toasts: [] });
   console.log('Google conflict, a refused time: undone, said as given, Reload offered');
+}
+
+// ---- D: one day of a repeating event (slice 2) ----------------------------------
+//
+// A request that changes or deletes one day (scope 'this') carries `over`
+// from the day as shown, for each field it changes (every field the day
+// holds, for a delete), and a time whole, beside its scope and instanceStart,
+// which stay as they were. Overwrite after a question about the day is the
+// same request (same path, scope and instanceStart) with `over` at each asked
+// field's now and its value at yours; "Use series value" names fields, not
+// values, so its Overwrite changes `over` alone. A change to more than one
+// day (all events, this and following, Planned or Maybe with no scope
+// picked) sends no `over` and keeps its shape. Read against the rule and the
+// day as shown, never against the product's own builder.
+{
+  const zone = 'America/Los_Angeles';
+  // An ordinary day of a weekly event, as the window holds it (no notes),
+  // its instants on this device's clock so its date reads the same in every
+  // zone the suite runs in.
+  const dayShown = { instanceId: '31:0310', eventId: 31, calendarId: 3, recurring: true, rrule: 'FREQ=WEEKLY', title: 'Sample weekly',
+    location: 'Room 2', url: null, status: 'confirmed', relationship: 'planned', start: at(10, '10:00'), end: at(10, '11:00'), allDay: false, tzid: zone };
+  // An edited day of it: its own row (32), moved two hours, its own title,
+  // its key the day it repeats on.
+  const edited = { ...dayShown, instanceId: '32:0310', eventId: 32, seriesId: 31, seriesKey: at(10, '10:00'), isException: true, ownFields: ['title', 'time'],
+    title: 'Sample weekly (moved)', start: at(10, '12:00'), end: at(10, '13:00') };
+  const asShown = (o) => ({ start: o.start, end: o.end, allDay: false, tzid: zone });
+  const held = (o) => ({ title: o.title, location: o.location, url: o.url, status: o.status, ...asShown(o) });
+  // The question for a day: `day` is the day as shown, each field says where it changed.
+  const dayAsked = (o, fields) => json(409, { error: { code: 'google_changed', message: 'Changed in Google Calendar', day: asShown(o), fields, kept: [] } });
+  const googleTime = { start: at(10, '14:00'), end: at(10, '15:00'), allDay: false, tzid: zone };
+  const drop = { start: at(11, '10:00'), end: at(11, '11:00') };
+  const longer = { start: at(10, '10:00'), end: at(10, '12:00') };
+  const lead = /^Since Wed, Mar 10(, 2027)? of 'Sample weekly( \(moved\))?' was last shown to you, /;
+  const DAY_STAY = 'Overwrite saves your change for this day only. Cancel saves nothing, and the day shows as it is in Google Calendar now.';
+  const DAY_BACK = 'Overwrite saves your change for this day only. Cancel saves nothing and takes you back to your change.';
+  const DAY_DELETE = 'Delete deletes this day here and in Google Calendar. Cancel keeps it, as it is in Google Calendar now.';
+  const editorOn = async (o, edit) => {
+    render(null, ed);
+    set({ editor: null, editorDirty: false, occ: new Map([[o.instanceId, o]]) });
+    await settle();
+    set({ editor: { mode: 'edit', occ: { ...o, full: true } } });
+    render(html`<${EditorDrawer} />`, ed);
+    await settle();
+    for (const s2 of dom.doc.head.childNodes) if (s2.onerror && !s2.failed) { s2.failed = true; s2.onerror(); await settle(); }
+    await settle();
+    await edit();
+    q('form').dispatch('submit');
+    await turns(() => !state.editor || writes.length > 1 || (writes.length === 1 && !state.confirmAsk && asked.length), 200);
+    await settle();
+  };
+  // Each caller: what it does to the day, the path it goes to, the request
+  // it must send (from the rule: the day's key, and `over` from the day as
+  // shown for the fields changed), and the field a question asks about.
+  const DAY_CALLERS = [
+    { name: 'a drag', o: dayShown, run: (o) => moveEvent({ instanceId: o.instanceId, newStart: drop.start, newEnd: drop.end }),
+      want: (o) => ({ ...drop, allDay: false, tzid: zone, scope: 'this', instanceStart: o.start, over: asShown(o) }),
+      ask: (o) => ({ field: 'time', was: asShown(o), now: googleTime, yours: { ...drop, allDay: false, tzid: zone }, from: 'day' }) },
+    { name: 'a resize', o: dayShown, run: (o) => resizeEvent({ instanceId: o.instanceId, newStart: longer.start, newEnd: longer.end }),
+      want: (o) => ({ ...longer, allDay: false, tzid: zone, scope: 'this', instanceStart: o.start, over: asShown(o) }),
+      ask: (o) => ({ field: 'time', was: asShown(o), now: googleTime, yours: { ...longer, allDay: false, tzid: zone }, from: 'day' }) },
+    { name: 'a drag of an edited day', o: edited, run: (o) => moveEvent({ instanceId: o.instanceId, newStart: drop.start, newEnd: drop.end }),
+      want: (o) => ({ ...drop, allDay: false, tzid: zone, scope: 'this', instanceStart: o.start, over: asShown(o) }),
+      ask: (o) => ({ field: 'time', was: asShown(o), now: googleTime, yours: { ...drop, allDay: false, tzid: zone }, from: 'day' }) },
+    { name: 'the editor, a title, this event', o: dayShown, back: true, editor: true,
+      run: (o) => editorOn(o, () => type(q('.bc-ed-title'), 'Sample renamed')),
+      want: (o) => ({ title: 'Sample renamed', scope: 'this', instanceStart: o.start, over: { title: o.title } }),
+      ask: (o) => ({ field: 'title', was: o.title, now: 'Sample standup', yours: 'Sample renamed', from: 'series' }) },
+    { name: 'the editor, the start date, this event', o: dayShown, back: true, editor: true,
+      run: (o) => editorOn(o, async () => { const el = q('input[aria-label="Start date"]'); await type(el, dayOf(drop.start)); el.dispatch('blur'); await settle(); }),
+      want: (o) => ({ ...drop, allDay: false, tzid: zone, scope: 'this', instanceStart: o.start, over: asShown(o) }),
+      // The editor sends its typed clocks beside the time; they are not read here.
+      ignore: ['typed'],
+      ask: (o) => ({ field: 'time', was: asShown(o), now: googleTime, yours: { ...drop, allDay: false, tzid: zone }, from: 'day' }) },
+    { name: 'a delete of this day', o: dayShown, remove: true, run: (o) => deleteEvent(o, 'this'),
+      want: (o) => ({ scope: 'this', instanceStart: o.start, over: held(o) }),
+      ask: (o) => ({ field: 'location', was: o.location, now: 'Room 5', yours: null, from: 'day' }) },
+    // Planned or Maybe has two values: it never asks about itself, so no Overwrite here.
+    { name: 'Maybe on this day', o: dayShown, run: (o) => setRelationship(o, 'maybe', 'this'),
+      want: (o) => ({ relationship: 'maybe', scope: 'this', instanceStart: o.start, over: { status: 'confirmed' } }) },
+    { name: 'Use series value, by the repeating event and the day\'s key', o: edited, plans: true, path: 31, run: (o) => useSeriesValue(o, ['title', 'time']),
+      want: (o) => ({ scope: 'this', instanceStart: o.seriesKey, useSeries: ['title', 'time'], over: { title: o.title, ...asShown(o) } }),
+      ask: (o) => ({ field: 'title', was: o.title, now: 'Sample weekly (renamed)', yours: 'Sample weekly', from: 'day' }) },
+    { name: 'Use series value, by the day\'s own row', o: { ...edited, seriesKey: null }, plans: true, path: 32, run: (o) => useSeriesValue(o, ['location']),
+      want: (o) => ({ scope: 'this', instanceStart: o.start, useSeries: ['location'], over: { location: o.location } }),
+      ask: (o) => ({ field: 'location', was: o.location, now: 'Room 5', yours: 'Room 2', from: 'day' }) },
+  ];
+  const strip = (b, keys = []) => { const c = { ...b }; for (const k of keys) delete c[k]; return c; };
+  let dRows = 0;
+  for (const c of DAY_CALLERS) {
+    for (const mode of c.ask ? ['sent', 'overwrite', 'cancel'] : ['sent']) {
+      const label = c.name + ', ' + mode;
+      const o = c.o;
+      const path = c.path || o.eventId;
+      // The day's record as read back after the change: "Use series value"
+      // gave its fields back, so it holds none of its own.
+      records = { [o.eventId]: { ...o, full: true, ...(c.plans ? { ownFields: [] } : {}) } };
+      writes = []; calls = []; asked.length = 0;
+      reply = mode === 'overwrite' ? [true] : mode === 'cancel' ? [false] : [];
+      answerFor = (w, n) => (w.body.preview ? json(200, { plan: null })
+        : mode !== 'sent' && n === 1 ? dayAsked(o, [c.ask(o)])
+        : json(200, { kept: [{ field: 'title', now: 'Sample standup' }] }));
+      set({ occ: new Map([[o.instanceId, o]]), editor: null, popover: null, toasts: [], config: c.plans ? { seriesPlans: true } : {} });
+      await c.run(o);
+      await settle();
+      const mine = writes.filter((w) => !w.body.preview);
+      assert.ok(mine.length >= 1, label + ': a request is sent');
+      assert.deepEqual(mine.map((w) => w.id), mine.map(() => path), label + ': to the day\'s path, every time');
+      assert.deepEqual(strip(mine[0].body, c.ignore), c.want(o), label + ': over from the day as shown, the time whole, the scope and the day\'s key as they were');
+      if (mode === 'overwrite') {
+        const f = c.ask(o);
+        assert.equal(mine.length, 2, label + ': Overwrite sends again');
+        const valueOf = (v) => (f.field === 'time' ? v : { [f.field]: v });
+        // The same request, `over` at what Google holds now; the body's value
+        // at yours where the body sets the field ("Use series value" sets none).
+        const sets = c.plans || f.yours == null ? {} : valueOf(f.yours);
+        assert.deepEqual(strip(mine[1].body, c.ignore), { ...c.want(o), ...sets, over: { ...c.want(o).over, ...valueOf(f.now) } }, label + ': Overwrite is the same request, over at now');
+        assert.match(asked[0].body, lead, label + ': the lead names the day: ' + asked[0].body);
+        assert.equal(asked[0].foot, c.remove ? DAY_DELETE : c.back ? DAY_BACK : DAY_STAY, label + ': the foot is for this day');
+        if (c.remove) assert.equal(asked[0].title, 'Delete this day anyway?', label + ': titled for the day');
+        if (f.from === 'series') assert.match(asked[0].body, /in Google Calendar, for the whole repeating event\. /, label + ': the change to the whole repeating event said');
+      }
+      if (mode === 'cancel') {
+        assert.equal(mine.length, 1, label + ': Cancel sends nothing more');
+        assert.ok(!state.toasts.some((t) => !t.error), label + ': no toast of a change made: ' + JSON.stringify(state.toasts.map((t) => t.text)));
+      }
+      if (mode === 'sent' && !c.editor && !c.remove) {
+        const t = state.toasts[state.toasts.length - 1];
+        assert.ok(t && /the title is now 'Sample standup'/.test(t.kept || ''), label + ': the toast says what was kept: ' + JSON.stringify(t && [t.text, t.kept]));
+      }
+      if (c.editor) { render(null, ed); set({ editor: null, editorDirty: false }); await settle(); }
+      dRows++;
+    }
+  }
+  // A change to more than one day: no `over`, the shape as it was (the time
+  // in parts, as the series' own requests send it).
+  const MANY = [
+    { name: 'a drag, all events', run: (o) => moveEvent({ instanceId: o.instanceId, newStart: drop.start, newEnd: drop.end, scope: 'all' }),
+      want: (o) => ({ ...drop, scope: 'all', instanceStart: o.start }) },
+    { name: 'a resize, this and following', run: (o) => resizeEvent({ instanceId: o.instanceId, newStart: longer.start, newEnd: longer.end, scope: 'following' }),
+      want: (o) => ({ ...longer, scope: 'following', instanceStart: o.start }) },
+    { name: 'a title, all events', run: (o) => updateEvent(o, { title: 'Sample renamed' }, 'all'),
+      want: (o) => ({ title: 'Sample renamed', scope: 'all', instanceStart: o.start }) },
+    { name: 'a delete, all events', run: (o) => deleteEvent(o, 'all'), want: (o) => ({ scope: 'all', instanceStart: o.start }) },
+    { name: 'Maybe, no scope picked (all events)', run: (o) => setRelationship(o, 'maybe'), want: (o) => ({ relationship: 'maybe', scope: 'all', instanceStart: o.start }) },
+  ];
+  for (const c of MANY) {
+    records = { 31: { ...dayShown, full: true } };
+    writes = []; calls = []; asked.length = 0; reply = [];
+    answerFor = () => json(200, { kept: [] });
+    set({ occ: new Map([[dayShown.instanceId, dayShown]]), editor: null, popover: null, toasts: [], config: {} });
+    await c.run(dayShown);
+    await settle();
+    assert.equal(writes.length, 1, c.name + ': one request');
+    assert.deepEqual(writes[0].body, c.want(dayShown), c.name + ': no over, its own shape');
+    dRows++;
+  }
+  set({ config: {} });
+  reply = [];
+  console.log('Google conflict, one day of a repeating event: ' + dRows + ' caller rows, over from the day as shown, Overwrite for the day');
 }
 
 off();

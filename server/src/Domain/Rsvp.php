@@ -408,11 +408,18 @@ final class Rsvp
         // With the conflict choice on, an event in no series is read through its step: the read stored as a poll
         // stores it (its own write, before the send), and what Google changed is kept, never asked about: the click
         // is the choice, and nothing of the answer is a field compared (GoogleConflict, nothing wanted).
+        // A repeating invitation the same (the page "Slice 2", case 13): the whole list stored, and what is compared
+        // is what was answered, the repeating event's own fields for its own row, that day's for a day's row.
         $keptFields = [];
-        if (empty($row['rrule']) && empty($row['recurrence_parent_id']) && Settings::googleConflictChoice($this->db, (int) $row['user_id'])) {
-            $step = $this->google->readAndStore($calendar, $googleId, GoogleConflict::mapOf($row), [], fn() => $check(false));
+        $single = empty($row['rrule']) && empty($row['recurrence_parent_id']);
+        $master = $single ? null : (empty($row['recurrence_parent_id']) ? $row
+            : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]));
+        if (Settings::googleConflictChoice($this->db, (int) $row['user_id']) && ($single || ($master !== null && !empty($master['google_event_id'])))) {
+            $key = $single || $master === $row ? null : (string) $row['recurrence_instance_utc'];
+            $step = $this->google->readAndStore($calendar, $googleId, GoogleConflict::mapOf($key === null ? $row : GoogleSeries::dayStored($master, $row, $key)), [], fn() => $check(false),
+                $single ? null : ['id' => (string) $master['google_event_id'], 'uid' => (string) $master['uid'], 'key' => $key]);
             [$current, $items] = [$step['read'], $step['items']];
-            $keptFields = GoogleConflict::having($step['outcomes'], 'kept');
+            $keptFields = GoogleConflict::having($step['outcomes'] ?? [], 'kept');
         } else {
             [$current, $items] = $this->google->readNow($calendar, $googleId, fn() => $check(false));
         }

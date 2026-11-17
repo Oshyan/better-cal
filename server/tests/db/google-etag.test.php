@@ -188,8 +188,11 @@ return static function (Db $db): void {
         checkEq('the delete that follows is read first and carries If-Match "s2"', [['GET', 'DELETE'], '"s2"'], [array_column($t->google->calls, 0), $headerOf($t->google->calls[1][3] ?? [], 'If-Match')]);
     });
 
-    scenario('google write: a series changed at Google since the last poll refuses a write to an ordinary day before anything is sent', function () use ($db, $setup, $firstPoll, $moved, $master, $cancelled, $row): void {
+    // With the conflict choice off (an operator's switch; on as shipped). On, this write is compared field by field and
+    // asks about the title (docs/design/google-conflict-choice.md, the page "Slice 2", case 4; google-conflict-day.test.php).
+    scenario('google write, the conflict choice off: a series changed at Google since the last poll refuses a write to an ordinary day before anything is sent', function () use ($db, $setup, $firstPoll, $moved, $master, $cancelled, $row): void {
         $t = $setup();
+        $db->update('users', ['settings_json' => json_encode(['google_conflict_choice' => false])], 'id = ?', [$t->u]);
         $firstPoll($t);
         $t->google->calls = [];
         // Renamed at Google, not yet polled.
@@ -199,6 +202,23 @@ return static function (Db $db): void {
         $code = refusal(fn() => $t->events->patch($t->u, (int) $row($t, 'probe1a2b3c')['id'], ['title' => 'One day', 'scope' => 'this', 'instanceStart' => '2027-03-22T17:00:00+00:00']));
         checkEq('409 google_conflict after one read, no write sent, no row changed', ['google_conflict', ['GET'], $before],
             [$code, array_column($t->google->calls, 0), $db->all('SELECT * FROM events WHERE calendar_id = ? ORDER BY id', [$t->calendarId])]);
+    });
+
+    scenario('google write, the conflict choice on: a series renamed at Google since the last poll asks about a rename of an ordinary day, the read stored, nothing sent', function () use ($db, $setup, $firstPoll, $moved, $master, $cancelled, $row): void {
+        $t = $setup();
+        $firstPoll($t);
+        $t->google->calls = [];
+        $t->google->writes = static fn(string $method, string $url, ?array $payload, array $headers): array
+            => ['status' => 200, 'body' => json_encode(['accessRole' => 'owner', 'items' => [$master('"e2"', 'Sample standup renamed elsewhere'), $moved('"e2"'), $cancelled('"e2"')]])];
+        $masterId = (int) $row($t, 'probe1a2b3c')['id'];
+        $code = null;
+        try {
+            $t->events->patch($t->u, $masterId, ['title' => 'One day', 'scope' => 'this', 'instanceStart' => '2027-03-22T17:00:00+00:00']);
+        } catch (HttpError $e) {
+            $code = [$e->errorCode, array_column((array) ($e->extra['fields'] ?? []), 'field')];
+        }
+        checkEq('409 google_changed about the title after one read, no write sent; the series holds Google\'s title here and the day has no row', [['google_changed', ['title']], ['GET'], 'Sample standup renamed elsewhere', null],
+            [$code, array_column($t->google->calls, 0), $row($t, 'probe1a2b3c')['title'], $row($t, 'probe1a2b3c_20270322T170000Z')]);
     });
 
     scenario('google write: a 412 is 409 google_conflict with Google\'s words, and nothing is written here', function () use ($db, $setup, $firstPoll, $row): void {

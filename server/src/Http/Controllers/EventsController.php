@@ -248,7 +248,7 @@ final class EventsController
         // What Google changed that the answer left as it is, each with its value as served.
         $keptFields = $out['keptFields'] ?? [];
         unset($out['keptFields']);
-        return Response::json($out + $this->events->keptAnswer($userId, $keptFields === [] ? [] : $this->events->keptOf($this->events->get($userId, (int) $params['id']), $keptFields)));
+        return Response::json($out + $this->events->keptAnswer($userId, $this->events->keptOfEvent($userId, (int) $params['id'], $keptFields)));
     }
 
     /** POST /events/:id/relationship {relationship, scope?, instanceStart?} -> {ok:true} */

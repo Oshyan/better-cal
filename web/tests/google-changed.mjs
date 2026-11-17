@@ -7,7 +7,7 @@
 // (smoke.mjs imports it). Invented events only.
 
 import assert from 'node:assert/strict';
-import { googleChangedAsk, keptWords, stoppedWords, timeValueWords } from '../src/lib/planwords.js';
+import { googleChangedAsk, keptWords, stoppedWords, timeValueWords, useSeriesWords, stillOwnWords, useSeriesLabel } from '../src/lib/planwords.js';
 import { toISOWithOffset } from '../src/lib/dates.js';
 
 // A fixed today, so a date in another year says its year whatever year the
@@ -47,7 +47,8 @@ const DELETE_FOOT = 'Delete deletes it here and in Google Calendar. Cancel keeps
   const onThisClock = (t) => (t && !t.allDay ? { ...t, start: at(t.start.slice(0, 10), t.start.slice(11, 16)), end: at(t.end.slice(0, 10), t.end.slice(11, 16)) } : t);
   for (const row of table.rows) {
     const fields = row.fields.map((f) => (f.field === 'time' ? { ...f, was: onThisClock(f.was), now: onThisClock(f.now), yours: onThisClock(f.yours) } : f));
-    const a = googleChangedAsk({ name: row.name, fields, remove: row.remove, now: new Date(y, m - 1, d) });
+    // A day of a repeating event: the day it names on this clock too.
+    const a = googleChangedAsk({ name: row.name, fields, remove: row.remove, day: row.day ? onThisClock(row.day) : null, now: new Date(y, m - 1, d) });
     assert.deepEqual({ body: a.body, lines: a.lines }, { body: row.body, lines: row.lines }, 'the server\'s table: ' + row.case);
   }
 }
@@ -166,6 +167,57 @@ assert.deepEqual(ask({ remove: true, fields: [
   'Planned or Maybe: was a Maybe; now Planned.',
 ], 'a delete over several changes');
 
+// ---- one day of a repeating event (slice 2) -------------------------------------
+//
+// The lead names the day, a change made to the whole repeating event says
+// so, and Overwrite or Delete is for this day only.
+
+const day17 = { ...timed(17, '10:00', '11:00'), tzid: 'America/Los_Angeles' };
+const DAY_BACK = 'Overwrite saves your change for this day only. Cancel saves nothing and takes you back to your change.';
+const DAY_STAY = 'Overwrite saves your change for this day only. Cancel saves nothing, and the day shows as it is in Google Calendar now.';
+const DAY_DELETE_FOOT = 'Delete deletes this day here and in Google Calendar. Cancel keeps it, as it is in Google Calendar now.';
+assert.deepEqual(ask({ day: day17, back: true, fields: [{ field: 'title', was: 'Team sync', now: 'Standup', yours: 'Weekly sync', from: 'series' }] }), {
+  title: 'The title was changed in Google Calendar',
+  body: "Since Tue, Nov 17 of 'Team sync' was last shown to you, its title was changed in Google Calendar, for the whole repeating event. It is now 'Standup' there; your change makes it 'Weekly sync'.",
+  lines: [],
+  foot: DAY_BACK,
+  confirmLabel: 'Overwrite', danger: false,
+}, 'a day, from the editor: the day named, the change to the whole repeating event said, Overwrite for this day only');
+assert.deepEqual(ask({ day: day17, fields: [{ field: 'time', was: timed(17, '10:00', '11:00'), now: timed(17, '10:30', '11:30'), yours: timed(18, '10:00', '11:00'), from: 'day' }] }), {
+  title: 'The time was changed in Google Calendar',
+  body: "Since Tue, Nov 17 of 'Team sync' was last shown to you, its time was changed in Google Calendar. It is now Tue, Nov 17, 10:30 AM to 11:30 AM there; your change makes it Wed, Nov 18, 10:00 AM to 11:00 AM.",
+  lines: [],
+  foot: DAY_STAY,
+  confirmLabel: 'Overwrite', danger: false,
+}, 'a day dragged: its own record changed reads as one event\'s, Cancel leaves the day as Google has it');
+assert.deepEqual(ask({ day: day17, remove: true, fields: [{ field: 'location', was: 'Room 2', now: 'Sample Hall', yours: null, from: 'day' }] }), {
+  title: 'Delete this day anyway?',
+  body: "Since Tue, Nov 17 of 'Team sync' was last shown to you, its location was changed in Google Calendar. It was 'Room 2'; it is now 'Sample Hall'.",
+  lines: [],
+  foot: DAY_DELETE_FOOT,
+  confirmLabel: 'Delete', danger: true,
+}, 'a delete of a day');
+assert.deepEqual(ask({ day: day17, remove: true, fields: [{ field: 'title', was: 'Team sync', now: 'Standup', yours: null, from: 'series' }, { field: 'location', was: 'Room 2', now: null, yours: null, from: 'day' }] }).lines, [
+  "Title, for the whole repeating event: was 'Team sync'; now 'Standup'.",
+  'Location: was \'Room 2\'; now no location.',
+], 'a delete of a day over several changes: a line says which was the whole repeating event\'s');
+// The day is one of the question's dates: in another year, it says its year,
+// and so does every time beside it.
+assert.equal(ask({ day: { ...timed(17, '10:00', '11:00'), start: at('2027-01-05', '10:00'), end: at('2027-01-05', '11:00') },
+  fields: [{ field: 'time', was: { start: at('2027-01-05', '10:00'), end: at('2027-01-05', '11:00'), allDay: false }, now: { start: at('2027-01-05', '10:30'), end: at('2027-01-05', '11:30'), allDay: false }, yours: { start: at('2027-01-06', '10:00'), end: at('2027-01-06', '11:00'), allDay: false }, from: 'day' }] }).body,
+  "Since Tue, Jan 5, 2027 of 'Team sync' was last shown to you, its time was changed in Google Calendar. It is now Tue, Jan 5, 2027, 10:30 AM to 11:30 AM there; your change makes it Wed, Jan 6, 2027, 10:00 AM to 11:00 AM.",
+  'a day in another year: the day and the times say it');
+assert.equal(ask({ day: day17, fields: [{ field: 'time', was: timed(17, '10:00', '11:00'), now: { start: '2027-01-05T00:00:00+00:00', end: '2027-01-06T00:00:00+00:00', allDay: true }, yours: timed(18, '10:00', '11:00'), from: 'day' }] }).body,
+  "Since Tue, Nov 17, 2026 of 'Team sync' was last shown to you, its time was changed in Google Calendar. It is now all day on Tue, Jan 5, 2027 there; your change makes it Wed, Nov 18, 2026, 10:00 AM to 11:00 AM.",
+  'a day this year beside a time in another: the day says its year too');
+for (const a of [ask({ day: day17, fields: [{ field: 'title', was: 'a', now: 'b', yours: 'c', from: 'series' }] }), ask({ day: day17, remove: true, fields: [{ field: 'title', was: 'a', now: 'b', yours: null, from: 'series' }] })]) {
+  const prose = [a.title, a.body, ...a.lines, a.foot].join(' ');
+  assert.doesNotMatch(prose, /series|at Google|\u2014/, 'a day\'s question: never "series", never "at Google", no dash: ' + prose);
+}
+// An event in no series is said as it always was, `from` or not.
+assert.equal(ask({ fields: [{ field: 'title', was: 'Team sync', now: 'Standup', yours: 'Weekly sync' }] }).foot, OVERWRITE_STAY);
+assert.equal(ask({ remove: true, fields: [{ field: 'title', was: 'Team sync', now: 'Standup', yours: null }] }).title, 'Delete it anyway?');
+
 // ---- kept, on the toast -------------------------------------------------------
 //
 // Under a line that names Google Calendar ("Title changed, here and in Google
@@ -214,7 +266,12 @@ assert.deepEqual(overOf(shown, { relationship: 'maybe' }), { status: 'confirmed'
 assert.deepEqual(overOf(shown, { description: '<p>New</p>' }), {}, 'notes the window never held are left to the server');
 assert.deepEqual(overOf({ ...shown, description: null }, { description: '<p>New</p>' }), { description: null }, 'notes the record held, even empty');
 assert.deepEqual(Object.keys(overOf(shown, {}, { remove: true })).sort(), ['allDay', 'end', 'location', 'start', 'status', 'title', 'tzid', 'url'], 'a delete: every field held');
-assert.deepEqual(overOf({ ...shown, recurring: true }, { title: 'x' }), {}, 'a day of a series: none');
+assert.deepEqual(overOf({ ...shown, recurring: true }, { title: 'x', scope: 'all' }), {}, 'all events of a repeating event: none');
+assert.deepEqual(overOf({ ...shown, recurring: true }, { title: 'x', scope: 'following' }), {}, 'this and following: none');
+assert.deepEqual(overOf({ ...shown, recurring: true }, { title: 'x' }), {}, 'a repeating event with no scope (an answer): none');
+assert.deepEqual(overOf({ ...shown, recurring: true }, { title: 'x', scope: 'this', instanceStart: shown.start }), { title: 'Team sync' }, 'one day: over from the day as shown');
+assert.deepEqual(overOf({ ...shown, recurring: true }, { scope: 'this', instanceStart: shown.start, useSeries: ['title', 'length', 'tags'] }), { title: 'Team sync', ...shownTime },
+  'Use series value: the fields its names mean, its length the time whole; a field the server never compares names none');
 assert.deepEqual(overOf(shown, { answer: 'ACCEPTED' }), {}, 'an answer to an invitation: none');
 
 // A stand-in for the server: answers each request from a list, and records them.
@@ -541,6 +598,64 @@ stored = atGoogle({ ...googleTime });
   slowWindow = null;
   await dragging;
   assert.deepEqual(early, [time.yours.start], 'R2: after Overwrite the block is at the saved time on the answer');
+}
+
+// A drag of one day of a repeating event asked about: no record is put in
+// place for a day (one record serves many days), so the question waits for
+// the window's own answer, which shows the day where Google Calendar has it;
+// it never opens over the block at its place from before the drag. Then
+// Overwrite: the same request again, naming the same day.
+sent.length = 0; asked.length = 0;
+{
+  const dayShown = { ...shown, instanceId: '7:day', recurring: true };
+  put(dayShown);
+  stored = { ...dayShown };
+  const yours = { start: at('2026-11-21', '10:00'), end: at('2026-11-21', '11:00'), allDay: false, tzid: 'America/New_York' };
+  const time = { field: 'time', was: shownTime, now: { ...googleTime, allDay: false }, yours, from: 'day' };
+  answers = [json(409, { error: { code: 'google_changed', message: 'not changed', day: shownTime, fields: [time], kept: [] } }), json(200, { kept: [] })];
+  reply = [true];
+  slowWindow = { asked: false, gate: new Promise((r) => { letGo = r; }) };
+  const dragging = moveEvent({ instanceId: dayShown.instanceId, newStart: yours.start, newEnd: yours.end });
+  await turns(() => slowWindow.asked);
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  assert.equal(asked.length, 0, 'a day: the question waits for the window\'s answer, which shows the day as stored');
+  letGo();
+  slowWindow = null;
+  await dragging;
+  assert.equal(asked.length, 1, 'a day: then the question');
+  assert.match(asked[0].body, /^Since .+ of 'Team sync' was last shown to you, its time was changed in Google Calendar\./, 'a day: the question names the day');
+  assert.equal(asked[0].foot, 'Overwrite saves your change for this day only. Cancel saves nothing, and the day shows as it is in Google Calendar now.', 'a day: the foot');
+  assert.deepEqual(sent.map((s) => s.body), [
+    { ...yours, scope: 'this', instanceStart: dayShown.start, over: shownTime },
+    { ...yours, scope: 'this', instanceStart: dayShown.start, over: { ...googleTime, allDay: false } },
+  ], 'a day: the drag whole with over from the day as shown, then Overwrite: the same day, over what Google Calendar holds');
+}
+
+// Busy or Free is one of the fields `over` is built from, for an event and
+// a day alike, where the copy shown holds it (the record does; the
+// window's list shape does not, and the server then reads what it stores).
+assert.deepEqual(overOf({ ...shown, showAs: 'busy' }, { showAs: 'free' }), { showAs: 'busy' }, 'Busy or Free: over from the event as shown');
+assert.deepEqual(overOf({ ...shown, showAs: 'busy', recurring: true }, { showAs: 'free', scope: 'this', instanceStart: shown.start }), { showAs: 'busy' }, 'Busy or Free: over from the day as shown');
+assert.deepEqual(overOf(shown, { showAs: 'free' }), {}, 'Busy or Free: a copy from the window does not hold it, and names none');
+assert.equal(overOf({ ...shown, showAs: 'busy' }, {}, { remove: true }).showAs, 'busy', 'Busy or Free: a delete names it with every field held');
+assert.deepEqual(overOf({ ...shown, showAs: 'busy', recurring: true }, { scope: 'this', instanceStart: shown.start, useSeries: ['showAs'] }), { showAs: 'busy' }, 'Busy or Free: Use series value names it');
+
+// "Use series value": its sentences say "the repeating event", each field by its one name, read as prose.
+{
+  const words = { useSeriesWords, stillOwnWords, useSeriesLabel };
+  const names = { date: 'date', time: 'time', length: 'length', allDay: 'all-day setting', title: 'title', location: 'location', description: 'notes', url: 'link',
+    reminders: 'reminders', status: 'Planned or Maybe', showAs: 'free or busy setting', attendance: 'answer', tags: 'tags', people: 'people', icon: 'icon' };
+  for (const [field, name] of Object.entries(names)) {
+    assert.equal(words.useSeriesWords([field]), "Uses the repeating event's " + name, 'the toast, ' + field);
+    assert.equal(words.stillOwnWords([field]), 'Nothing changed: this day still has its own ' + name, 'the refusal, ' + field);
+    assert.equal(words.useSeriesLabel([field]), "Use the repeating event's " + name, 'the control, ' + field);
+  }
+  assert.equal(words.useSeriesWords(['date', 'time', 'description']), "Uses the repeating event's date, time and notes", 'several fields');
+  assert.equal(words.stillOwnWords(['title', 'location']), 'Nothing changed: this day still has its own title and location', 'several fields, the refusal');
+  assert.equal(words.useSeriesLabel(), "Use the repeating event's values", 'the control for all of them');
+  for (const s of [words.useSeriesWords(Object.keys(names)), words.stillOwnWords(Object.keys(names)), words.useSeriesLabel(Object.keys(names))]) {
+    assert.ok(!/series|—| at Google/.test(s), 'no "series", no em-dash: ' + s);
+  }
 }
 
 off();

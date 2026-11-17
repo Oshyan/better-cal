@@ -7,7 +7,7 @@
 
 import { html, useState, useEffect, useRef, useMemo } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
-import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId, googleCalendar, editorReturn, useSeriesValue, ownFieldWords } from './actions.js';
+import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId, googleCalendar, editorReturn, useSeriesValue } from './actions.js';
 import { api, loadPeople, ensureFullOccurrence } from './api.js';
 import { saveEditorDraft, clearEditorDraft, discardEditorWithUndo } from './drafts.js';
 import { TripRow } from './Trips.js';
@@ -44,7 +44,8 @@ import { openSeriesChange, cancelSeriesChange, seriesPlans } from './serieschang
 import { SeriesDialog } from './SeriesDialog.js';
 import { creationLine } from '../lib/seriesplan.js';
 import { seriesScopes } from './scopes.js';
-import { timeOf } from './googlechange.js';
+import { timeOf, comparedOne } from './googlechange.js';
+import { fieldNoun, useSeriesLabel } from '../lib/planwords.js';
 
 const BYDAY = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
 
@@ -375,9 +376,14 @@ function baseOf(editor, opened) {
  * shown, whose values for exactly those fields go out as `over`
  * (googlechange.js overOf). A new event sends every field but the ones left
  * at their default. `base` is the base as a form, for the toast's words and
- * the series dialog's lines.
+ * the series dialog's lines. The base is what was shown of what the Save
+ * changes: a question about one day shows that day's values, so it moves
+ * the base of a Save of that day (scope 'this', or an event in no series)
+ * and not of one to all events or this and following, which is compared
+ * with nothing (no `over`, googlechange.js comparedOne) and goes from the
+ * day as the editor opened, as it would had no question been asked.
  */
-function saveOf(editor, opened, form) {
+function saveOf(editor, opened, form, scope) {
   const mine = isMineCal(state.calendars.find((c) => c.id === Number(form.calendarId)));
   if (!editor.occ) {
     const fields = formFields(form, null, mine);
@@ -387,7 +393,7 @@ function saveOf(editor, opened, form) {
     if (!form.showAsTouched) delete fields.showAs;
     return { occ: null, fields, base: null, was: {} };
   }
-  const base = baseOf(editor, opened);
+  const base = comparedOne(editor.occ, { scope }) ? baseOf(editor, opened) : { occ: editor.occ, form: opened };
   const fields = formFields(form, editor.occ, mine, base.occ);
   // No base to compare with: everything goes.
   if (!base.form) return { occ: base.occ, fields, base: null, was: {} };
@@ -942,7 +948,7 @@ export function EditorDrawer() {
     // most recently been shown (#199; the rule only when the repeat
     // controls differ from the base's, so a rename isn't a new rule), and
     // the event as shown, whose values go out as `over` for those fields.
-    const save = saveOf(state.editor, openedForm(), form);
+    const save = saveOf(state.editor, openedForm(), form, scope);
     const { fields } = save;
     let ok;
     const finish = () => {
@@ -977,8 +983,10 @@ export function EditorDrawer() {
       }
       // Compared at the server with what the person has been shown: the
       // event as this editor opened it, then what a question showed
-      // (baseOf), the same base the fields above differ from.
-      ok = await updateEvent(save.occ || occ, fields, scope, words);
+      // (baseOf), the same base the fields above differ from. The request
+      // names what this editor opened (its identity: the event, and for a
+      // repeating event the day), whatever a question showed since.
+      ok = await updateEvent(occ, fields, scope, words, null, save.occ);
     } else {
       const created = await createEvent(fields);
       ok = !!created;
@@ -1103,12 +1111,12 @@ export function EditorDrawer() {
     if (state.editorDirty) { toast('Save or discard the changes here first'); return; }
     if (await useSeriesValue(occ, names)) set({ editor: null, editorDirty: false });
   };
-  const seriesName = occ && occ.seriesTitle ? occ.seriesTitle : 'the series';
+  const seriesName = occ && occ.seriesTitle ? occ.seriesTitle : 'the repeating event';
   const seriesWords = occ ? describeRepeat(occ.rrule || '', { start: fromInputValue(form.start), ends: false }) : null;
   const ownLine = own.length > 0 && html`<div class="bc-ed-own" role="note">
     <span>Edited day of ${seriesName}${seriesWords ? ' (' + seriesWords.charAt(0).toLowerCase() + seriesWords.slice(1) + ')' : ''}. Its own:</span>
-    ${own.map((f) => html`<button key=${f} type="button" class="bc-ed-ownfield" title=${'Use series value (' + seriesName + ')'} aria-label=${'Use series value for ' + ownFieldWords(f)} onClick=${() => giveBack([f])}>${ownFieldWords(f)}<${Icon} name="close" size=${10} /></button>`)}
-    ${own.length > 1 && html`<button type="button" class="bc-link-btn" onClick=${() => giveBack(own)}>Use series values</button>`}
+    ${own.map((f) => html`<button key=${f} type="button" class="bc-ed-ownfield" title=${useSeriesLabel([f]) + (occ.seriesTitle ? ' (' + occ.seriesTitle + ')' : '')} aria-label=${useSeriesLabel([f])} onClick=${() => giveBack([f])}>${fieldNoun(f)}<${Icon} name="close" size=${10} /></button>`)}
+    ${own.length > 1 && html`<button type="button" class="bc-link-btn" onClick=${() => giveBack(own)}>${useSeriesLabel()}</button>`}
   </div>`;
 
   return html`<div class="bc-drawer-backdrop" data-layer="" onClick=${(e) => { if (e.target === e.currentTarget) requestClose(); }}>

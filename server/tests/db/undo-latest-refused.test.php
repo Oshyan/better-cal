@@ -28,7 +28,7 @@ return static function (Db $db): void {
             $now = array_column($db->all('SELECT id FROM mutations WHERE user_id = ? AND undone = 0', [$u]), 'id');
             return ['done', array_values(array_map('intval', array_diff($was, $now)))];
         } catch (HttpError $e) {
-            return [$e->errorCode, $e->getMessage(), $e->extra['entryId'] ?? null];
+            return [$e->errorCode, $e->getMessage(), $e->extra['entry'] ?? null];
         }
     };
     $byId = static function (Undo $undo, int $u, int $id): array {
@@ -62,6 +62,42 @@ return static function (Db $db): void {
             checkEq('a press that does not send the refusal back is refused the same way (as before)', ['stale_undo', $told, $day], $press($undo, $u));
             checkEq('a press that sends it back goes on to the older change and undoes it', ['done', [$errand]], $press($undo, $u, $day));
             checkEq("Activity's undo of the day change by id is unchanged: refused as changed since, in its own words", ['stale_undo', $stale], $byId($undo, $u, $day));
+        } finally {
+            GoogleStand::forget($db, $u);
+        }
+    });
+
+    scenario('plain undo: an undo that asks (its field changed again in Google Calendar) is said once with its id, and past reaches the change before it', function () use ($db, $press, $told): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $s = GoogleStand::make($db, $d->undo, $u);
+        try {
+            $undo = new Undo($db, null, $s->writer);
+            $s->events->create($u, ['calendarId' => $s->calendarId, 'title' => 'Sample errand', 'start' => '2027-01-02T18:00:00+00:00', 'end' => '2027-01-02T19:00:00+00:00']);
+            $errand = lastEntry($db, $u);
+            $id = (int) $s->events->create($u, ['calendarId' => $s->calendarId, 'title' => 'Sample review', 'start' => '2027-01-05T18:00:00+00:00', 'end' => '2027-01-05T19:00:00+00:00'])['eventId'];
+            $s->events->patch($u, $id, ['title' => 'Sample review, moved']);
+            $s->events->throwDeferred();
+            $rename = lastEntry($db, $u);
+            // Another client renames it again in Google Calendar, then a poll reads it (an entry the plain Undo passes over).
+            $gid = (string) $db->scalar('SELECT google_event_id FROM events WHERE id = ?', [$id]);
+            $answer = ($s->fake->transport())('PATCH', 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode(GoogleStand::CALENDAR) . '/events/' . rawurlencode($gid),
+                ['Authorization: Bearer sample-access', 'X-Harness: remote'], \BetterCal\GoogleProbe\FakeGoogle::asSet(['summary' => 'Sample review, renamed elsewhere']));
+            checkEq('(setup) the rename in Google Calendar is taken', 200, (int) $answer['status']);
+            $s->poll();
+            $first = $press($undo, $u);
+            checkEq('the first press lands on the rename and asks, naming it by its id; nothing is answered for the caller', ['google_changed', $rename],
+                [$first[0], $first[2]]);
+            checkEq('the title stays as Google Calendar has it', 'Sample review, renamed elsewhere', (string) $db->scalar('SELECT title FROM events WHERE id = ?', [$id]));
+            checkEq('a press that does not send it back asks again', ['google_changed', $rename], [$press($undo, $u)[0], $press($undo, $u)[2]]);
+            // Before the rename: the event's creation, which the rename and the poll stand on. Sent back, the press passes
+            // over the rename (it still asks) and lands there, refused in turn with its own id; sent back again, the errand.
+            $made = (int) $db->scalar('SELECT MAX(id) FROM mutations WHERE user_id = ? AND id < ?', [$u, $rename]);
+            checkEq('a press that sends it back passes over the question to the change before it, refused once with its own id',
+                ['stale_undo', $told, $made], $press($undo, $u, $rename));
+            checkEq('sent back in turn, the press reaches the errand and undoes it', ['done', [$errand]], $press($undo, $u, $made));
+            checkEq('the question was never answered: the title is still as Google Calendar has it', 'Sample review, renamed elsewhere',
+                (string) $db->scalar('SELECT title FROM events WHERE id = ?', [$id]));
         } finally {
             GoogleStand::forget($db, $u);
         }

@@ -2279,15 +2279,18 @@ final class Undo
      * row (log-only, touching nothing) is passed over too, judged by what
      * it changed, never by who wrote it. When that last change can't be
      * undone (an answer already sent, say, or a newer change standing on
-     * it), that's the answer, and the refusal carries the entry's id
-     * (`entryId`): an older one behind it isn't undone instead.
+     * it), or when its undo asks a question (google_changed: a field it
+     * puts back was changed again), that's the answer, with the entry's id
+     * as `entry` (the key that question already carries): an older one
+     * behind it isn't undone instead, and a question is never answered for
+     * the caller.
      *
      * $past is that id, sent back by the caller with its next press: the
-     * refusal is said once, and an entry at or newer than $past is passed
-     * over while it is still refused, each one asked again (one that has
-     * become undoable since is taken, newest first), so the press reaches
-     * the latest entry before them that can be undone, and a refusal there
-     * is said with its own id. Nothing is stored for a refusal: what a
+     * answer is said once, and an entry at or newer than $past is passed
+     * over while it is still refused or still asks, each one tried again
+     * (one that can be undone now is taken, newest first), so the press
+     * reaches the latest entry before them that can be undone, and a
+     * refusal or a question there is said with its own id. Nothing is stored for a refusal: what a
      * caller forgets costs one repeated refusal (decisions.md, "The plain
      * Undo passes over a refusal the caller has already been told").
      *
@@ -2331,13 +2334,13 @@ final class Undo
                     continue; // Said already, and still refused: the press goes on to the change before it.
                 }
                 $blocked = $e->errorCode === 'stale_undo' || in_array($e->extra['reason'] ?? null, [self::DAY_UNPLACED, self::DAY_GONE, self::DAYS_SINCE], true);
-                throw new HttpError($e->errorCode, $e->getMessage() . ($blocked ? ' ' . self::PASSED_ON : ''), $e->status, $e->extra + ['entryId' => $below]);
+                throw new HttpError($e->errorCode, $e->getMessage() . ($blocked ? ' ' . self::PASSED_ON : ''), $e->status, $e->extra + ['entry' => $below]);
             }
         }
     }
 
-    /** The refusals the plain Undo says once and passes over on a press that names them (undoLatest's $past): each writes and sends nothing. */
-    private const REFUSALS = ['not_undoable', 'stale_undo', 'undo_conflict', 'google_conflict'];
+    /** What the plain Undo says once and passes over on a press that names it (undoLatest's $past): the refusals, and the question an undo of a Google edit asks (google_changed); each writes and sends nothing. */
+    private const REFUSALS = ['not_undoable', 'stale_undo', 'undo_conflict', 'google_conflict', 'google_changed'];
 
     /** What a refusal of the plain Undo adds where newer changes block the entry (undoLatest). */
     public const PASSED_ON = 'It can still be undone in Activity once the newer changes are undone.';

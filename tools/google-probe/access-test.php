@@ -219,8 +219,8 @@ $g6 = array_values(array_filter($stages[0]['rows'] ?? [], static fn(array $r) =>
 check('report: the owner\'s event\'s row has its status, not its title', ($g6['status field'] ?? null) === 'confirmed' && ($g6['summary'] ?? null) === '(absent)', json_encode($g6));
 
 // ---- Stage listread ------------------------------------------------------------
-// On a calendar the account owns (the probe calendar) and one it may write. The stand-in has no events.import route,
-// so cases 3 and 4 are skipped against it; its answers prove nothing about Google, only that the stage runs and cleans up.
+// On a calendar the account owns (the probe calendar) and one it may write. Cases 3 and 4 (events.import) are skipped
+// against the stand-in; its answers prove nothing about Google, only that the stage runs and cleans up.
 $liveMarked = static fn(FakeGoogle $f): array => array_keys(array_filter($f->events, static fn(array $e) => Probe::isMarked($e) && empty($e['recurringEventId']) && ($e['status'] ?? '') !== 'cancelled'));
 foreach (['owned', 'writer'] as $mode) {
     $fake = new FakeGoogle(CAL);

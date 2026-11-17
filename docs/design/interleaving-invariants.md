@@ -62,7 +62,7 @@ From: google-calendar.md, What Writes Send (the list of what is sent; "Not sent:
 
 ### x-agree: the rows are what Google holds
 
-After any write that succeeds and after any poll, `ldigest = gdigest` for every live series of the case, and a poll right after (`p-delta`, then `p-whole`) changes no row. After an `r-*` step and before a poll the two may differ, and nothing is asserted.
+After any write that succeeds and after any poll, `ldigest = gdigest` for every live series of the case, and a poll right after (`p-delta`, then `p-whole`) changes no row. After an `r-*` step and before a poll the two may differ, and nothing is asserted. One exception, from the owner's ruling of 2026-11-17 (google-edge-cases.md, row 7): a `w-del1` that deletes the last live day of a repeating event, which Google answers by cancelling the event itself (probe 12.4); the app leaves the event to the next poll, so until then it is here with no live day, and the poll right after removes exactly its rows.
 
 From: google-calendar.md, intro ("Google's answer is saved here the same way a poll would save it, so there's never a local-only version of a Google event"); series-model.md, Google as a Contract ("Acceptance is the read-back and the sync after it ... a second sync must change nothing"; "Local rows are written from what Google returned, never from the plan"); decisions.md, the local-only rule ("under a whole read and a delta read alike"). A write that Google kept differently is still equal here (the rows are Google's), and x-honest checks that it was named.
 

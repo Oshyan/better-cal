@@ -406,6 +406,12 @@ final class FakeGoogle
         if ($why !== null) {
             return self::error(400, $why);
         }
+        // events.insert with an iCalUID a live event already holds: 409, the id's own wording (12.11, 2026-11-17). Held only
+        // by a deleted event was not probed, and is taken as before.
+        if (isset($body['iCalUID']) && $this->holderOf((string) $body['iCalUID'], false) !== null) {
+            return self::error(409, 'The requested identifier already exists.');
+        }
+        $body = self::guestsAnswered($body);
         $id = isset($body['id']) ? (string) $body['id'] : 'fake' . str_pad((string) ++$this->ids, 6, '0', STR_PAD_LEFT);
         if (preg_match('/^[a-v0-9]{5,1024}$/', $id) !== 1) {
             return self::error(400, 'Invalid resource id value.');
@@ -435,8 +441,10 @@ final class FakeGoogle
     /**
      * events.import (GoogleWriter::import, the move to Google): an event under the iCalUID the client gives, with an id
      * Google chooses. A second import of an iCalUID a live event holds updates that event and answers its id (the access
-     * probe's listread stage, L3 and L4, 2026-11-14). Not seen live, so refused here rather than guessed: an import with
-     * no iCalUID, or one whose iCalUID only a deleted event holds (probe 12.11 asks).
+     * probe's listread stage, L3 and L4, 2026-11-14; 12.11, 2026-11-17: a single event and a repeating one, the same or
+     * other content, a new rule included). An import whose iCalUID only a deleted event holds brings that same id back,
+     * confirmed, with the new content (12.11). So one iCalUID never lists two events. An import with no iCalUID is
+     * refused (never sent by the app, not probed).
      */
     private function import(array $body): array
     {
@@ -445,26 +453,38 @@ final class FakeGoogle
             return self::error(400, 'Missing iCalUID.');
         }
         unset($body['id']);
-        $live = null;
-        $deleted = false;
+        $held = $this->holderOf($uid, false) ?? $this->holderOf($uid, true);
+        if ($held !== null) {
+            $this->events[$held] = array_replace($this->events[$held], $body, ['status' => 'confirmed', 'updated' => gmdate('Y-m-d\TH:i:s.000\Z')]);
+            $this->bump($held);
+            return self::ok($this->events[$held]);
+        }
+        return $this->insert($body);
+    }
+
+    /** The id of the event (a single event or a series' master, never a day's record) holding $uid: live, or with $deleted a cancelled one. */
+    private function holderOf(string $uid, bool $deleted): ?string
+    {
         foreach ($this->events as $id => $e) {
-            if (($e['iCalUID'] ?? '') === $uid && empty($e['recurringEventId']) && !isset($e['originalStartTime'])) {
-                if (($e['status'] ?? '') === 'cancelled') {
-                    $deleted = true;
-                } else {
-                    $live = (string) $id;
+            if (($e['iCalUID'] ?? '') === $uid && empty($e['recurringEventId']) && !isset($e['originalStartTime'])
+                && (($e['status'] ?? '') === 'cancelled') === $deleted) {
+                return (string) $id;
+            }
+        }
+        return null;
+    }
+
+    /** A guest written without an answer is given needsAction (12.7, 2026-11-17: Google answered so on insert and on PATCH). */
+    private static function guestsAnswered(array $body): array
+    {
+        if (is_array($body['attendees'] ?? null)) {
+            foreach ($body['attendees'] as $i => $a) {
+                if (is_array($a) && !isset($a['responseStatus'])) {
+                    $body['attendees'][$i]['responseStatus'] = 'needsAction';
                 }
             }
         }
-        if ($live !== null) {
-            $this->events[$live] = array_replace($this->events[$live], $body, ['updated' => gmdate('Y-m-d\TH:i:s.000\Z')]);
-            $this->bump($live);
-            return self::ok($this->events[$live]);
-        }
-        if ($deleted) {
-            return self::error(501, 'The stand-in does not model an import whose iCalUID only a deleted event holds.');
-        }
-        return $this->insert($body);
+        return $body;
     }
 
     private function get(string $id): array
@@ -502,6 +522,9 @@ final class FakeGoogle
         if ($body === null) {
             return self::error(400, 'Invalid start time.');
         }
+        $body = self::guestsAnswered($body);
+        // A day PATCHed back to confirmed under a series Google cancelled when its last live day was deleted is taken, and
+        // the series stays cancelled (12.4, 2026-11-17); the bumpDay below leaves the master as it is.
         $master = $seriesId !== $id ? ($this->events[$seriesId] ?? null) : null;
         // A day that already holds a record (live, cancelled or revived): its write moves its own etag alone.
         $hadRecord = $master !== null && isset($this->events[$id]['originalStartTime']);
@@ -523,7 +546,8 @@ final class FakeGoogle
         // 8) takes the calendar's zone on a write that sends no times: replay round 6,
         // google-undo-of-a-move-onto-a-skipped-day-date-only request 16 and -with-a-status-change request 15, a PATCH of
         // status cancelled answered with start, end and originalStartTime in America/Los_Angeles, the calendar's zone,
-        // where the read before named none. Whether a later list shows the zone too is not yet seen.
+        // where the read before named none. A later list shows the zone too, and a second list the same (12.5, 2026-11-17:
+        // a title PATCHed with no times, then status cancelled; a record not written keeps naming none).
         if ($master !== null) {
             foreach (['start', 'end'] as $k) {
                 if (isset($e[$k]['dateTime']) && !isset($e[$k]['timeZone'])) {
@@ -567,6 +591,7 @@ final class FakeGoogle
         if ($body === null) {
             return self::error(400, 'Invalid start time.');
         }
+        $body = self::guestsAnswered($body);
         $new = array_replace($old, $body);
         $allDay = isset($new['start']['date']);
         if (isset($body['recurrence'])) {
@@ -591,7 +616,9 @@ final class FakeGoogle
             unset($body['status']);
             $new['status'] = 'cancelled';
         }
-        $fields = array_intersect_key($body, array_flip(['summary', 'description', 'location', 'status', 'source', 'transparency']));
+        // The guest list too: written alone to the master, it was written into the record of a day with its own notes,
+        // the notes kept (12.7, 2026-11-17).
+        $fields = array_intersect_key($body, array_flip(['summary', 'description', 'location', 'status', 'source', 'transparency', 'attendees']));
         // A series with no notes, written without them: every kept record's own notes are cleared (3.52 to 3.57; and
         // with no recurrence sent, 3.68, 2026-11-14; with notes of its own, or its empty notes sent, they stay: 3.58 to
         // 3.61).
@@ -697,19 +724,9 @@ final class FakeGoogle
             }
         }
         // A rule change that leaves the series no day but deleted ones: Google cancels the series (3.62).
-        if (!$emptied && ($new['status'] ?? 'confirmed') !== 'cancelled' && isset($body['recurrence'])) {
-            $live = false;
-            foreach ($this->generate($new) as $inst) {
-                $r = $this->events[(string) $inst['id']] ?? null;
-                if (!isset($this->hidden[(string) $inst['id']]) && ($r === null || !isset($r['originalStartTime']) || ($r['status'] ?? '') !== 'cancelled')) {
-                    $live = true;
-                    break;
-                }
-            }
-            if (!$live) {
-                $new['status'] = 'cancelled';
-                $this->emptied[$id] = true;
-            }
+        if (!$emptied && ($new['status'] ?? 'confirmed') !== 'cancelled' && isset($body['recurrence']) && !$this->hasLiveDay($new)) {
+            $new['status'] = 'cancelled';
+            $this->emptied[$id] = true;
         }
         if ($startChanged || $patternChanged || isset($fields['status']) || isset($this->emptied[$id])) {
             $new['sequence'] = (int) ($old['sequence'] ?? 0) + 1;
@@ -804,6 +821,17 @@ final class FakeGoogle
         $this->events[$id] = $e;
         if ($seriesId !== $id) {
             $this->bumpDay($seriesId, $id, $hadRecord);
+            // The last live day deleted by its instance id: Google cancels the series itself, every record taking one etag
+            // with it; a PATCH of that day back to confirmed is then taken and leaves the series cancelled, and a PATCH of
+            // the series to confirmed brings back every day, the ones deleted earlier included (12.4, 2026-11-17; the last
+            // as 3.15 and 10.4). Unlike a rule change that leaves no day (3.62, emptied), it can be brought back. A day
+            // PATCHed to status cancelled, not deleted, was not probed and is left as before (patch).
+            $master = $this->events[$seriesId] ?? null;
+            if ($master !== null && !empty($master['recurrence']) && ($master['status'] ?? '') !== 'cancelled' && !$this->hasLiveDay($master)) {
+                $this->events[$seriesId]['status'] = 'cancelled';
+                $this->events[$seriesId]['sequence'] = (int) ($master['sequence'] ?? 0) + 1;
+                $this->bump($seriesId);
+            }
             return ['status' => 204, 'body' => ''];
         }
         if (!empty($e['recurrence'])) {
@@ -967,6 +995,18 @@ final class FakeGoogle
             }
         }
         return $out;
+    }
+
+    /** Whether a master has a day that is neither hidden nor a cancelled record (3.62 and 12.4 ask it the same way). */
+    private function hasLiveDay(array $master): bool
+    {
+        foreach ($this->generate($master) as $inst) {
+            $r = $this->events[(string) $inst['id']] ?? null;
+            if (!isset($this->hidden[(string) $inst['id']]) && ($r === null || !isset($r['originalStartTime']) || ($r['status'] ?? '') !== 'cancelled')) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** @return list<array> every occurrence of a master as an instance resource */

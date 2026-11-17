@@ -607,6 +607,9 @@ final class Events
             if ($resp !== null) {
                 $this->google()->apply($calendar, [$resp], GoogleWriter::sendsRecurrence($body));
             }
+            if (!empty($event['recurrence_parent_id']) && $this->leftAfter($id)[0] === null) {
+                return; // the day has nothing of its own left: an ordinary day again, its row gone with the answer
+            }
             if ($localFields !== []) {
                 $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
             }
@@ -616,13 +619,19 @@ final class Events
             $this->applyPeoplePatch($userId, $id, $in);
             $this->ownAfterRowEdit($event, $in);
         });
-        $left = $this->get($userId, $id);
-        $after = ['events' => [$left]] + $this->labels->eventLinkRows($id);
+        // A write that leaves a day with nothing of its own is a success, the
+        // day an ordinary day of its repeating event again: never "not found"
+        // (leftAfter, the one reading of what a day's write left). An event
+        // in no series is still read as before.
+        [$left, $after] = $this->leftAfter($id);
+        if ($left === null && empty($event['recurrence_parent_id'])) {
+            $left = $this->get($userId, $id);
+        }
         if ($googleFields !== []) {
             // The fields it changed at Google are named, so its undo sends
             // back those alone (GoogleUndo).
             $was = GoogleUndo::bodyOf($event);
-            $this->googleJournal($userId, "Updated '" . (string) $event['title'] . "'", $calendar, $id,
+            $this->googleJournal($userId, "Updated '" . (string) $event['title'] . "'", $calendar, $left === null ? (int) $event['recurrence_parent_id'] : $id,
                 GoogleUndo::details(GoogleUndo::EDIT, $calendar, (string) $event['google_event_id'], $was, $event['google_etag'] ?? null, self::answerEtag($resp),
                     ['changed' => GoogleUndo::editChanged($was, $left, $resp)]),
                 [$before, $after]);
@@ -807,8 +816,7 @@ final class Events
         // ordinary again. With the row before, the entry says what the edit
         // changed here, a row it made included, so its undo puts back
         // exactly that (GoogleUndo, Undo::restoreSnapshots).
-        $stored = $rowId !== null ? $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$rowId]) : null;
-        $after = $stored !== null ? ['events' => [$stored]] + $this->labels->eventLinkRows((int) $stored['id']) : [];
+        [$stored, $after] = $this->leftAfter($rowId);
         $summary = "Updated one occurrence of '" . (string) $master['title'] . "'";
         if ($undo === null) {
             // Held here alone: Google is sent nothing, and the entry undoes here.
@@ -821,6 +829,22 @@ final class Events
             GoogleUndo::details(GoogleUndo::EDIT, $calendar, $undo[0], $undo[1], $undo[2], self::answerEtag($resp),
                 ['changed' => GoogleUndo::editChanged($undo[1], $stored, $resp)]),
             [$before, $after]);
+    }
+
+    /**
+     * What a write left of a row, for its entry and its answer: the row and
+     * its links, or neither. A day's write that leaves the day nothing of
+     * its own makes it an ordinary day of its repeating event again and its
+     * row goes with Google's answer (Feeds::sync): that is a success with no
+     * row, never "not found". The one reading every write to a day by a row
+     * goes through (googlePatchThis, googlePatchAll).
+     *
+     * @return array{0:?array, 1:array} the row or null, and its snapshot tables
+     */
+    private function leftAfter(?int $rowId): array
+    {
+        $row = $rowId === null ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$rowId]);
+        return [$row, $row === null ? [] : ['events' => [$row]] + $this->labels->eventLinkRows((int) $row['id'])];
     }
 
     /** "Nov 7" for an activity line: an all-day date as stored, a timed day on the series' clock. */
@@ -1217,7 +1241,10 @@ final class Events
         if ($fields === []) {
             return [];
         }
-        $row = $this->get($userId, $id);
+        $row = $this->db->one('SELECT * FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NULL', [$id, $userId]);
+        if ($row === null) {
+            return []; // a day's row gone with the write's answer: an ordinary day again, nothing of its own to name
+        }
         $master = empty($row['recurrence_parent_id']) ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]);
         return $this->keptOf($master === null ? $row : $this->dayRow($master, $row, (string) $row['recurrence_instance_utc']), $fields);
     }

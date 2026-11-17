@@ -50,7 +50,26 @@ use BetterCal\Infra\Db;
  *   responseStatus, attendance  answer: my answer before, and my Planned or
  *               Maybe before (an answer resets it)
  *
- * Undoing sends the inverse through GoogleWriter, conditional on the row's
+ * The undo of an edit to one event or one day is a forward change back
+ * (docs/design/google-conflict-choice.md, "Slice 3a"; undoCompared), with
+ * the account's google_conflict_choice on: base is the row the entry left
+ * (its after snapshot) for the fields it changed, wanted those fields as
+ * its before snapshot has them (a field a day did not own goes back to
+ * following its repeating event), now what Google Calendar holds, read,
+ * compared field by field and stored by the one step every such change
+ * uses (Events::undoChoice). A field changed there that the undo does not
+ * put back is kept and named; one it puts back that was changed again
+ * since, there or here, asks (409 google_changed, nothing sent or put
+ * back), and Undo anyway sends what the question showed (`over`); the rest
+ * is sent over the rows as stored after the read. For those fields the
+ * comparison replaces the journal's stale check (compared, Undo::staleFor).
+ * The undo's own entry is an edit's, so redo is the same. Not compared,
+ * because the entry holds nothing of the day as it left it: an edit that
+ * left a day no row, and the redo of an undo that removed the row; and an
+ * edit that changed nothing Google holds reads nothing.
+ *
+ * Every other undo (a delete, a create, an answer, those edits, and every
+ * edit with the setting off) sends the inverse through GoogleWriter, conditional on the row's
  * stored etag (GoogleWriter sends it when none is given): any change to the
  * event at Google since the app last read it changed its etag, so Google
  * answers 412 and nothing is written (the undo is refused). The etag the
@@ -436,10 +455,10 @@ final class GoogleUndo
      *
      * @return array{entity:string,op:string}
      */
-    public function undo(array $mutation, ?RequestAuthority $authority = null, bool $force = false, bool $compared = false, array $over = []): array
+    public function undo(array $mutation, ?RequestAuthority $authority = null, bool $force = false, bool $compared = false, array $over = [], ?string $viewer = null): array
     {
         try {
-            return $this->undoOne($mutation, $authority, $force, $compared, $over);
+            return $this->undoOne($mutation, $authority, $force, $compared, $over, $viewer);
         } catch (HttpError $e) {
             // The access rule refused it (GoogleWriter::admit, recheck): said as an undo's refusal.
             if (GoogleWriter::isReadOnly($e) && is_string($e->extra['access'] ?? null)) {
@@ -451,7 +470,7 @@ final class GoogleUndo
     }
 
     /** @return array{entity:string,op:string} */
-    private function undoOne(array $mutation, ?RequestAuthority $authority, bool $force, bool $compared = false, array $over = []): array
+    private function undoOne(array $mutation, ?RequestAuthority $authority, bool $force, bool $compared = false, array $over = [], ?string $viewer = null): array
     {
         $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
         if (!self::carries(is_array($details) ? $details : null)) {
@@ -503,7 +522,7 @@ final class GoogleUndo
                     if ($row === null || $leftRow === null) {
                         throw self::conflict(); // the row went between the check and here
                     }
-                    return $this->undoCompared($mutation, $calendar, $googleId, $day['key'], $row, $wasRow, $leftRow, $changed, $over, $authority, $summary);
+                    return $this->undoCompared($mutation, $calendar, $googleId, $day['key'], $row, $wasRow, $leftRow, $changed, $over, $authority, $summary, $viewer);
                 }
                 $dayKey =GoogleWriter::instanceOf($googleId)['key'] ?? null;
                 $at = static fn(?array $r): ?array => $r === null || $dayKey === null || ($r['recurrence_instance_utc'] ?? null) === null ? $r : array_merge($r, ['recurrence_instance_utc' => (string) $dayKey]);
@@ -1163,6 +1182,13 @@ final class GoogleUndo
         return array_values(array_filter(GoogleConflict::FIELDS, static fn(string $f): bool => array_intersect(GoogleWriter::keysOf([$f]), $changed) !== []));
     }
 
+    /** The compared fields an edit entry's undo puts back (comparedFields of its `changed`): what the stale check leaves to the comparison. Pure. @return list<string> */
+    public static function fieldsPutBack(array $mutation): array
+    {
+        $g = json_decode((string) ($mutation['details_json'] ?? ''), true)['google'] ?? null;
+        return is_array($g) ? self::comparedFields(self::changedOf($g)) : [];
+    }
+
     /** The columns of the compared fields $fields in $row, a time with its zone (one value). Pure. */
     private static function columnsOf(array $fields, array $row): array
     {
@@ -1222,7 +1248,7 @@ final class GoogleUndo
      * @param list<string> $changed
      * @return array{entity:string,op:string,kept:list<array>}
      */
-    private function undoCompared(array $mutation, array $calendar, string $googleId, ?string $key, array $row, ?array $wasRow, array $leftRow, array $changed, array $over, ?RequestAuthority $authority, string $summary): array
+    private function undoCompared(array $mutation, array $calendar, string $googleId, ?string $key, array $row, ?array $wasRow, array $leftRow, array $changed, array $over, ?RequestAuthority $authority, string $summary, ?string $viewer = null): array
     {
         $userId = (int) $mutation['user_id'];
         $writer = $this->writer();
@@ -1234,6 +1260,8 @@ final class GoogleUndo
             throw self::conflict();
         }
         $events = new Events($this->db, new Recurrence(), $this->undo, new Labels($this->db), new Filters($this->db, $this->undo, new \BetterCal\Infra\JobQueue($this->db)), new Trips($this->db, $this->undo), null, $writer);
+        // The device the request came from: the clock a same-clock-time event's values are served and read on.
+        $events->viewFrom($viewer);
         try {
             $step = $events->undoChoice($userId, $calendar, $row, self::columnsOf($fields, $leftRow), $this->wantedBack($fields, $wasRow, $row, $master, $key), $over, $authority,
                 $master === null ? null : ['master' => $master, 'key' => $key]);

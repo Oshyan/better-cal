@@ -98,10 +98,10 @@ return static function (Db $db): void {
         $s->fake->seed(array_merge($s->fake->events[$gid], $change));
     };
     // An undo: its answer, or the refusal's code, message and extra.
-    $undo = static function (object $s, int $entry, bool $force = false, array $over = []): array {
+    $undo = static function (object $s, int $entry, bool $force = false, array $over = [], ?string $device = null): array {
         $s->t->calls = [];
         try {
-            return ['ok'] + $s->undo->undoById($s->u, $entry, $force, null, $over);
+            return ['ok'] + $s->undo->undoById($s->u, $entry, $force, null, $over, $device);
         } catch (HttpError $e) {
             return [$e->errorCode, $e->getMessage(), $e->extra];
         }
@@ -163,7 +163,7 @@ return static function (Db $db): void {
         $a = $undo($s, $entry);
         checkEq('asked: the code, the sentence, the entry, the field with was, now and yours', [
             'google_changed',
-            "After this change, the title was changed again: it's 'Sample review, at Google' now. Undo puts back 'Sample review', replacing 'Sample review, at Google'. Nothing was undone.",
+            "After this change to 'Sample review, renamed', the title was changed again: it's 'Sample review, at Google' now. Undo puts back 'Sample review', replacing 'Sample review, at Google'. Nothing was undone.",
             $entry, [['field' => 'title', 'was' => 'Sample review, renamed', 'now' => 'Sample review, at Google', 'yours' => 'Sample review']], [],
         ], [$a[0], $a[1], $a[2]['entry'] ?? null, $a[2]['fields'] ?? null, $a[2]['kept'] ?? null]);
         checkEq('nothing sent, the read stored, the entry not undone, the tag the edit added still there', [[], 'Sample review, at Google', 0, 1],
@@ -245,7 +245,7 @@ return static function (Db $db): void {
         $a = $undo($s, $entry);
         checkEq('asked about the title, for the whole repeating event, naming the day; nothing sent', [
             'google_changed',
-            "After this change to Tue, Apr 13, 2027, the title was changed again, for the whole repeating event: it's 'Sample daily' now. Undo puts back 'Sample standup' for this day, replacing 'Sample daily'. Nothing was undone.",
+            "After this change to Tue, Apr 13, 2027 of 'Sample standup, this week', the title was changed again, for the whole repeating event: it's 'Sample daily' now. Undo puts back 'Sample standup' for this day, replacing 'Sample daily'. Nothing was undone.",
             [['field' => 'title', 'was' => 'Sample standup, this week', 'now' => 'Sample daily', 'yours' => 'Sample standup', 'from' => 'series']], true, [],
         ], [$a[0], $a[1], $a[2]['fields'] ?? null, isset($a[2]['day']['start'], $a[2]['day']['tzid']), $writes($s)]);
     });
@@ -294,7 +294,7 @@ return static function (Db $db): void {
         $there($s, 'smpl5single', ['summary' => 'Sample review, at Google']);
         $out = $s->undo->undoRun($s->u, 'sample-run');
         checkEq('the run\'s undo: the move undone, the rename listed as refused with the first sentence, never overwritten, not counted as skipped', [
-            1, 0, [['id' => $renamed, 'code' => 'google_changed', 'message' => "After this change, the title was changed again: it's 'Sample review, at Google' now."]],
+            1, 0, [['id' => $renamed, 'code' => 'google_changed', 'message' => "After this change to 'Sample review, renamed', the title was changed again: it's 'Sample review, at Google' now."]],
             0, 1, 'Sample review, at Google',
         ], [$out['undone'], $out['skipped'], $out['refused'], $undone($renamed), $undone($moved), (string) $row($s->id)['title']]);
     });
@@ -308,6 +308,133 @@ return static function (Db $db): void {
         checkEq('refused whole, nothing sent, no `entry` or `fields`',
             ['google_conflict', 'Newer changes exist for this item; undoing would overwrite them. This event changed in Google Calendar since you last saw it.', [], false],
             [$a[0], $a[1], $writes($s), isset($a[2]['fields'])]);
+    });
+
+    // A time is one value (the page, (b)): compared, asked about and sent back whole (start, end, all-day and zone),
+    // in each form. Every value below is written by hand: the day as the edit left it (was), as another client then
+    // moved it in Google Calendar (now), and as it was before the edit (yours).
+    $whole = static fn(string $s, string $e, bool $allDay = false, string $tz = 'America/Los_Angeles'): array => ['start' => $s, 'end' => $e, 'allDay' => $allDay, 'tzid' => $tz];
+    $instant = static fn(object $s, string $gid, string $end = 'start'): string => isset($s->fake->events[$gid][$end]['date']) ? (string) $s->fake->events[$gid][$end]['date']
+        : (new DateTimeImmutable((string) $s->fake->events[$gid][$end]['dateTime']))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i');
+    // The undo of a time change asked about, then Undo anyway with what the question showed: [the asked fields, what Undo anyway sent, where Google Calendar then has the start and end].
+    $askedThenAnyway = static function (object $s, int $entry, string $gid, ?string $device = null) use ($undo, $writes, $instant): array {
+        $a = $undo($s, $entry, false, [], $device);
+        $asked = [$a[0], $a[2]['fields'] ?? null, $writes($s)];
+        $now = $a[2]['fields'][0]['now'] ?? [];
+        $b = $undo($s, $entry, false, $now, $device);
+        return [$asked, [$b[0], $writes($s)], [$instant($s, $gid), $instant($s, $gid, 'end')]];
+    };
+
+    scenario('undo choice, a time whole: a day before a clock change, on its night and after it, each dragged, moved again in Google Calendar and its drag undone', function () use ($db, $setup, $last, $there, $when, $whole, $askedThenAnyway): void {
+        // Daily at 01:30 Pacific for half an hour from 12 March 2027; the clocks go forward at 02:00 on 14 March, so that
+        // night's day ends at 03:00 daylight time, and the days after start an hour earlier in UTC.
+        foreach ([
+            'the day before' => ['2027-03-12', '20270312T093000Z', '-08:00', '-08:00', '02:00', '09:30', '10:00'],
+            'the changeover night' => ['2027-03-14', '20270314T093000Z', '-08:00', '-07:00', '03:00', '09:30', '10:00'],
+            'the day after' => ['2027-03-15', '20270315T083000Z', '-07:00', '-07:00', '02:00', '08:30', '09:00'],
+        ] as $which => [$date, $key, $startOffset, $offset, $endClock, $utcStart, $utcEnd]) {
+            $s = $setup();
+            $s->fake->seed(['id' => 'smpl5night', 'iCalUID' => 'smpl5night@google.com', 'summary' => 'Sample night shift',
+                'start' => $when('2027-03-12 01:30'), 'end' => $when('2027-03-12 02:00'), 'recurrence' => ['RRULE:FREQ=DAILY;COUNT=5']]);
+            ($s->poll)();
+            $master = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [$s->calendarId, 'smpl5night']);
+            $gid = 'smpl5night_' . $key;
+            // Dragged to 04:30 for half an hour here; then moved to 06:30 in Google Calendar, not polled.
+            $s->events->patch($s->u, $master, ['scope' => 'this', 'instanceStart' => $date . 'T01:30:00' . $startOffset, 'start' => $date . 'T04:30:00' . $offset, 'end' => $date . 'T05:00:00' . $offset]);
+            $entry = $last($s);
+            $there($s, $gid, ['start' => $when($date . ' 06:30'), 'end' => $when($date . ' 07:00')]);
+            checkEq("$which: asked about the time, each value whole on the event's clock; Undo anyway sends the start and end, and Google Calendar holds the day at 01:30 Pacific again", [
+                ['google_changed', [['field' => 'time',
+                    'was' => $whole($date . 'T04:30:00' . $offset, $date . 'T05:00:00' . $offset),
+                    'now' => $whole($date . 'T06:30:00' . $offset, $date . 'T07:00:00' . $offset),
+                    'yours' => $whole($date . 'T01:30:00' . $startOffset, $date . 'T' . $endClock . ':00' . $offset), 'from' => 'day']], []],
+                ['ok', [['PATCH', $gid, ['start', 'end']]]],
+                ["$date $utcStart", "$date $utcEnd"],
+            ], $askedThenAnyway($s, $entry, $gid));
+            checkEq("$which: the time sent back names its zone", 'America/Los_Angeles', $s->fake->events[$gid]['start']['timeZone'] ?? null);
+        }
+    });
+
+    scenario('undo choice, a time whole: an all-day event and an all-day day, each moved, moved again in Google Calendar and the move undone', function () use ($db, $setup, $last, $there, $whole, $askedThenAnyway): void {
+        $s = $setup();
+        $s->events->patch($s->u, $s->allDay, ['start' => '2027-04-02', 'end' => '2027-04-03', 'allDay' => true]);
+        $entry = $last($s);
+        $there($s, 'smpl5allday', ['start' => ['date' => '2027-04-05'], 'end' => ['date' => '2027-04-06']]);
+        checkEq('an all-day event: asked with dates whole (all-day, the zone UTC); Undo anyway sends the dates, and Google Calendar holds 31 March again', [
+            ['google_changed', [['field' => 'time', 'was' => $whole('2027-04-02T00:00:00+00:00', '2027-04-03T00:00:00+00:00', true, 'UTC'),
+                'now' => $whole('2027-04-05T00:00:00+00:00', '2027-04-06T00:00:00+00:00', true, 'UTC'),
+                'yours' => $whole('2027-03-31T00:00:00+00:00', '2027-04-01T00:00:00+00:00', true, 'UTC')]], []],
+            ['ok', [['PATCH', 'smpl5allday', ['start', 'end']]]],
+            ['2027-03-31', '2027-04-01'],
+        ], $askedThenAnyway($s, $entry, 'smpl5allday'));
+
+        // An all-day repeating event, Mondays from 3 May 2027: the day of 10 May moved to the 11th here, to the 12th there.
+        $s = $setup();
+        $s->fake->seed(['id' => 'smpl5days', 'iCalUID' => 'smpl5days@google.com', 'summary' => 'Sample day off', 'start' => ['date' => '2027-05-03'], 'end' => ['date' => '2027-05-04'],
+            'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4']]);
+        ($s->poll)();
+        $master = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [$s->calendarId, 'smpl5days']);
+        $s->events->patch($s->u, $master, ['scope' => 'this', 'instanceStart' => '2027-05-10', 'start' => '2027-05-11', 'end' => '2027-05-12', 'allDay' => true]);
+        $entry = $last($s);
+        $there($s, 'smpl5days_20270510', ['start' => ['date' => '2027-05-12'], 'end' => ['date' => '2027-05-13']]);
+        checkEq('an all-day day: asked with dates whole, for the day; Undo anyway sends the dates, and Google Calendar holds 10 May again', [
+            ['google_changed', [['field' => 'time', 'was' => $whole('2027-05-11T00:00:00+00:00', '2027-05-12T00:00:00+00:00', true, 'UTC'),
+                'now' => $whole('2027-05-12T00:00:00+00:00', '2027-05-13T00:00:00+00:00', true, 'UTC'),
+                'yours' => $whole('2027-05-10T00:00:00+00:00', '2027-05-11T00:00:00+00:00', true, 'UTC'), 'from' => 'day']], []],
+            ['ok', [['PATCH', 'smpl5days_20270510', ['start', 'end']]]],
+            ['2027-05-10', '2027-05-11'],
+        ], $askedThenAnyway($s, $entry, 'smpl5days_20270510'));
+    });
+
+    scenario('undo choice, a time whole: an event that keeps the same clock time in any zone, moved and its move undone from a device in another zone', function () use ($db, $setup, $last, $there, $whole, $askedThenAnyway): void {
+        // 09:00 for an hour on whatever clock it is seen on; made, moved to 11:00 and undone from a device in New York.
+        $s = $setup();
+        $s->events->viewFrom('America/New_York');
+        $id = (int) $s->events->create($s->u, ['calendarId' => $s->calendarId, 'title' => 'Sample walk', 'start' => '2027-03-03T09:00:00-05:00', 'end' => '2027-03-03T10:00:00-05:00',
+            'allDay' => false, 'tzid' => 'America/New_York', 'floating' => true])['eventId'];
+        $gid = (string) $db->scalar('SELECT google_event_id FROM events WHERE id = ?', [$id]);
+        $s->events->patch($s->u, $id, ['start' => '2027-03-03T11:00:00-05:00', 'end' => '2027-03-03T12:00:00-05:00']);
+        $entry = $last($s);
+        // Another client moves it to 13:00 on the clock Google Calendar holds it on (New York, where it was made: 09:00 there is 14:00 UTC).
+        $there($s, $gid, ['start' => ['dateTime' => '2027-03-03T13:00:00-05:00', 'timeZone' => 'America/New_York'], 'end' => ['dateTime' => '2027-03-03T14:00:00-05:00', 'timeZone' => 'America/New_York']]);
+        $zone = 'America/New_York'; // the zone it was made in, served with each time
+        checkEq('asked with each value on the device\'s clock, whole; Undo anyway with those values goes through, and Google Calendar holds 09:00 New York (14:00 UTC) again', [
+            ['google_changed', [['field' => 'time', 'was' => $whole('2027-03-03T11:00:00-05:00', '2027-03-03T12:00:00-05:00', false, $zone),
+                'now' => $whole('2027-03-03T13:00:00-05:00', '2027-03-03T14:00:00-05:00', false, $zone),
+                'yours' => $whole('2027-03-03T09:00:00-05:00', '2027-03-03T10:00:00-05:00', false, $zone)]], []],
+            ['ok', [['PATCH', $gid, ['start', 'end']]]],
+            ['2027-03-03 14:00', '2027-03-03 15:00'],
+        ], $askedThenAnyway($s, $entry, $gid, 'America/New_York'));
+    });
+
+    // A place is one value, its text and its pin (the page, (d)): a place changed here, changed again in Google Calendar
+    // and stored by a poll is the comparison's question, for an event and for a day alike, never the stale refusal.
+    scenario('undo choice: the place changed here, then in Google Calendar, a poll stores that: the undo asks about the place, for an event and for a day', function () use ($setup, $last, $undo, $writes, $there, $day, $dayGid, $row, $dayRow): void {
+        $s = $setup();
+        $s->events->patch($s->u, $s->id, ['location' => 'Sample hall']);
+        $entry = $last($s);
+        $there($s, 'smpl5single', ['location' => 'Sample annex']);
+        ($s->poll)();
+        $a = $undo($s, $entry);
+        checkEq('an event: asked about the place with its values, nothing sent', [
+            'google_changed',
+            "After this change to 'Sample review', the location was changed again: it's 'Sample annex' now. Undo puts back 'Sample room 2', replacing 'Sample annex'. Nothing was undone.",
+            [['field' => 'location', 'was' => 'Sample hall', 'now' => 'Sample annex', 'yours' => 'Sample room 2']], [],
+        ], [$a[0], $a[1], $a[2]['fields'] ?? null, $writes($s)]);
+        $a = $undo($s, $entry, false, ['location' => 'Sample annex']);
+        checkEq('an event: Undo anyway puts the place back, one PATCH', ['ok', [['PATCH', 'smpl5single', ['location']]], 'Sample room 2'], [$a[0], $writes($s), (string) $row($s->id)['location']]);
+
+        $s = $setup();
+        $s->events->patch($s->u, $s->weekly, $day + ['tagNames' => ['sample-day']]);
+        $s->events->patch($s->u, $s->weekly, $day + ['location' => 'Sample hall']);
+        $entry = $last($s);
+        $there($s, $dayGid, ['location' => 'Sample annex']);
+        ($s->poll)();
+        $a = $undo($s, $entry);
+        checkEq('a day: asked about the place the same way, nothing sent', ['google_changed', [['yours' => '', 'field' => 'location', 'was' => 'Sample hall', 'now' => 'Sample annex', 'from' => 'day']], []],
+            [$a[0], array_map(static fn(array $f): array => ['yours' => (string) $f['yours']] + $f, $a[2]['fields'] ?? []), $writes($s)]);
+        $a = $undo($s, $entry, false, ['location' => 'Sample annex']);
+        checkEq('a day: Undo anyway takes the place off the day again', ['ok', ''], [$a[0], (string) ($dayRow($s)['location'] ?? '')]);
     });
 
     // #241: one capture of "a row and its links" (Undo::linksOf). Each former site's entry holds every link table: here

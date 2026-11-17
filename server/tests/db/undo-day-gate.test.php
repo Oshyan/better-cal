@@ -339,7 +339,7 @@ return static function (Db $db): void {
         // undo (the change to all events made it all-day), so the redo asks before it replaces that; nothing is sent.
         checkEq("$name: the redo asks about the time, changed again since by the change to all events; nothing is sent and the day stays all-day",
             [true, [], 1],
-            [str_starts_with((string) $result, "google_changed: After this change to Wed, Jan 6, 2027, the time was changed again: it's all day on Wed, Jan 6, 2027 now."), array_column(($w->sent)(), 0), (int) ($row['all_day'] ?? -1)]);
+            [str_starts_with((string) $result, 'google_changed: After this change to Wed, Jan 6, 2027 of ') && str_contains((string) $result, "the time was changed again: it's all day on Wed, Jan 6, 2027 now."), array_column(($w->sent)(), 0), (int) ($row['all_day'] ?? -1)]);
     });
     foreach (['a time and zone of its own (21:00 New York held in Berlin)' => ['start' => '2027-01-07T03:00:00+01:00', 'end' => '2027-01-07T04:00:00+01:00', 'tzid' => 'Europe/Berlin'],
         'moved to the 8th at the series clock' => ['start' => '2027-01-08T20:00:00-05:00', 'end' => '2027-01-08T21:00:00-05:00']] as $shape => $edit) {

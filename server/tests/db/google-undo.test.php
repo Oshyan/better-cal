@@ -243,7 +243,7 @@ return static function (Db $db): void {
         // Since the undo of an edit goes through the conflict choice (docs/design/google-conflict-choice.md, "Slice 3a",
         // case 5): the same field changed again in Google Calendar is asked about, the read stored, nothing sent or undone.
         checkEq('the read shows the title changed again, so nothing is sent: asked, the read stored, the entry not undone', [
-            "409 google_changed: After this change, the title was changed again: it's 'Sample review, renamed at Google' now. Undo puts back 'Sample review', replacing 'Sample review, renamed at Google'. Nothing was undone.",
+            "409 google_changed: After this change to 'Sample review, renamed', the title was changed again: it's 'Sample review, renamed at Google' now. Undo puts back 'Sample review', replacing 'Sample review, renamed at Google'. Nothing was undone.",
             [['GET', 'probe9z8y7x@google.com', null]], 'Sample review, renamed at Google', 0, true,
         ], [$caught, $calls($t), (string) $row($t, 'probe9z8y7x')['title'], (int) $db->scalar('SELECT undone FROM mutations WHERE id = ?', [(int) $entry['id']]), $state() !== $before]);
         // With the setting off it is the refusal it was, and nothing is stored.

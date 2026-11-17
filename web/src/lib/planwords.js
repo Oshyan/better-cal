@@ -1110,7 +1110,7 @@ export function googleChangedAsk({ name, fields, remove = false, back = false, d
   const said = (f, v, other) => valueWords(f.field, v, other, ref);
   // A value in a line: the value, or "no link" for an empty one.
   const side = (f, v, other) => (isEmptyValue(f.field, v) ? 'no ' + fieldNoun(f.field) : said(f, v, other));
-  if (undo) return undoAsk(list, day, ref, said, side);
+  if (undo) return undoAsk(list, name, day, ref, said, side);
   const since = 'Since ' + (day ? dayWords(day, ref) + ' of ' : '') + quoted(name || 'Untitled event') + ' was last shown to you, ';
   // Where in Google Calendar the change was made, when it was the whole repeating event's.
   const whole = (f) => (f.from === 'series' ? ', for the whole repeating event' : '');
@@ -1156,8 +1156,8 @@ export function googleChangedAsk({ name, fields, remove = false, back = false, d
  * the change left, `now` what it is, `yours` what Undo puts back. Held to
  * the server's own message by the same table (GoogleConflict::question).
  */
-function undoAsk(list, day, ref, said, side) {
-  const after = 'After this change' + (day ? ' to ' + dayWords(day, ref) : '') + ', ';
+function undoAsk(list, name, day, ref, said, side) {
+  const after = 'After this change to ' + (day ? dayWords(day, ref) + ' of ' : '') + quoted(name || 'Untitled event') + ', ';
   const forDay = day ? ' for this day' : '';
   const whole = (f) => (day && f.from === 'series' ? ', for the whole repeating event' : '');
   // What Undo does with one field: puts back its value from before, or removes one the change added.

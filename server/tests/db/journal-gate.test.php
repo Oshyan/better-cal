@@ -509,6 +509,7 @@ return static function (Db $db): void {
         'GoogleUndo::seriesUndoOff' => 'a refusal, after the loader',
         'GoogleUndo::undoSummary' => 'words only',
         'GoogleUndo::compared' => 'whether an undo goes through the conflict choice, after the loader; reads only',
+        'GoogleUndo::fieldsPutBack' => 'the compared fields an edit entry\'s undo puts back, for the stale check; pure',
         'Events::undoChoice' => 'the conflict choice\'s read, comparison and store for an undo; takes nothing back, run inside GoogleUndo::undo',
         'Events::undoBody' => 'the body of the undo\'s PATCH, pure',
         'GoogleSeries::putBack' => 'takes no entry back (reads only the pending row; asks entryToFinish for its own words); run through SeriesPlans::googlePutBack',

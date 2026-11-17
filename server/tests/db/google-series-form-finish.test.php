@@ -77,7 +77,7 @@ return static function (Db $db): void {
     ];
     // What is done at Google meanwhile: [method, which day, body], and the words for it.
     $changes = [
-        'a day renamed at Google' => static fn(array $c): array => ['PATCH', 'day', ['summary' => 'Renamed at Google'], 'renamed'],
+        'a day renamed at Google' => static fn(array $c): array => ['PATCH', 'day', ['summary' => 'Renamed at Google'], "renamed 'Renamed at Google'"],
         'a day deleted at Google' => static fn(array $c): array => ['DELETE', 'day', null, 'deleted'],
         'a day given another time at Google' => static fn(array $c): array => ['PATCH', 'day', $c['retime'][0], $c['retime'][1]],
         'the plan\'s edited day given other notes at Google' => static fn(array $c): array => ['PATCH', 'edited', ['description' => 'Notes from Google'], 'given other notes'],

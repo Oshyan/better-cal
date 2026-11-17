@@ -60,7 +60,7 @@ return static function (Db $db): void {
                     $refused[] = [$error->errorCode, $error->extra['reason'] ?? null, $error->getMessage()];
                 }
             }
-            $words = "Can't redo \"" . (string) $db->scalar('SELECT summary FROM mutations WHERE id = ?', [$deleted]) . "\". This repeating event was moved to another time or day after that, and Better-Cal can no longer tell which of its days the change was on. Make the change again on the day you meant.";
+            $words = "Can't redo \"" . (string) $db->scalar('SELECT summary FROM mutations WHERE id = ?', [$deleted]) . "\". This repeating event was moved to another time or day after that, and Better-Cal can no longer tell where its day of Mon 11 Jan 2027 is now. Make the change again on the day you meant.";
             checkEq('redo after a move: refused, forced or not, in words that say what changed', [['not_undoable', 'day_unplaced', $words], ['not_undoable', 'day_unplaced', $words]], $refused);
             checkEq('redo after a move: Google is sent nothing of any kind', [], array_column($s->fake->requests, 'method'));
             checkEq('redo after a move: the series here skips no day, as before', null, $db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$id]));

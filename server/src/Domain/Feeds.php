@@ -888,8 +888,8 @@ final class Feeds
             $named[] = 'what refers to it';
         }
         $key = $row['recurrence_instance_utc'] ?? null;
-        $frame = $key !== null && $series !== null ? $series : $row;
-        $day = Time::dayOf(Time::fromDb((string) ($key ?? $row['start_utc'])), (int) ($frame['all_day'] ?? 0) === 1, (string) ($frame['tzid'] ?: 'UTC'));
+        $day = $key !== null && $series !== null ? Time::keyDay((string) $key, $series)
+            : Time::dayOf(Time::fromDb((string) ($key ?? $row['start_utc'])), (int) ($row['all_day'] ?? 0) === 1, (string) ($row['tzid'] ?: 'UTC'));
         return ['id' => (int) $row['id'], 'title' => (string) $row['title'], 'day' => $day, 'held' => $named, 'why' => $why];
     }
 

@@ -64,7 +64,7 @@ return static function (Db $db): void {
         'Fri 8 Jan deleted at Google' => ['DELETE', '2027-01-08', null,
             [$notesSet, $day('2027-01-08') . ' was deleted in Google Calendar; Finish put it back as this change has it (11:00 to 12:00).'], 'deleted'],
         'Fri 8 Jan renamed at Google' => ['PATCH', '2027-01-08', ['summary' => 'Renamed at Google'],
-            [$notesSet, 'On ' . $day('2027-01-08') . " Google Calendar held the title 'Renamed at Google'; Finish set the title 'Sample series', as this change has it."], 'renamed'],
+            [$notesSet, 'On ' . $day('2027-01-08') . " Google Calendar held the title 'Renamed at Google'; Finish set the title 'Sample series', as this change has it."], "renamed 'Renamed at Google'"],
         'Wed 6 Jan (the day with its own notes) given other notes at Google' => ['PATCH', '2027-01-06', ['description' => 'Notes from Google'],
             ['On ' . $day('2027-01-06') . " Google Calendar held the notes 'Notes from Google'; Finish set the notes 'Notes A', as this change has it."], 'given other notes'],
     ];

@@ -487,7 +487,7 @@ foreach ($forms as $clock => [$timed, $timedKeys, $day, $dayKeys]) {
             'renamed' => [static function (array $now) use ($other, $ordinary): array {
                 $now['records'][$other] = ['title' => 'Renamed at Google'] + $ordinary;
                 return $now;
-            }, $dates[1], 'renamed'],
+            }, $dates[1], "renamed 'Renamed at Google'"],
             'deleted' => [static function (array $now) use ($other): array {
                 $now['cancelled'][$other] = $now['skips'][$other] = true;
                 return $now;
@@ -520,7 +520,7 @@ unset($now['cancelled']['2027-01-08 00:00:00'], $now['skips']['2027-01-08 00:00:
 [$rebased, $words] = GoogleSeries::rebase($before, $target, $now, $year);
 checkEq('google rebase: made all-day, not yet at Google, a skipped day brought back and another renamed with other notes and place: one sentence a day, in date order, the plan whole', [$daysOf($target), [
     'While this change was waiting to be finished, ' . $dateWords(7) . ' was brought back in Google Calendar. That was lost when the event became all-day. Make it again there if you still want it.',
-    'While this change was waiting to be finished, ' . $dateWords(8) . ' was renamed, given other notes and given another place in Google Calendar. That was lost when the event became all-day. Make it again there if you still want it.',
+    'While this change was waiting to be finished, ' . $dateWords(8) . ' was renamed \'Renamed at Google\', given other notes and given another place in Google Calendar. That was lost when the event became all-day. Make it again there if you still want it.',
 ]], [$daysOf($rebased), $words]);
 
 // ---- The same on the wider axis: any change whose first write has not reached Google ----
@@ -547,7 +547,7 @@ foreach ([
     $target = $seriesOf($gm($change + $forms['10:00 Los Angeles, weekly'][0]), $toKeys[0], $toKeys[1]);
     [$rebased, $words, $conflicts] = GoogleSeries::rebase($laBefore, $target, $sinceRename, $year);
     checkEq("google rebase: $what, its master write not yet at Google, a day renamed at Google since: the plan stands whole and the rename is named as not kept, with the reason",
-        [$daysOf($target), ['While this change was waiting to be finished, ' . $dateWords(25) . " was renamed in Google Calendar. That was lost when $why. Make it again there if you still want it."], []], [$daysOf($rebased), $words, $conflicts]);
+        [$daysOf($target), ['While this change was waiting to be finished, ' . $dateWords(25) . " was renamed 'Renamed at Google' in Google Calendar. That was lost when $why. Make it again there if you still want it."], []], [$daysOf($rebased), $words, $conflicts]);
     [$rebased, $words] = GoogleSeries::rebase($laBefore, $target, $nowOf($laBefore, true), $year);
     checkEq("google rebase: $what, its master write not yet at Google, nothing changed at Google since: the plan whole, nothing said", [$daysOf($target), []], [$daysOf($rebased), $words]);
 }
@@ -572,11 +572,11 @@ $now = $sinceRename;
 $now['cancelled']['2027-01-04 18:00:00'] = $now['skips']['2027-01-04 18:00:00'] = true;
 [$rebased, $words] = GoogleSeries::rebase($laBefore, $shorter, $now, $year);
 checkEq('google rebase: a shorter series, its master write not yet at Google: a rename on the day it drops is named as not kept and no day is made of it; a deletion on a day it keeps is carried',
-    [['2027-01-11 18:00:00'], ['2027-01-04 18:00:00', '2027-01-18 18:00:00'], ['While this change was waiting to be finished, ' . $dateWords(25) . ' was renamed in Google Calendar. That was lost when this change ended the event before that day. Make it again there if you still want it.']],
+    [['2027-01-11 18:00:00'], ['2027-01-04 18:00:00', '2027-01-18 18:00:00'], ['While this change was waiting to be finished, ' . $dateWords(25) . ' was renamed \'Renamed at Google\' in Google Calendar. That was lost when this change ended the event before that day. Make it again there if you still want it.']],
     [array_keys($rebased['exceptions']), $rebased['skips'], $words]);
 [, $words] = GoogleSeries::rebase($laBefore, $shorter, $now, $year, 'while this change was waiting to be finished', true);
 checkEq('google rebase: the same where the series is shorter because the change split it there (a series follows): the day is still there, and the reason says so',
-    ['While this change was waiting to be finished, ' . $dateWords(25) . ' was renamed in Google Calendar. That was lost when this change split the event before that day. Make it again there if you still want it.'], $words);
+    ['While this change was waiting to be finished, ' . $dateWords(25) . ' was renamed \'Renamed at Google\' in Google Calendar. That was lost when this change split the event before that day. Make it again there if you still want it.'], $words);
 [$rebased, $words] = GoogleSeries::rebase($laBefore, $shorter, $nowOf($shorter, true), $year);
 checkEq('google rebase: the shorter series once its master write landed (Google dropped what was past the end itself): the plan whole, nothing said',
     [$daysOf($shorter), []], [$daysOf($rebased), $words]);

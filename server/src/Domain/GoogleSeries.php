@@ -2578,7 +2578,7 @@ final class GoogleSeries
             }
             $key = (string) $e['key'];
             $day = self::dayOf($m, $key, $thisYear);
-            $date = Time::fromDb($key)->setTimezone(Time::zone($tz))->format('Y-m-d');
+            $date = Time::keyDay($key, $m);
             [$asked, $holds] = [$e['asked'], $e['holds']];
             $full = static fn(array $d): string => $d['state'] === 'ordinary' ? 'an ordinary day of the event' : self::dayWords($d, null, $tz, $date, $thisYear);
             if ($asked['state'] === 'deleted') {
@@ -2617,7 +2617,7 @@ final class GoogleSeries
         foreach ($entries as $e) {
             $key = (string) $e['key'];
             $day = self::dayOf($m, $key, $thisYear);
-            $date = Time::fromDb($key)->setTimezone(Time::zone($tz))->format('Y-m-d');
+            $date = Time::keyDay($key, $m);
             [$was, $holds] = [$e['was'], $e['holds']];
             if (!isset($was['start_utc']) && !isset($holds['start_utc'])) {
                 continue;
@@ -2635,8 +2635,13 @@ final class GoogleSeries
     /** A day of a series, in words: its key's date in the series' own frame (its zone, or its date when all-day). */
     private static function dayOf(array $m, string $key, int $thisYear): string
     {
-        $tz = (int) $m['all_day'] === 1 ? 'UTC' : (string) $m['tzid'];
-        return Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone(Time::zone($tz))), $thisYear);
+        return self::keyDate($key, $m, $thisYear);
+    }
+
+    /** A day named by its key, in words: the key's date under the series it was written for (Time::keyDay, the one reading). */
+    private static function keyDate(string $key, array $series, int $thisYear): string
+    {
+        return Words::date(Cal::dnOf(new \DateTimeImmutable(Time::keyDay($key, $series) . ' 00:00:00', Time::utc())), $thisYear);
     }
 
     /** When an event is, in words: its day, and its time in its own zone ($tz for one that names none) unless it is all-day. */
@@ -2732,13 +2737,13 @@ final class GoogleSeries
             $long = static fn(array $when): int => Time::fromDb((string) $when['end_utc'])->getTimestamp() - Time::fromDb((string) $when['start_utc'])->getTimestamp();
             foreach (self::GROUPS as $g => $cols) {
                 if ($b[$g] !== $c[$g]) {
-                    $done[] = self::DONE_WORDS[$g] ?? ((int) $was['all_day'] !== 1 ? 'given another time' : ($long($b[$g]) === $long($c[$g]) ? 'moved to another date' : 'given other dates'));
+                    // A new name is what was lost, and Google holds it: said, where it has one.
+                    $done[] = $g === 'title' && trim((string) $c[$g]) !== '' ? "renamed '" . trim((string) $c[$g]) . "'" : self::DONE_WORDS[$g] ??((int) $was['all_day'] !== 1 ? 'given another time' : ($long($b[$g]) === $long($c[$g]) ? 'moved to another date' : 'given other dates'));
                 }
             }
         }
         $last = array_pop($done);
-        $zone = Time::zone((int) $was['all_day'] === 1 ? 'UTC' : (string) $was['tzid']);
-        return ucfirst($since) . ', ' . Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone($zone)), $thisYear) . ' was ' . ($done === [] ? '' : implode(', ', $done) . ' and ') . $last
+        return ucfirst($since) . ', ' . self::keyDate($key, $was, $thisYear) . ' was ' . ($done === [] ? '' : implode(', ', $done) . ' and ') . $last
             . " in Google Calendar. That was lost when $why. Make it again there if you still want it.";
     }
 
@@ -2887,7 +2892,7 @@ final class GoogleSeries
         }
         $allDay = (int) $master['all_day'] === 1;
         $len = self::lengthOf($master);
-        $dayWords = static fn(string $key): string => Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone(Time::zone($allDay ? 'UTC' : (string) $master['tzid']))), $thisYear);
+        $dayWords = static fn(string $key): string => self::keyDate($key, $master, $thisYear);
         // Each day: the change's own before by the row it is (an edited day may move key), else the day at the key.
         $byRow = [];
         foreach ($before['exceptions'] as $k => $x) {
@@ -3115,7 +3120,7 @@ final class GoogleSeries
             if ($kt === null) {
                 continue;
             }
-            $at = Words::date(Cal::dnOf(Time::fromDb($kt)->setTimezone(Time::zone((int) $target['master']['all_day'] === 1 ? 'UTC' : (string) $target['master']['tzid']))), $thisYear);
+            $at = self::keyDate($kt, $target['master'], $thisYear);
             // Changed since the change left it: kept and named, or forced over and named.
             $since = static function (bool $changed, string $what) use (&$kept, &$over, $force, $at): bool {
                 if (!$changed) {
@@ -4238,11 +4243,13 @@ final class GoogleSeries
             $was = $h['row'];
             $wasId = (int) $was['id'];
             $key = (string) $was['recurrence_instance_utc'];
+            $frame = is_array($h['series'] ?? null) ? $h['series'] : null; // the series its key is read under
             $dest = null;
             foreach ($targets as $t) {
                 if ((string) ($t['uid'] ?? '') !== (string) $was['uid']) {
                     continue;
                 }
+                $frame = $t['master'];
                 // The day where the target's series has it now (whereNow, exceptionOn).
                 $x = self::exceptionOn($t, (string) $was['recurrence_instance_utc'], $h['series'] ?? null);
                 $key = self::whereNow($t, (string) $was['recurrence_instance_utc'], $h['series'] ?? null);
@@ -4256,8 +4263,9 @@ final class GoogleSeries
                 if ($live($wasId) === null) {
                     $this->db->upsert('events', $was);
                     $this->relinks($h['links'], $wasId, $wasId, []);
-                    $day = Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone(Time::zone((int) $was['all_day'] === 1 ? 'UTC' : (string) $was['tzid']))), (int) Time::nowUtc()->format('Y'));
-                    $words[] = "'" . (string) $was['title'] . "' on $day was changed here while the change was half done; it was left as it was.";
+                    // Its key is its series' (the target's, whereNow): read under that series, never the row's own form.
+                    $on = $frame === null ? '' : ' on ' . self::keyDate($key, $frame, (int) Time::nowUtc()->format('Y'));
+                    $words[] = "'" . (string) $was['title'] . "'$on was changed here while the change was waiting to be finished; it was left as it was.";
                 }
                 continue;
             }
@@ -4357,8 +4365,7 @@ final class GoogleSeries
             $own = $this->feeds->ownOf($row, $was ?? $master);
             $target = Feeds::ofSeries($row, $was, $master);
             if ($target === null) {
-                $key = Time::fromDb((string) $row['recurrence_instance_utc']);
-                $day = Words::date(Cal::dnOf($key->setTimezone(Time::zone((int) $master['all_day'] === 1 ? 'UTC' : (string) $master['tzid']))), (int) Time::nowUtc()->format('Y'));
+                $day = self::keyDate((string) $row['recurrence_instance_utc'], $master, (int) Time::nowUtc()->format('Y'));
                 throw HttpError::conflict('google_finish_kept', "'" . (string) $row['title'] . "' on $day was changed here after this change stopped, and the change leaves the series without that day");
             }
             // Its day and its times: where the series has the day now (Feeds::ofSeries), its own placement read by OwnFields::placed.

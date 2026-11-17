@@ -82,6 +82,20 @@ final class Time
         return $at->setTimezone(self::dayZone($allDay, $tz))->format('Y-m-d');
     }
 
+    /**
+     * The date a day of a repeating event is, from its key: the key read
+     * under the series it was written for, in that series' form and zone
+     * (its date when all-day, its own zone's day when timed), never the
+     * day row's own form or zone and never UTC's. The one reading for every
+     * sentence that names a day by its key. "Y-m-d".
+     *
+     * @param array<string,mixed> $series the series' row as the key was written under (all_day, tzid)
+     */
+    public static function keyDay(string $key, array $series): string
+    {
+        return self::dayOf(self::fromDb($key), (int) ($series['all_day'] ?? 0) === 1, (string) (($series['tzid'] ?? '') ?: 'UTC'));
+    }
+
     /** Whether a tzid names a zone (an IANA name or a common abbreviation), where zone() would fall back to UTC for one that doesn't. */
     public static function isZone(string $tzid): bool
     {

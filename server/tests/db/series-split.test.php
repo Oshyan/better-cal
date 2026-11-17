@@ -327,7 +327,7 @@ return static function (Db $db): void {
                 $bound = $g;
             }
         }
-        checkEq('the bound group: 8 in the whole series (preselected: 6 from 19 Jan, ending 23 Feb) or 8 from 19 Jan on (ending 9 Mar), and the plan is the whole-count one', [
+        checkEq('the bound group: 8 in the whole repeating event (preselected: 6 from 19 Jan, ending 23 Feb) or 8 from 19 Jan on (ending 9 Mar), and the plan is the whole-count one', [
             'whole', ['whole', 'part'], 8, [[6, '2027-02-23'], [8, '2027-03-09']], ['2027-01-19T18:00:00+00:00', '2027-01-26T18:00:00+00:00', '2027-02-02T18:00:00+00:00'],
             ['kind' => 'count', 'count' => 6], 6,
         ], [
@@ -369,7 +369,7 @@ return static function (Db $db): void {
         $plan = $d->events->previewPatch($u, $walk, $edit + ['preview' => true]);
         // The same code as the whole series' end before the start; the words say what is left without events, from this day on.
         checkEq('the preview refuses it with the code of an end before the start, in a split\'s words', [
-            [['code' => 'empty', 'words' => 'This would leave no events from this day on. Delete this and following instead?']], [['code' => 'empty', 'words' => 'This would leave the series with no events. Delete it instead?']], [],
+            [['code' => 'empty', 'words' => 'This would leave no events from this day on. Delete this and following instead?']], [['code' => 'empty', 'words' => 'This would leave the repeating event with no events. Delete it instead?']], [],
         ], [$plan['refusals'], array_map(static fn(array $r): array => array_intersect_key($r, ['code' => 1, 'words' => 1]), $whole['refusals']), $plan['groups']]);
         [$code, $errPlan] = $error(fn() => $d->events->patch($u, $walk, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => []]]));
         checkEq('the commit is 422 series_refused with the plan, and every row and the Undo list are as before', ['422 series_refused', 'empty', $before, $entries],

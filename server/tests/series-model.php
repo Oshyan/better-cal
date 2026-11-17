@@ -317,7 +317,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($piano, $recital, smDrag($piano, '2027-03-31 16:00', '2027-04-01 16:00'));
     checkEq('Piano lesson 31 Mar to 1 Apr: keep 6 (preselected) or keep the end; the recital outside under keep 6', [['count', 'end'], 'count', 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', ['keep', 'delete'], [2]],
         [smOptions($p, 'bound'), smGroup($p, 'bound')['selected'] ?? null, $p['writes']['master']['rrule'] ?? null, smOptions($p, 'outside'), array_keys($p['writes']['detach'])]);
-    check('Piano lesson: the bound words say 6 in the series + 1 separate', str_contains($p['plan']['bound']['words'], '6 in the series + 1 separate'), $p['plan']['bound']['words']);
+    check('Piano lesson: the bound words say 6 in the repeating event + 1 separate', str_contains($p['plan']['bound']['words'], '6 in the repeating event + 1 separate'), $p['plan']['bound']['words']);
     $end = smPlan($piano, $recital, smDrag($piano, '2027-03-31 16:00', '2027-04-01 16:00'), ['bound' => 'end']);
     checkEq('Piano lesson, keep the end: COUNT=10, the recital moving to 1 Nov with its event', ['FREQ=MONTHLY;BYMONTHDAY=1;COUNT=10', smAt('2027-11-01 16:00'), []],
         [$end['writes']['master']['rrule'] ?? null, $end['writes']['overrides'][2]['recurrence_instance_utc'] ?? null, smOptions($end, 'outside')]);
@@ -802,7 +802,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $swimWed = smSeries('Swim', 'FREQ=WEEKLY;BYDAY=MO,WE', '2027-01-06 07:00');
     $p = smPlan($swimWed, [], smDrag($swimWed, '2027-01-11 07:00', '2027-01-15 07:00'));
     checkEq('Swim from Wed 6 Jan, no end, Mondays to Fridays: the edge offers only Fri 8 Jan, labelled by its week', [["Don't add Fri 8 Jan", 'Add Fri 8 Jan'], 'First week', ['2027-01-08'],
-        'Fri 8 Jan skipped, so the series starts as before'], [
+        'Fri 8 Jan skipped, so the repeating event starts as before'], [
         array_column(smGroup($p, 'edge')['options'] ?? [], 'label'), smGroup($p, 'edge')['label'] ?? null, $genSkips($p),
         array_values(array_filter($p['plan']['days'], static fn(array $d): bool => $d['outcome'] === 'generated'))[0]['words'] ?? null,
     ]);
@@ -927,7 +927,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $named = [smEdited($choir, 2, '2027-03-16 19:00', ['title' => 'Rehearsal'], null, ['title'])];
     $p = smPlan($choir, $named, ['acted' => smAt('2027-03-16 19:00'), 'columns' => ['title' => 'Choir F']]);
     // Its title was all it owned: taking the series' leaves it nothing of its own, so it is an occurrence again (Own Fields).
-    checkEq('an editor save from an edited day that owned only its title: it goes back to the series, its row deleted', ["'Rehearsal' Tue 16 Mar goes back to the series, on Tue 16 Mar", 'rejoins', [2], []],
+    checkEq('an editor save from an edited day that owned only its title: it goes back to the series, its row deleted', ["'Rehearsal' Tue 16 Mar goes back to the repeating event, on Tue 16 Mar", 'rejoins', [2], []],
         [array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null, array_column($p['plan']['days'], 'outcome', 'key')['2027-03-17T02:00:00Z'] ?? null, $p['writes']['delete'], $p['writes']['overrides']]);
     // The same rule under a new pattern, from an edited day years on whose day the new rule has: the field sent is its
     // value now and all it owned, so it rejoins; another day owning the same field keeps it under "keep" (seed 23, case 124:
@@ -939,7 +939,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('a new rule from an edited day years on that owned only the location sent: it takes it and rejoins, its row deleted; the other day keeps its own location', ['rejoins', 'stays', [3], ['location']],
         [$outcomes['2030-09-14T00:00:00Z'] ?? null, $outcomes['2030-03-14T00:00:00Z'] ?? null, $p['writes']['delete'], array_column($p['plan']['days'], 'kept', 'key')['2030-03-14T00:00:00Z'] ?? null]);
     $p = smPlan($choir, $named, ['columns' => ['title' => 'Chorus']], ['ownTitle' => 'give']);
-    checkEq('"Give it the new title too" to a day that owned only its title: it goes back to the series', ["'Rehearsal' Tue 16 Mar goes back to the series, on Tue 16 Mar", [2]],
+    checkEq('"Give it the new title too" to a day that owned only its title: it goes back to the series', ["'Rehearsal' Tue 16 Mar goes back to the repeating event, on Tue 16 Mar", [2]],
         [array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null, $p['writes']['delete']]);
     $namedPlace = [smEdited($choir, 2, '2027-03-16 19:00', ['title' => 'Rehearsal', 'location' => 'Sample Room'], null, ['title', 'location'])];
     $p = smPlan($choir, $namedPlace, ['columns' => ['title' => 'Chorus']], ['ownTitle' => 'give']);

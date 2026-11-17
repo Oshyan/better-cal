@@ -157,7 +157,7 @@ return static function (Db $db): void {
             ['id' => $c->eight, 'title' => 'Sample class, final', 'day' => '2027-01-08', 'held' => ['its reminders', 'its tags'], 'why' => 'gone'],
         ], $named);
         checkEq('a day removed: and says so in words', true,
-            str_contains((string) ($entry['summary'] ?? ''), "removed here: 'Sample class, final' on 2027-01-08 with its reminders and its tags: its series no longer has that day"));
+            str_contains((string) ($entry['summary'] ?? ''), "removed here: 'Sample class, final' on 2027-01-08 with its reminders and its tags: its repeating event no longer has that day"));
         $undone('a day removed', $c, $was);
     });
 

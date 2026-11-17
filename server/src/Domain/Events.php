@@ -2371,7 +2371,7 @@ final class Events
                         if ($rest !== [] && $still !== null) {
                             $this->patch($userId, (int) $event['id'], $rest, $authority);
                         }
-                    }, "Moved '" . (string) $event['title'] . "' and its series to another calendar"));
+                    }, "Moved every event of '" . (string) $event['title'] . "' to another calendar"));
                     return;
                 }
                 if ($whole !== 'following') {
@@ -3777,7 +3777,7 @@ final class Events
             );
         }
         if (empty($master['rrule'])) {
-            throw new HttpError('invalid_recurrence_instance', 'That timestamp is not an occurrence of this series.', 422);
+            throw new HttpError('invalid_recurrence_instance', 'That time is not one of the days of this repeating event.', 422);
         }
         Recurrence::validateRrule((string) $master['rrule']);
         // An occurrence is a key the series' own expansion yields, from its
@@ -3798,7 +3798,7 @@ final class Events
         if (($allDay ? $on !== [] : in_array($key, $on, true)) && !in_array($key, $this->decodeExdates($master), true)) {
             return $key;
         }
-        throw new HttpError('invalid_recurrence_instance', 'That timestamp is not an occurrence of this series.', 422);
+        throw new HttpError('invalid_recurrence_instance', 'That time is not one of the days of this repeating event.', 422);
     }
 
     private function copyForChild(array $master): array

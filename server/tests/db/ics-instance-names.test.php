@@ -272,7 +272,7 @@ return static function (Db $db): void {
         }
         $after = $day === null ? null : $db->one('SELECT status, summary FROM review_items WHERE id = ?', [(int) $day['id']]);
         checkEq('mail, a day the series loses: the series accepted, the held change is closed, saying the series no longer has Tue 5 Jan 2027',
-            ['superseded', 'Sample Host changed the Tue 5 Jan 2027 occurrence, but the series no longer has that day, so there is nothing to change.'],
+            ['superseded', 'Sample Host changed the Tue 5 Jan 2027 occurrence, but the repeating event no longer has that day, so there is nothing to change.'],
             [$after['status'] ?? null, $after['summary'] ?? null]);
         checkEq('mail, a day the series loses: 5 January shows nothing, and 6 January the series\' whole day under its own title',
             [[], [$wholeDays(6)]], [$shownOn($f, '2027-01-05'), $shownOn($f, '2027-01-06')]);

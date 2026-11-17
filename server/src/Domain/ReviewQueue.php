@@ -226,7 +226,7 @@ final class ReviewQueue
         $cancelsDay = $occurrence !== null && ($invite['method'] ?? '') === 'CANCEL';
         if ($occurrence !== null) {
             $summary = ($who !== '' ? $who : 'The organizer') . ($cancelsDay ? ' cancelled' : ' changed') . ' one occurrence of a repeating event that is not on your calendar yet.'
-                . ' Once that series is added, this becomes a ' . ($cancelsDay ? 'cancellation of' : 'change to') . ' that occurrence. Nothing has been added.';
+                . ' Once that repeating event is added, this becomes a ' . ($cancelsDay ? 'cancellation of' : 'change to') . ' that occurrence. Nothing has been added.';
         } else {
             $summary = $mode === 'review'
                 ? 'Your email setting holds every new event for Review. This event has not been added.'
@@ -304,14 +304,14 @@ final class ReviewQueue
         ) as $closed) {
             $payload = self::payload($closed);
             if (isset($payload['occurrence'])) continue;
-            if ((string) $closed['status'] === 'dismissed') return 'the series was dismissed in Review';
-            if (!empty($payload['organizerCancelled'])) return 'the organizer cancelled the series before it was added';
+            if ((string) $closed['status'] === 'dismissed') return 'the repeating event was dismissed in Review';
+            if (!empty($payload['organizerCancelled'])) return 'the organizer cancelled the repeating event before it was added';
         }
         if ($this->db->scalar(
             'SELECT id FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NOT NULL AND recurrence_parent_id IS NULL LIMIT 1',
             [$userId, $uid]
         ) !== null) {
-            return 'the series was deleted from the calendar';
+            return 'the repeating event was deleted from the calendar';
         }
         return null;
     }
@@ -737,7 +737,7 @@ final class ReviewQueue
                 (new Undo($this->db))->record($userId, 'review', (int) $held[0]['id'], 'update', null, null,
                     '"' . mb_substr((string) $held[0]['title'], 0, 200) . '" is on your calendar now: ' . implode('; ', array_filter([
                         $changes === 1 ? 'a day of it held in Review is a change to that occurrence' : ($changes > 1 ? 'the days of it held in Review are changes to their occurrences' : null),
-                        $noSuchDay === 1 ? 'a day of it held in Review was closed, the series having no such day' : ($noSuchDay > 1 ? 'days of it held in Review were closed, the series having no such days' : null),
+                        $noSuchDay === 1 ? 'a day of it held in Review was closed, the repeating event having no such day' : ($noSuchDay > 1 ? 'days of it held in Review were closed, the repeating event having no such days' : null),
                         $other === 1 ? 'a day of it held in Review was closed, with nothing left to change' : ($other > 1 ? 'days of it held in Review were closed, with nothing left to change' : null),
                     ])),
                     touches: array_merge(
@@ -992,12 +992,12 @@ final class ReviewQueue
                 if ($existing === null) {
                     $cancelsDay = ($payload['method'] ?? '') === 'CANCEL';
                     return self::decisionError('review_waiting', 'This ' . ($cancelsDay ? 'cancels' : 'changes') . ' one occurrence of a repeating event that is not on your calendar.'
-                        . ' Add the series first and this becomes a ' . ($cancelsDay ? 'cancellation of' : 'change to') . ' that occurrence, or dismiss it.');
+                        . ' Add the repeating event first and this becomes a ' . ($cancelsDay ? 'cancellation of' : 'change to') . ' that occurrence, or dismiss it.');
                 }
                 $this->reconcilePending($userId, (int) $existing, (string) $row['source_key']);
                 return (string) $this->db->scalar('SELECT status FROM review_items WHERE id = ?', [(int) $row['id']]) === 'open'
-                    ? self::decisionError('review_changed', 'That series is on your calendar now, so this is a change to one of its occurrences. Review the differences and try again.')
-                    : self::decisionError('review_stale', 'That series is on your calendar, but this change to one of its occurrences no longer applies to it. The item has been closed.');
+                    ? self::decisionError('review_changed', 'That repeating event is on your calendar now, so this is a change to one of its occurrences. Review the differences and try again.')
+                    : self::decisionError('review_stale', 'That repeating event is on your calendar, but this change to one of its occurrences no longer applies to it. The item has been closed.');
             }
             if ($existing !== null) {
                 $this->close((int) $row['id'], 'superseded');
@@ -1067,7 +1067,7 @@ final class ReviewQueue
             // the item is closed, with the reason, rather than left to fail
             // the same way on every press.
             $staleOccurrence = fn(): array => self::decisionError('review_stale',
-                'That day is no longer an occurrence of this series, which was moved or changed since this email arrived, so there is nothing to change. The item has been closed.');
+                'That day is no longer one of the days of this repeating event, which was moved or changed since this email arrived, so there is nothing to change. The item has been closed.');
             if ($cancel) {
                 try {
                     $this->events->deleteEvent($userId, $eventId, 'this', $instance, $authority);
@@ -1283,8 +1283,8 @@ final class ReviewQueue
                     $who = (string) ($incoming['organizer']['name'] ?? '') ?: (string) ($incoming['organizer']['email'] ?? '') ?: (string) ($payload['from'] ?? '');
                     $day = self::occurrenceLabel($was, $occurrence, Settings::homeTzid($this->db, $userId));
                     $this->db->run('UPDATE review_items SET status = ?, decided_at = ?, summary = ? WHERE id = ?', ['superseded', Time::nowDb(),
-                        ($who !== '' ? $who : 'The organizer') . ($method === 'CANCEL' ? " cancelled the $day occurrence, but the series no longer has that day, so there is nothing to skip."
-                            : " changed the $day occurrence, but the series no longer has that day, so there is nothing to change."),
+                        ($who !== '' ? $who : 'The organizer') . ($method === 'CANCEL' ? " cancelled the $day occurrence, but the repeating event no longer has that day, so there is nothing to skip."
+                            : " changed the $day occurrence, but the repeating event no longer has that day, so there is nothing to change."),
                         (int) $pending['id']]);
                     continue;
                 }
@@ -1324,15 +1324,15 @@ final class ReviewQueue
                     // accept closed it blaming a move of the series.
                     if ($override === null && !self::hasOccurrence($event, $occurrence)) {
                         $this->db->run('UPDATE review_items SET status = ?, decided_at = ?, summary = ? WHERE id = ?', ['superseded', Time::nowDb(),
-                            ($who !== '' ? $who : 'The organizer') . ($method === 'CANCEL' ? " cancelled the $day occurrence, but the series you added has no such day, so there is nothing to skip."
-                                : " changed the $day occurrence, but the series you added has no such day, so there is nothing to change."),
+                            ($who !== '' ? $who : 'The organizer') . ($method === 'CANCEL' ? " cancelled the $day occurrence, but the repeating event you added has no such day, so there is nothing to skip."
+                                : " changed the $day occurrence, but the repeating event you added has no such day, so there is nothing to change."),
                             (int) $pending['id']]);
                         continue;
                     }
                     $changed = implode(', ', array_map(static fn(array $d): string => strtolower($d['label']), $diff));
                     $summary = $method === 'CANCEL'
-                        ? ($who !== '' ? $who : 'The organizer') . " cancelled the $day occurrence of the series you added. Accepting skips just that one."
-                        : ($who !== '' ? $who : 'The organizer') . " changed the $day occurrence of the series you added: $changed. Accepting changes just that one.";
+                        ? ($who !== '' ? $who : 'The organizer') . " cancelled the $day occurrence of the repeating event you added. Accepting skips just that one."
+                        : ($who !== '' ? $who : 'The organizer') . " changed the $day occurrence of the repeating event you added: $changed. Accepting changes just that one.";
                 } else {
                     $summary = 'Another emailed version is waiting. Compare it with the event you added.';
                 }

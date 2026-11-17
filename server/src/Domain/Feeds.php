@@ -902,7 +902,7 @@ final class Feeds
     public static function droppedWords(array $days): string
     {
         $groups = [];
-        foreach (['gone' => ['its series no longer has that day', 'their series no longer has those days'],
+        foreach (['gone' => ['its repeating event no longer has that day', 'their repeating events no longer have those days'],
             'merged' => ['kept on the row its day already has', 'kept on the rows their days already have'],
             'deleted' => ['it is no longer in the calendar', 'they are no longer in the calendar']] as $why => [$one, $many]) {
             $these = array_values(array_filter($days, static fn(array $d): bool => $d['why'] === $why));

@@ -3553,7 +3553,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   await open(repeating);
   eq('Apply to: a repeating event opens on This event only', scope(), 'this');
   await calendar(22);
-  eq('Apply to: another calendar for a repeating event switches it to All events in series, lit', [scope(), lit()], ['all', true]);
+  eq('Apply to: another calendar for a repeating event switches it to All events, lit', [scope(), lit()], ['all', true]);
   await calendar(21);
   eq('Apply to: its own calendar again puts This event only back', scope(), 'this');
 
@@ -5615,10 +5615,10 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   };
   const c = planView(cello, ctx({ title: 'Cello lesson' }));
   eq('series panel: the bound choice says why and asks', [c.readings[0].reason, c.readings[0].options.map((o) => [o.label, o.selected])], [
-    'The series is set to 6 events, and the day you moved would fall after the sixth. Keep the end date, or keep the count?',
+    'This repeating event is set to 6 events, and the day you moved would fall after the sixth. Keep the end date, or keep the count?',
     [['Keep the end: 10 events, ending Nov 1', true], ['Keep 6 events; the moved day becomes an event of its own', false]]]);
   eq('series panel: a count names its events on the button', c.action, 'Move 10 events');
-  // A count changed from a day on: 8 in the whole series (6 from the split day), or 8 from that day.
+  // A count changed from a day on: 8 in the whole repeating event (6 from the split day), or 8 from that day.
   const club = {
     ...cello, rule: rule('FREQ=WEEKLY;BYDAY=TU;COUNT=6', 'FREQ=WEEKLY;BYDAY=TU;COUNT=6', '2027-01-19T10:00:00-08:00', '2027-01-19T10:00:00-08:00'),
     bound: { kind: 'count', count: 6, events: 6, last: '2027-02-23', from: { kind: 'count', count: 4 } },
@@ -5628,8 +5628,8 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   };
   const cl = planView(club, ctx({ title: 'Sample club' }));
   eq('series panel: a count changed from a day on asks whether it counts the whole series or from that day', [cl.readings[0].reason, cl.readings[0].options.map((o) => [o.label, o.selected])], [
-    'You set 8 events. Count them in the whole series, or from Jan 19 on?',
-    [['8 in the whole series: 6 events from Jan 19, ending Feb 23', true], ['8 events from Jan 19, ending Mar 9', false]]]);
+    'You set 8 events. Count them in the whole repeating event, or from Jan 19 on?',
+    [['8 in the whole repeating event: 6 events from Jan 19, ending Feb 23', true], ['8 events from Jan 19, ending Mar 9', false]]]);
 
   // A day the new rule would add at the start: among the skipped days, a reason and its radios.
   const pottery = {
@@ -5697,7 +5697,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   const p = planView(piano, ctx({ title: 'Piano lesson with Alex Example' }));
   eq('series panel: a day after the new end, a day going back to the series, a deleted day', p.edited.map((r) => [r.line1, r.choices[0] && r.choices[0].reason, r.choices[0] && r.choices[0].options.map((o) => o.label)]), [
     ["'Recital at Sample Hall' on Sun, Oct 31 falls after the new end.", 'Keep it as an event of its own, or delete it?', ['Keep it on its own', 'Delete it']],
-    ["'Piano lesson with Alex Example' on Tue, Mar 16 goes back to the series; nothing of its own is left.", null, null],
+    ["'Piano lesson with Alex Example' on Tue, Mar 16 goes back to the repeating event; nothing of its own is left.", null, null],
     ["'Sample class' on Fri, Apr 30 is deleted.", null, null],
   ]);
   eq('series panel: every group goes into the commit', commitPlan(piano, { outside: 'delete' }).choices, { outside: 'delete' });
@@ -5715,7 +5715,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   // Refusals and notes, by code.
   const gRefused = planView({ hash: 'e1', rule: rule('FREQ=WEEKLY;BYDAY=TU', 'FREQ=WEEKLY;BYDAY=WE', '2027-01-05T19:00:00-08:00', '2027-01-06T19:00:00-08:00'), refusals: [{ code: 'empty', words: 'Server words' }] }, ctx());
   eq('series panel: a refused change says why by its code, and can\'t be confirmed', [gRefused.refused, gRefused.canConfirm, gRefused.change],
-    ['This would leave the series with no events. Delete it instead?', false, '']);
+    ['This would leave the repeating event with no events. Delete it instead?', false, '']);
   const gNote = planView({ ...choir, notes: [{ kind: 'google', words: 'Server note' }] }, ctx());
   eq('series panel: the Google note says the change is sent to Google and read back, nothing about undo', gNote.notes, ['This change is sent to Google Calendar and read back from it: the calendar here shows what is stored there.']);
   const gap = planView({ ...choir, notes: [{ kind: 'gap', date: '2027-03-14', clock: '02:30', at: '2027-03-14T03:30:00-07:00', tz: LA, words: 'Server note' }] }, ctx());
@@ -6199,7 +6199,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
         ["'Sample practice 4' on Tue, Jan 12 becomes an event of its own."]],
       ['a deleted day', [day({ title: 'Sample practice 5', kept: ['title'], newKey: null, outcome: 'deleted', before: ad('2027-01-12') })], {}, ["'Sample practice 5' on Tue, Jan 12 is deleted."]],
       ['a day going back to the series', [day({ outcome: 'rejoins', before: ad('2027-01-12'), after: ad('2027-01-13'), takes: ['title'] })], {},
-        ["'Sample practice' on Tue, Jan 12 goes back to the series; nothing of its own is left."]],
+        ["'Sample practice' on Tue, Jan 12 goes back to the repeating event; nothing of its own is left."]],
       ['the day you moved, leaving the series', [day({ kind: 'acted', newKey: null, title: undefined, outcome: 'separate', before: ad('2027-01-12'), after: ad('2027-01-14') })], {},
         ['The day you moved becomes an event of its own on Thu, Jan 14.']],
       ['a day after the new end, with its choice', [day({ title: 'Sample practice 4', kept: ['title'], newKey: null, outcome: 'separate', before: ad('2027-01-12'), after: ad('2027-01-12') })],
@@ -6622,7 +6622,7 @@ console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) --
   await confirmSeriesChange();
   eq('series drag: the commit names the hash and every group', sent[2].plan, { hash: 'h2', choices: { rule: 'pattern' } });
   eq('series drag: a stale hash brings the new plan and asks again', [st.seriesChange && st.seriesChange.plan.hash, st.seriesChange && st.seriesChange.changed, shown().seriesPending], ['h3', true, true]);
-  eq('series drag: the panel says the series changed', planView(st.seriesChange.plan, { changed: st.seriesChange.changed }).changed, 'The series changed since this was worked out. Here is the new plan.');
+  eq('series drag: the panel says the series changed', planView(st.seriesChange.plan, { changed: st.seriesChange.changed }).changed, 'This repeating event changed since this was worked out. Here is the new plan.');
   const toastsBefore = st.toasts.length;
   await confirmSeriesChange();
   await tick();
@@ -6708,7 +6708,7 @@ console.log('--- 1.5.1: adoption readings, typed values, one field table, quick 
     { id: 'adopt', rrule: 'FREQ=WEEKLY;BYDAY=FR', next: [nx('2027-03-12T19:00:00-08:00')] },
     { id: 'same', rrule: 'FREQ=WEEKLY;BYDAY=WE', next: [nx('2027-03-12T19:00:00-08:00')] }] }] }, { kind: 'drag', title: 'Choir', refYear: 2027 }).readings[0];
   eq('adoption: the day\'s question and its two readings, as a person reads them', [day.reason, day.options.map((o) => o.label), day.options[0].selected], [
-    'This day was moved earlier to a date of its own. Should its new day become the series’ day, or every event move the same way?',
+    'This day was moved earlier to a date of its own. Should its new day become every event’s day, or every event move the same way?',
     ['Friday becomes its day: weekly on Friday', 'Every event moves a day later: weekly on Wednesday'], true]);
   // Case 14: the time group: 20:00 adopted, or half an hour later and this one at 20:00.
   const time = planView({ ...base, groups: [{ id: 'time', selected: 'adopt', shift: 1800, options: [
@@ -7111,7 +7111,7 @@ console.log('--- the scopes an occurrence has, one rule for every chooser (1.5.1
   eq('refusal words: a split\'s own refusals (its shape, no events from its day on) have their own sentences; a change\'s own reason with no split sentence reads the same under either scope', [
     planRefusal({ scope: 'following', refusals: [{ code: 'shape' }] }) !== refusalWords('shape'), planRefusal({ scope: 'following', refusals: [{ code: 'unreadable' }] }) === refusalWords('unreadable'),
     planRefusal({ scope: 'following', refusals: [{ code: 'empty' }] }), refusalWords('empty'),
-  ], [true, true, 'This would leave no events from this day on. Delete this and following instead?', 'This would leave the series with no events. Delete it instead?']);
+  ], [true, true, 'This would leave no events from this day on. Delete this and following instead?', 'This would leave the repeating event with no events. Delete it instead?']);
 
   // Delete following and an answer from a day on carry "Change scope".
   let asked = 0;

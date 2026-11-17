@@ -88,7 +88,7 @@ function ReviewCard({ item, onChanged }) {
   // A day held before its series is on the calendar is named as that day,
   // not as a new event: nothing is added when it is decided.
   const waitsForSeries = item.kind === 'invite_new' && !!d.occurrence;
-  const kindLabel = waitsForSeries ? (d.method === 'CANCEL' ? 'Cancelled day of an emailed series' : 'Changed day of an emailed series')
+  const kindLabel = waitsForSeries ? (d.method === 'CANCEL' ? 'Cancelled day of an emailed repeating event' : 'Changed day of an emailed repeating event')
     : item.kind === 'invite_new' && !d.isInvitation ? 'New emailed event' : KIND_LABEL[item.kind];
 
   const run = async (action) => {
@@ -172,7 +172,7 @@ function ReviewCard({ item, onChanged }) {
         }
       } else {
         toast(
-          accepted ? (d.occurrence ? (d.method === 'CANCEL' ? 'That occurrence is skipped; the rest of the series is unchanged' : 'Applied to that occurrence; the rest of the series is unchanged') : d.method === 'CANCEL' ? (res && res.removed ? 'Cancellation accepted; the event was removed' : 'Cancellation accepted') : 'Change applied') : 'Dismissed. Your calendar is unchanged',
+          accepted ? (d.occurrence ? (d.method === 'CANCEL' ? 'That occurrence is skipped; the rest of the repeating event is unchanged' : 'Applied to that occurrence; the rest of the repeating event is unchanged') : d.method === 'CANCEL' ? (res && res.removed ? 'Cancellation accepted; the event was removed' : 'Cancellation accepted') : 'Change applied') : 'Dismissed. Your calendar is unchanged',
           { undo: accepted && item.kind === 'invite_change' ? entriesOf(res) : [] },
         );
       }
@@ -220,7 +220,7 @@ function ReviewCard({ item, onChanged }) {
       >${a.label}</button>`)}${openOptions && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${openOptions}>Calendar options</button>`}${openSystem && html`<button type="button" class="bc-btn" onClick=${openSystem}>System settings</button>`}</span>`}
     </div>
     ${item.kind === 'invite_new' && item.actions.some((a) => a.name.startsWith('approve_')) && html`<p class="bc-muted">Always add also adds this event, without sending a reply.</p>`}
-    ${waitsForSeries && item.status === 'open' && html`<p class="bc-muted">Nothing to accept until the series is added.</p>`}
+    ${waitsForSeries && item.status === 'open' && html`<p class="bc-muted">Nothing to accept until the repeating event is added.</p>`}
     ${item.kind === 'mail_error' && html`<p>${d.reason || 'The email could not be decoded.'} This notice stays until you dismiss it.</p>`}
     ${item.kind === 'google_differs' && (d.lines || []).length > 0 && html`<ul class="bc-review-lines">${d.lines.map((l) => html`<li key=${l}>${l}</li>`)}</ul>`}
     ${item.kind === 'invite_change' && d.diff && d.diff.length > 0 && html`<${DiffRows} diff=${d.diff} />`}

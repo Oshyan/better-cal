@@ -61,12 +61,12 @@ final class Model
 
     public const REASONS = [
         'unreadable' => 'This repeat came from another app in a form Better-Cal can\'t read, so only its details can change here.',
-        'several' => 'This repeat happens several times a day, and on a day the clocks change two of its times can fall on one moment, so it can\'t be moved or given another zone as a series. Move one event, or change its other details.',
+        'several' => 'This repeat happens several times a day, and on a day the clocks change two of its times can fall on one moment, so it can\'t be moved or given another zone as a whole. Move one event, or change its other details.',
         'severalAllDay' => 'This repeat happens several times a day, so it can\'t be made all-day.',
         'weekno' => 'This repeat counts weeks of the year, so its days can\'t follow a drag.',
         'overlap' => 'Two of its days are the same day in some months, so its days can\'t follow a drag.',
-        'dayset' => 'This repeat came from another app and picks its days in a way a drag can\'t follow. Move only this one, or open the series to choose its days.',
-        'empty' => 'This would leave the series with no events. Delete it instead?',
+        'dayset' => 'This repeat came from another app and picks its days in a way a drag can\'t follow. Move only this one, or open the repeating event to choose its days.',
+        'empty' => 'This would leave the repeating event with no events. Delete it instead?',
     ];
     /** The same for a split's part (this and following): the days before stay, so only the part would be left with none. */
     public const EMPTY_FROM_DAY = 'This would leave no events from this day on. Delete this and following instead?';
@@ -144,9 +144,9 @@ final class Model
      * value typed into the editor and moves the same way for a drag.
      */
     private const ADOPTIONS = [
-        'day' => ['own' => 'date', 'label' => 'Its day', 'adopt' => 'This becomes the series\' day', 'same' => 'The series moves the same way', 'preselect' => 'period'],
-        'time' => ['own' => 'time', 'label' => 'Its time', 'adopt' => 'This becomes the series\' time', 'same' => 'The series moves the same way', 'preselect' => 'always'],
-        'length' => ['own' => 'length', 'label' => 'Its length', 'adopt' => 'This becomes the series\' length', 'same' => 'The series changes the same way', 'preselect' => 'typed'],
+        'day' => ['own' => 'date', 'label' => 'Its day', 'adopt' => 'This becomes every event\'s day', 'same' => 'Every event moves the same way', 'preselect' => 'period'],
+        'time' => ['own' => 'time', 'label' => 'Its time', 'adopt' => 'This becomes every event\'s time', 'same' => 'Every event moves the same way', 'preselect' => 'always'],
+        'length' => ['own' => 'length', 'label' => 'Its length', 'adopt' => 'This becomes every event\'s length', 'same' => 'Every event changes the same way', 'preselect' => 'typed'],
     ];
 
     // Per computation.
@@ -2384,7 +2384,7 @@ final class Model
         $outside = 'keep';
         if ($grouped !== []) {
             $one = count($grouped) === 1;
-            $outside = $this->pick('outside', 'Edited days outside the new series', [
+            $outside = $this->pick('outside', 'Edited days the changed repeating event leaves out', [
                 ['id' => 'keep', 'label' => $one ? 'Keep it as an event of its own' : 'Keep them as events of their own'],
                 ['id' => 'delete', 'label' => $one ? 'Delete it' : 'Delete them'],
             ], 'keep', ['count' => count($grouped)] + ($one ? ['day' => self::keyOut($grouped[0])] : []));
@@ -2428,7 +2428,7 @@ final class Model
                 $days[] = ['key' => $key, 'newKey' => null, 'kind' => 'skipped', 'outcome' => 'dropped', 'shows' => $this->identityOut($key), 'why' => $img === null ? 'noday' : 'outside']
                     + ($side !== null ? ['side' => $side] : [])
                     + Words::dayParts(Words::date($odn, $this->thisYear), match ($side) {
-                        null => 'is forgotten: the new series has no ' . Words::date($odn, $this->thisYear),
+                        null => 'is forgotten: the changed repeating event has no ' . Words::date($odn, $this->thisYear),
                         'start' => 'is no longer needed: it is before the new start',
                         default => 'is no longer needed: it is past the new end',
                     }, ' ', 'Skipped ');
@@ -2439,8 +2439,8 @@ final class Model
             $newExdates[] = $nk;
             $days[] = ['key' => null, 'newKey' => $nk, 'kind' => 'skipped', 'outcome' => 'generated', 'to' => self::patternOut($calc1, $g), 'side' => $edgeAt[$g] ?? 'start']
                 + Words::dayParts(Words::date($g, $this->thisYear), ($edgeAt[$g] ?? 'start') === 'start' && $newStart === $this->old->startDn
-                    ? 'skipped, so the series starts as before'
-                    : 'skipped: no event of the series was on it');
+                    ? 'skipped, so the repeating event starts as before'
+                    : 'skipped: none of its events was on it');
         }
     
         $newExdates = array_values(array_unique($newExdates));
@@ -2694,7 +2694,7 @@ final class Model
                 $sides = $this->rowSides($row, self::rowOf($start, $allDay, $tz));
                 $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => $newKey, 'kind' => 'edited',
                     'title' => (string) $row['title'], 'outcome' => 'rejoins'] + $sides
-                    + Words::dayParts($name . Words::date($odn, $this->thisYear), 'goes back to the series, on ' . Words::date(self::dayOf($sides['after']), $this->thisYear))
+                    + Words::dayParts($name . Words::date($odn, $this->thisYear), 'goes back to the repeating event, on ' . Words::date(self::dayOf($sides['after']), $this->thisYear))
                     + ['kept' => [], 'takes' => OwnFields::normalize($edited)];
                 continue;
             }
@@ -3261,7 +3261,7 @@ final class Model
         $lost = count($lossDays) === 1 ? '; ' . Words::date($lossDays[0], $this->thisYear) . ' has no place' : '';
         if ($r1->count !== null) {
             $oldN = (int) ($this->r0->count ?? count($oldOcc));
-            $plus = $extra > 0 ? '; ' . $n . ' in the series + ' . $extra . ' separate' : '';
+            $plus = $extra > 0 ? '; ' . $n . ' in the repeating event + ' . $extra . ' separate' : '';
             if ($this->r0->count !== null && $oldN !== $n) {
                 return ['count', 'Changes ' . Words::events($oldN) . ' to ' . $n . ', ' . $ends . ($personSkipped > 0 ? '; ' . $scheduled : '') . $plus, $data];
             }

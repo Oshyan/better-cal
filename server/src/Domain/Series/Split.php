@@ -259,7 +259,7 @@ final class Split
     private static function countReadings(array $partMaster, array $partRows, array $partEdit, array $choices, array $opts, Rule $sent, array $counts, int $actedDn): array
     {
         $labels = [
-            'whole' => Words::events($counts['part']) . ' in the whole series',
+            'whole' => Words::events($counts['part']) . ' in the whole repeating event',
             'part' => Words::events($counts['part']) . ' from ' . Cal::date($actedDn) . ' on',
         ];
         $alts = [];

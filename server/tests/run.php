@@ -2321,7 +2321,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     $earlyCancelRow = $adb->one('SELECT * FROM review_items WHERE id = ?', [$earlyCancelItem]);
     checkEq('cancelled day before its series: adding the series makes it a cancellation of that occurrence', ['invite_change', 'open', $earlyCancelSeriesId, 'CANCEL', true], [
         $earlyCancelRow['kind'], $earlyCancelRow['status'], (int) $earlyCancelRow['event_id'], json_decode((string) $earlyCancelRow['payload_json'], true)['method'] ?? null,
-        str_contains((string) $earlyCancelRow['summary'], 'cancelled the Mon 16 Nov 2026 occurrence of the series you added') && str_contains((string) $earlyCancelRow['summary'], 'Accepting skips just that one'),
+        str_contains((string) $earlyCancelRow['summary'], 'cancelled the Mon 16 Nov 2026 occurrence of the repeating event you added') && str_contains((string) $earlyCancelRow['summary'], 'Accepting skips just that one'),
     ]);
     if (class_exists(\Sabre\VObject\Reader::class)) {
         $queueA->accept(1, $earlyCancelItem);
@@ -2336,11 +2336,11 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     // and a cancelled day of it waits with it.
     $dismissedSeriesItem = $queueA->holdNewInvitation(1, 'dismissed-series-uid', $earlySeries, ['sequence' => 1] + $earlyInvite, 'organizer@example.test');
     $queueA->dismiss(1, $dismissedSeriesItem);
-    checkEq('cancelled day of a dismissed series: skipped, saying the series was dismissed', ['skipped', null, 'the series was dismissed in Review'],
+    checkEq('cancelled day of a dismissed series: skipped, saying the series was dismissed', ['skipped', null, 'the repeating event was dismissed in Review'],
         $applyA->invoke($mailA, 1, 'CANCEL', ['uid' => 'dismissed-series-uid'] + $earlyCancelOcc, 'UTC', ['messageId' => 'dismissed-cancel@example.test'] + $earlyMsg));
     $deletedSeriesId = (int) $queueA->accept(1, $queueA->holdNewInvitation(1, 'deleted-series-uid', $earlySeries, ['sequence' => 1] + $earlyInvite, 'organizer@example.test'))['eventId'];
     $eventsA->deleteEvent(1, $deletedSeriesId, null, null);
-    checkEq('cancelled day of a deleted series: skipped, saying the series was deleted', ['skipped', null, 'the series was deleted from the calendar'],
+    checkEq('cancelled day of a deleted series: skipped, saying the series was deleted', ['skipped', null, 'the repeating event was deleted from the calendar'],
         $applyA->invoke($mailA, 1, 'CANCEL', ['uid' => 'deleted-series-uid'] + $earlyCancelOcc, 'UTC', ['messageId' => 'deleted-cancel@example.test'] + $earlyMsg));
     $queueA->holdNewInvitation(1, 'dismissed-series-uid', ['title' => 'Planning call (new agenda)'] + $earlySeries, ['sequence' => 2] + $earlyInvite, 'organizer@example.test');
     checkEq('cancelled day of a dismissed series sent again: waits with it', 'held',
@@ -2364,7 +2364,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         ['invite_change', 'open', $earlySeriesId, '2026-11-16 18:00:00', ['Starts', 'Ends'], true], [
         $earlyRow['kind'], $earlyRow['status'], (int) $earlyRow['event_id'], $earlyPayload['occurrence'] ?? null,
         array_column($earlyPayload['diff'] ?? [], 'label'),
-        str_contains((string) $earlyRow['summary'], 'Mon 16 Nov 2026 occurrence of the series you added') && str_contains((string) $earlyRow['summary'], 'Accepting changes just that one'),
+        str_contains((string) $earlyRow['summary'], 'Mon 16 Nov 2026 occurrence of the repeating event you added') && str_contains((string) $earlyRow['summary'], 'Accepting changes just that one'),
     ]);
     if (class_exists(\Sabre\VObject\Reader::class)) { // changing an occurrence proves it through sabre/vobject
         $queueA->accept(1, $earlyItem);
@@ -2386,7 +2386,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         } catch (HttpError $e) {
             checkEq('occurrence of a moved series: the item closes, saying that day is no longer an occurrence, and the series is untouched',
                 ['held', 409, 'review_stale', true, 'superseded', '2026-11-03 18:00:00', 1], [
-                $late[0], $e->status, $e->errorCode, str_contains($e->getMessage(), 'no longer an occurrence'),
+                $late[0], $e->status, $e->errorCode, str_contains($e->getMessage(), 'no longer one of the days of this repeating event'),
                 $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$lateItem]),
                 $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$earlySeriesId]),
                 (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$earlySeriesId]),
@@ -2484,7 +2484,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         checkEq('cancelled day with its series: adding the series makes the day a cancellation of that occurrence', ['invite_change', 'open', $cancelledSeriesId, 'CANCEL', '2030-01-14 18:00:00', ['Occurrence'], true], [
             $cancelledDayRow['kind'], $cancelledDayRow['status'], (int) $cancelledDayRow['event_id'], $cancelledDayPayload['method'] ?? null, $cancelledDayPayload['occurrence'] ?? null,
             array_column($cancelledDayPayload['diff'] ?? [], 'label'),
-            str_contains((string) $cancelledDayRow['summary'], 'cancelled the Mon 14 Jan 2030 occurrence of the series you added') && str_contains((string) $cancelledDayRow['summary'], 'Accepting skips just that one'),
+            str_contains((string) $cancelledDayRow['summary'], 'cancelled the Mon 14 Jan 2030 occurrence of the repeating event you added') && str_contains((string) $cancelledDayRow['summary'], 'Accepting skips just that one'),
         ]);
         $queueA->accept(1, $cancelledDayItem);
         checkEq('cancelled day with its series: accepting the cancellation skips that day and leaves the rest', [['2030-01-14 18:00:00'], 'FREQ=WEEKLY;COUNT=3', 'accepted'], [
@@ -2513,7 +2513,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         $orphanCancel = $runTiersA->invoke($mailA, 1, ['messageId' => "$cancelledUid-after@example.test", 'subject' => 'Cancelled: Reading group', 'from' => 'organizer@example.test',
             'icsParts' => ["BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Sample//EN\r\nMETHOD:CANCEL\r\nBEGIN:VEVENT\r\nUID:$cancelledUid\r\nSEQUENCE:1\r\nDTSTAMP:20300102T120000Z\r\nRECURRENCE-ID:20300121T180000Z\r\nDTSTART:20300121T180000Z\r\nDTEND:20300121T190000Z\r\nSUMMARY:Reading group\r\nORGANIZER:mailto:organizer@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"],
             'html' => null, 'text' => null], 'UTC');
-        checkEq('cancelled day of a dismissed series: skipped, with the reason', ['skipped', 'the series was dismissed in Review', 0], [$orphanCancel['outcome'], $orphanCancel['error'], (int) $adb->scalar("SELECT COUNT(*) FROM review_items WHERE source_key = ? AND status = 'open'", [$cancelledUid])]);
+        checkEq('cancelled day of a dismissed series: skipped, with the reason', ['skipped', 'the repeating event was dismissed in Review', 0], [$orphanCancel['outcome'], $orphanCancel['error'], (int) $adb->scalar("SELECT COUNT(*) FROM review_items WHERE source_key = ? AND status = 'open'", [$cancelledUid])]);
         $adb->run('UPDATE users SET settings_json = ? WHERE id = 1', [$priorSettingsA]);
 
         // The organizer's domain spelled two ways (Unicode in one calendar's
@@ -2569,7 +2569,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             $dayPayload = json_decode((string) $dayRow['payload_json'], true);
             checkEq("$what day before its series, series added automatically: the day is a change to that occurrence of the added series", ['held', 'created', 'invite_change', 'open', $autoSeriesId, $cancel ? 'CANCEL' : 'REQUEST', '2030-01-14 18:00:00', true], [
                 $dayResult['outcome'], $seriesResult['outcome'], $dayRow['kind'], $dayRow['status'], (int) $dayRow['event_id'], $dayPayload['method'] ?? null, $dayPayload['occurrence'] ?? null,
-                str_contains((string) $dayRow['summary'], 'Mon 14 Jan 2030 occurrence of the series you added'),
+                str_contains((string) $dayRow['summary'], 'Mon 14 Jan 2030 occurrence of the repeating event you added'),
             ]);
             checkEq("$what day before its series, series added automatically: Review lists it as a change with its differences, never as a day waiting for its series", [['invite_change'], [true]], [
                 array_column($listedFor($uid), 'kind'), array_map(static fn(array $i): bool => $i['diff'] !== [], $listedFor($uid)),
@@ -2635,7 +2635,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             $cancelEntry !== null && $cancelEntry['before_json'] === null && $cancelEntry['after_json'] === null,
         ]);
         $lateDay = $runTiersA->invoke($mailA, 1, $autoMsg("$waitingUid-late-day", $autoDay($waitingUid, true)), 'UTC');
-        checkEq('whole-series cancellation while the invitation waits: a cancelled day arriving after is skipped, with the reason', ['skipped', 'the organizer cancelled the series before it was added'], [$lateDay['outcome'], $lateDay['error']]);
+        checkEq('whole-series cancellation while the invitation waits: a cancelled day arriving after is skipped, with the reason', ['skipped', 'the organizer cancelled the repeating event before it was added'], [$lateDay['outcome'], $lateDay['error']]);
         $invitedAgain = $runTiersA->invoke($mailA, 1, $autoMsg("$waitingUid-again", $autoSeries($waitingUid, 2)), 'UTC');
         $dayAgain = $runTiersA->invoke($mailA, 1, $autoMsg("$waitingUid-day-again", $autoDay($waitingUid, true)), 'UTC');
         checkEq('whole-series cancellation while the invitation waits: invited again, the series waits anew and a cancelled day waits with it', ['held', 'held', 2], [
@@ -2909,7 +2909,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             return null;
         };
         checkEq('edited date moved with the whole series: one save, one undo entry, with the series and the date as they were and are', [
-            1, "Moved 'Edited date' and its series to another calendar", [10, 10, 'Edited date'], [13, 13, 'Edited date, renamed'],
+            1, "Moved every event of 'Edited date' to another calendar", [10, 10, 'Edited date'], [13, 13, 'Edited date, renamed'],
         ], [
             count($allEntries), $allEntries[0]['summary'] ?? null,
             [(int) ($snapRow($allEntries[0]['before_json'], $daily)['calendar_id'] ?? 0), (int) ($snapRow($allEntries[0]['before_json'], $edited)['calendar_id'] ?? 0), $snapRow($allEntries[0]['before_json'], $edited)['title'] ?? null],

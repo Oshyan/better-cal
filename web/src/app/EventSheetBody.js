@@ -272,11 +272,11 @@ function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, 
 // person's format; when neither Finish nor Put back can run, the Review item's own sentence says why.
 export function halfDoneWords(half, fmtDay) {
   if (!half) return null;
-  const when = half.stoppedAt ? ' on ' + fmtDay(half.stoppedAt) : '';
-  const lead = 'A change to this event stopped part way' + when;
-  // The item's own sentence when neither action can run, joined so the line says "stopped part way" once.
-  const stuck = half.unrecoverable && half.unrecoverable.startsWith('This change stopped part way, and ');
-  if (stuck) return lead + ', and ' + half.unrecoverable.slice('This change stopped part way, and '.length);
+  const when = half.stoppedAt ? ' since ' + fmtDay(half.stoppedAt) : '';
+  const lead = (half.stoppedAt ? 'A change to this event has been waiting to be finished' : 'A change to this event is waiting to be finished') + when;
+  // The item's own sentence when neither action can run, joined so the line says "waiting to be finished" once.
+  const stuck = half.unrecoverable && half.unrecoverable.startsWith('This change is waiting to be finished, and ');
+  if (stuck) return lead + ', and ' + half.unrecoverable.slice('This change is waiting to be finished, and '.length);
   return lead + '. ' + (half.unrecoverable || 'It isn\'t updating from Google Calendar and takes no other change until that change is finished or put back.');
 }
 

@@ -2600,7 +2600,7 @@ final class GoogleSeries
     }
 
     /** The sentence that opens what Finish says it replaced (replacedWords). */
-    public const REPLACED_LEAD = 'This change had stopped part way, and Google Calendar no longer held the event as it was left.';
+    public const REPLACED_LEAD = 'This change was waiting to be finished, and Google Calendar no longer held the event as it was left.';
 
     /**
      * What Finish replaced, in sentences, one for each entry of replaced() and from nothing else: what Google
@@ -3650,8 +3650,8 @@ final class GoogleSeries
         // read-only; the change stays listed, and its event frozen, until access returns or the calendar goes.
         $name = "'" . (trim((string) ($calendar['name'] ?? '')) !== '' ? trim((string) $calendar['name']) : 'this calendar') . "'";
         return ($calendar['google_access_role'] === 'none'
-            ? "This change stopped part way, and Google Calendar no longer shows $name to this account, so it can't be finished or put back."
-            : "This change stopped part way, and your permissions for $name in Google Calendar are now read-only, so it can't be finished or put back.")
+            ? "This change is waiting to be finished, and Google Calendar no longer shows $name to this account, so it can't be finished or put back."
+            : "This change is waiting to be finished, and your permissions for $name in Google Calendar are now read-only, so it can't be finished or put back.")
             . ' It stays here, and the event takes no other change, until full editing is restored there or you remove the calendar.';
     }
 
@@ -4366,7 +4366,7 @@ final class GoogleSeries
             $target = Feeds::ofSeries($row, $was, $master);
             if ($target === null) {
                 $day = self::keyDate((string) $row['recurrence_instance_utc'], $master, (int) Time::nowUtc()->format('Y'));
-                throw HttpError::conflict('google_finish_kept', "'" . (string) $row['title'] . "' on $day was changed here after this change stopped, and the change leaves the series without that day");
+                throw HttpError::conflict('google_finish_kept', "'" . (string) $row['title'] . "' on $day was changed here while this change was waiting to be finished, and the change leaves the repeating event without that day");
             }
             // Its day and its times: where the series has the day now (Feeds::ofSeries), its own placement read by OwnFields::placed.
             $placing = ['recurrence_instance_utc', 'google_event_id', ...array_keys(\BetterCal\Domain\Series\Model::SERIES_COLUMNS)];

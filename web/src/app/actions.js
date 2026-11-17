@@ -364,7 +364,7 @@ function said(what, change) { return change ? what + ' · ' + change : what; }
 // one the action assumes (a drag takes this one; a calendar move, all).
 function seriesWords(occ, scope, usual) {
   if (!occ || !occ.recurring || !scope || scope === usual) return '';
-  return scope === 'all' ? ' (all in series)' : scope === 'following' ? ' (this and following)' : ' (this occurrence)';
+  return scope === 'all' ? ' (all events)' : scope === 'following' ? ' (this and following)' : ' (this occurrence)';
 }
 export function googleCalendar(calendarId) {
   const cal = state.calendars.find((c) => c.id === calendarId);

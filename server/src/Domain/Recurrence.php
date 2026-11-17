@@ -107,7 +107,7 @@ final class Recurrence
         $max = Limits::get('EXDATE_VALUES_PER_EVENT');
         if ($count > $max) {
             throw new \InvalidArgumentException(
-                'One event has ' . number_format($count) . ' skipped occurrences, over the limit of ' . number_format($max) . '. Split the series into smaller parts.'
+                'One event has ' . number_format($count) . ' skipped occurrences, over the limit of ' . number_format($max) . '. Split the repeating event into smaller parts.'
             );
         }
         return array_values(array_unique(array_map('strval', $values)));

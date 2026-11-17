@@ -55,7 +55,7 @@ return static function (Db $db): void {
     };
     $noteOn25 = static fn(object $t): int => H::atGoogle($t, 'PATCH', '/events/' . rawurlencode($t->gid . '_20270125T180000Z'), ['description' => 'Sample remote note'])[0];
     $asked = ['2027-01-04 10:00|Renamed series||', '2027-01-11 10:00|Own title||', '2027-01-25 10:00|Renamed series||'];
-    $named25 = static fn(array $lines): bool => in_array('This change had stopped part way, and Google Calendar no longer held the event as it was left.', $lines, true)
+    $named25 = static fn(array $lines): bool => in_array('This change was waiting to be finished, and Google Calendar no longer held the event as it was left.', $lines, true)
         && array_filter($lines, static fn(string $l): bool => str_contains($l, 'Mon 25 Jan') && str_contains($l, 'Sample remote note')) !== [];
 
     // Control, R-named as decided: stop, a note put on 25 January in Google Calendar, Finish.

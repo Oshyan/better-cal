@@ -93,11 +93,14 @@ export function CreateDrawer() {
         } else {
           const again = (res && res.alreadyThere) || 0;
           // Events of the file that were removed from this calendar before
-          // (deleted, or a day deleted or moved off its repeating event) are left out, and said so.
+          // (deleted, or a day deleted off its repeating event) are left out,
+          // and so are days moved to another calendar, each said so.
           const gone = (res && res.deletedBefore) || 0;
+          const moved = ((res && res.movedAway) || []).map((m) => '; ' + m.count + ' left out because ' + (m.count === 1 ? 'it is' : 'they are') + " now in '" + m.name + "'").join('');
           toast('Imported ' + ((res && res.imported) || 0) + ' events' + (into && res ? ' into ' + res.name : '')
             + (again ? '; ' + again + ' already there' : '')
-            + (gone ? '; ' + gone + ' left out because you removed ' + (gone === 1 ? 'it' : 'them') + ' from this calendar before' : ''), { undo: entriesOf(res) });
+            + (gone ? '; ' + gone + ' left out because you removed ' + (gone === 1 ? 'it' : 'them') + ' from this calendar before' : '')
+            + moved, { undo: entriesOf(res) });
         }
         const eventSkips = (res && res.skippedEvents) || ((res && res.calendars) || []).flatMap(c => c.skippedEvents || []);
         if (eventSkips.length) toast(eventSkips.length + ' event(s) skipped. ' + eventSkips.slice(0, 3).map(s => (s.title || 'Untitled event') + ': ' + s.reason).join('; ') + '. Correct their dates, then import the corrected .ics file into its existing calendar.', { error: true, duration: 20000 });

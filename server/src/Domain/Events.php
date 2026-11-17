@@ -2398,6 +2398,14 @@ final class Events
         $row['source'] = 'local';
         $row['created_via'] = ActivityContext::get();
         $row['override_fields'] = null;
+        // Where it came from: the repeating event (by uid, which outlives its
+        // row) and the day's key as the skip below stores it. The one writer
+        // of the link; every other copy of a row starts without it
+        // (copyForChild).
+        if ($master !== null) {
+            $row['moved_from_uid'] = (string) $master['uid'];
+            $row['moved_from_key'] = (string) $instanceUtc;
+        }
         $row = array_merge($row, $this->columnPatch($row, $in, null, forOverride: true));
         $copyFromId = $existingOverrideId ?? ($master !== null ? (int) $master['id'] : null);
 
@@ -2919,7 +2927,35 @@ final class Events
         // A series' start as read is its first shown day (shownSpan), a
         // floating one's on the viewer's clock.
         [$start, $end] = Floating::span($row, ...self::shownSpan($row), viewer: $this->viewerFor([$row], (int) $row['user_id']));
-        return $this->serialize($row, $start, $end, $links, full: true);
+        return $this->serialize($row, $start, $end, $links, full: true) + ['movedFrom' => $this->movedFrom($row)];
+    }
+
+    /**
+     * Where an event moved off a repeating event came from, for the full
+     * record: the repeating event's uid, the day's key (a UTC instant, or a
+     * date at 00:00 UTC for an all-day one), and that repeating event as it
+     * stands now, live, so a client can name it (null fields when it is
+     * gone). Null for an event not moved off one, or moved before the link
+     * was kept.
+     *
+     * @return array{uid:string,day:string,eventId:?int,title:?string,calendarId:?int}|null
+     */
+    private function movedFrom(array $row): ?array
+    {
+        if (($row['moved_from_uid'] ?? null) === null || ($row['moved_from_key'] ?? null) === null) {
+            return null;
+        }
+        $series = $this->db->one(
+            'SELECT id, title, calendar_id FROM events WHERE user_id = ? AND uid = ? AND recurrence_parent_id IS NULL AND recurrence_instance_utc IS NULL AND deleted_at IS NULL ORDER BY id DESC LIMIT 1',
+            [(int) $row['user_id'], (string) $row['moved_from_uid']]
+        );
+        return [
+            'uid' => (string) $row['moved_from_uid'],
+            'day' => Time::fromDb((string) $row['moved_from_key'])->format('Y-m-d\TH:i:s\Z'),
+            'eventId' => $series !== null ? (int) $series['id'] : null,
+            'title' => $series !== null ? (string) $series['title'] : null,
+            'calendarId' => $series !== null ? (int) $series['calendar_id'] : null,
+        ];
     }
 
     /**
@@ -3536,6 +3572,10 @@ final class Events
         $copy['created_at'] = Time::nowDb();
         $copy['updated_at'] = Time::nowDb();
         $copy['deleted_at'] = null;
+        // A row made from another was not moved off a repeating event: only
+        // detachToCalendar writes where a moved day came from.
+        $copy['moved_from_uid'] = null;
+        $copy['moved_from_key'] = null;
         return $copy;
     }
 

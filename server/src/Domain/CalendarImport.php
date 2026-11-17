@@ -114,26 +114,43 @@ final class CalendarImport
                 return $stored[$uid];
             };
             // Was this record of the file taken out of this calendar here
-            // before? One answer for the three ways that act is stored: its
-            // own row deleted, its series deleted, or (a day) its key among
-            // the stored series' skipped dates, which is how one ordinary
-            // day of a series is deleted, with no row of its own (#255). A
-            // day moved to another calendar is stored the same way, a skip
-            // and a standalone event of a new UID there, so it is left out
-            // too: it lives in that calendar, and would otherwise be twice.
-            $takenOut = static function (?array $existing, ?array $series, ?string $key): bool {
+            // before, and how? One answer for the ways that act is stored:
+            // its own row deleted, its series deleted, or (a day) its key
+            // among the stored series' skipped dates, which is how one
+            // ordinary day of a series is deleted, with no row of its own
+            // (#255). A day moved to another calendar is stored as the same
+            // skip, and the event it became keeps where it came from
+            // (moved_from_uid, moved_from_key, written by
+            // Events::detachToCalendar): while that event is live, the day is
+            // in that calendar now. Null when not taken out; else ['removed'],
+            // or ['moved', calendar id, calendar name] for where the day
+            // lives now. A day moved before the link was kept, or whose moved
+            // event was since deleted, is removed.
+            $takenOut = function (?array $existing, ?array $series, ?string $key) use ($userId): ?array {
                 if (($existing !== null && $existing['deleted_at'] !== null) || ($series !== null && $series['deleted_at'] !== null)) {
-                    return true;
+                    return ['removed'];
                 }
                 if ($series === null || $key === null) {
-                    return false;
+                    return null;
                 }
                 try {
-                    return in_array($key, Recurrence::decodeExdates($series['exdates_json'] ?? null), true);
+                    $skipped = in_array($key, Recurrence::decodeExdates($series['exdates_json'] ?? null), true);
                 } catch (\InvalidArgumentException $e) {
                     throw HttpError::conflict('recurrence_exception_limit', $e->getMessage());
                 }
+                if (!$skipped) {
+                    return null;
+                }
+                $now = $this->db->one(
+                    'SELECT c.id, c.name FROM events e JOIN calendars c ON c.id = e.calendar_id
+                     WHERE e.user_id = ? AND e.moved_from_uid = ? AND e.moved_from_key = ? AND e.deleted_at IS NULL ORDER BY e.id DESC LIMIT 1',
+                    [$userId, (string) $series['uid'], $key]
+                );
+                return $now === null ? ['removed'] : ['moved', (int) $now['id'], (string) $now['name']];
             };
+            // Days left out because they are in another calendar now, by
+            // that calendar: id => [name, count].
+            $movedAway = [];
             $alreadyThere = 0;
             $masterIdByUid = [];
             $importedMasters = [];
@@ -161,8 +178,13 @@ final class CalendarImport
                     // Taken out here before: left out and counted. A day of
                     // a deleted series, or on a date its series skips, never
                     // comes in as a live day under it.
-                    if ($takenOut($existing, $series, $ev['recurrence_instance_utc'])) {
-                        $deletedBefore++;
+                    $out = $takenOut($existing, $series, $ev['recurrence_instance_utc']);
+                    if ($out !== null) {
+                        if ($out[0] === 'moved') {
+                            $movedAway[$out[1]] = [$out[2], ($movedAway[$out[1]][1] ?? 0) + 1];
+                        } else {
+                            $deletedBefore++;
+                        }
                         continue;
                     }
                     if ($existing !== null) {
@@ -239,10 +261,16 @@ final class CalendarImport
                 $links = $days === [] ? [] : Undo::linksOf($this->db, array_merge(...array_values($days)));
                 $calendarName = (string) $this->db->scalar('SELECT name FROM calendars WHERE id = ?', [$calendarId]);
                 $summary = 'Imported ' . $imported . ($imported === 1 ? ' event' : ' events') . " into '" . $calendarName . "'"
-                    . ($deletedBefore === 0 ? '' : '; ' . $deletedBefore . ' left out, removed from this calendar before');
+                    . ($deletedBefore === 0 ? '' : '; ' . $deletedBefore . ' left out, removed from this calendar before')
+                    . implode('', array_map(static fn(array $m): string => '; ' . $m[1] . ' left out because ' . ($m[1] === 1 ? 'it is' : 'they are') . " now in '" . $m[0] . "'", $movedAway));
                 ActivityContext::with('import', fn() => $undo->record($userId, 'calendar', $calendarId, 'update', null, ['events' => $rows] + $links, $summary));
             }
-            return ['calendarId' => $calendarId, 'imported' => $imported, 'deletedBefore' => $deletedBefore, 'alreadyThere' => $alreadyThere, 'skippedEvents' => $skippedEvents];
+            // Left out as in another calendar now: each calendar once, with how many.
+            $moved = [];
+            foreach ($movedAway as $id => [$calName, $count]) {
+                $moved[] = ['calendarId' => $id, 'name' => $calName, 'count' => $count];
+            }
+            return ['calendarId' => $calendarId, 'imported' => $imported, 'deletedBefore' => $deletedBefore, 'movedAway' => $moved, 'alreadyThere' => $alreadyThere, 'skippedEvents' => $skippedEvents];
         });
     }
 

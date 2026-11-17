@@ -178,6 +178,7 @@ final class CalendarsController
         $out['imported'] = $done['imported'];
         $out['alreadyThere'] = $done['alreadyThere'];
         $out['deletedBefore'] = $done['deletedBefore'];
+        $out['movedAway'] = $done['movedAway'];
         $out['skippedEvents'] = $done['skippedEvents'];
         return Response::json($out, $into !== null && $into !== '' ? 200 : 201);
     }

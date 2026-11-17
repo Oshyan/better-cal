@@ -299,7 +299,8 @@ final class GoogleConflict
             return $v === 'free' ? 'Free' : 'Busy';
         }
         $o = self::isEmpty($field, $other) ? null : self::plainOf($field, $other);
-        return self::quoted(self::cut(self::plainOf($field, $v), $o));
+        // Only notes are shortened: a title, a place and a link are quoted whole in every sentence.
+        return self::quoted($field === 'description' ? self::cut(self::plainOf($field, $v), $o) : self::plainOf($field, $v));
     }
 
     /**

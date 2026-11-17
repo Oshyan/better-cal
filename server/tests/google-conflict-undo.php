@@ -94,6 +94,9 @@ if (!function_exists('check') || !class_exists('ThreeWayReference')) {
         GoogleConflict::question('Weekly sync', [['field' => 'title', 'was' => 'Weekly sync', 'now' => 'Team sync', 'yours' => 'Standup']], false, null, null, true)['first']);
     checkEq('Undo words: the first sentence of several fields', "After this change to 'Weekly sync', the title and the location were changed again.",
         GoogleConflict::question('Weekly sync', [['field' => 'title', 'was' => 'a', 'now' => 'b', 'yours' => 'c'], ['field' => 'location', 'was' => 'a', 'now' => 'b', 'yours' => 'c']], false, null, null, true)['first']);
+    // What a plugin run's undo lists: a title is quoted whole there too, however much it shares with the other value.
+    checkEq('Undo words: the first sentence quotes a title whole', "After this change to 'Sample check 159: single event mine', the title was changed again: it's 'Sample check 159: single event theirs' now.",
+        GoogleConflict::question('Sample check 159: single event mine', [['field' => 'title', 'was' => 'Sample check 159: single event mine', 'now' => 'Sample check 159: single event theirs', 'yours' => 'Sample check 159: single event']], false, null, null, true)['first']);
     checkEq('Undo words: a day that is no longer a day',
         "That day is no longer one of the days of 'Team sync': the repeating event was changed in Google Calendar. Nothing was undone, and the calendar shows it as Google Calendar has it now.",
         GoogleConflict::dayGone('Team sync', true));

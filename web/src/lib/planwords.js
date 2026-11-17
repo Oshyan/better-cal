@@ -1086,7 +1086,8 @@ function valueWords(field, v, other, ref) {
   if (field === 'showAs') return v === 'free' ? 'Free' : 'Busy';
   const s = plainOf(field, v);
   const o = other === undefined || isEmptyValue(field, other) ? null : plainOf(field, other);
-  return quoted(cutPair(s, o)[0]);
+  // Only notes are shortened: a title, a place and a link are quoted whole in every sentence.
+  return quoted(field === 'description' ? cutPair(s, o)[0] : s);
 }
 
 /**

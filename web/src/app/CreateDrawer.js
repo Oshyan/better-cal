@@ -92,11 +92,12 @@ export function CreateDrawer() {
           { error: n === 0, duration: skipped ? 15000 : undefined, undo: entriesOf(res) });
         } else {
           const again = (res && res.alreadyThere) || 0;
-          // Events of the file that were deleted here before are left out, and said so.
+          // Events of the file that were removed from this calendar before
+          // (deleted, or a day deleted or moved off its repeating event) are left out, and said so.
           const gone = (res && res.deletedBefore) || 0;
           toast('Imported ' + ((res && res.imported) || 0) + ' events' + (into && res ? ' into ' + res.name : '')
             + (again ? '; ' + again + ' already there' : '')
-            + (gone ? '; ' + gone + ' left out because you deleted ' + (gone === 1 ? 'it' : 'them') + ' here before' : ''), { undo: entriesOf(res) });
+            + (gone ? '; ' + gone + ' left out because you removed ' + (gone === 1 ? 'it' : 'them') + ' from this calendar before' : ''), { undo: entriesOf(res) });
         }
         const eventSkips = (res && res.skippedEvents) || ((res && res.calendars) || []).flatMap(c => c.skippedEvents || []);
         if (eventSkips.length) toast(eventSkips.length + ' event(s) skipped. ' + eventSkips.slice(0, 3).map(s => (s.title || 'Untitled event') + ': ' + s.reason).join('; ') + '. Correct their dates, then import the corrected .ics file into its existing calendar.', { error: true, duration: 20000 });

@@ -680,7 +680,7 @@ return static function (Db $db): void {
             'Domain/Events.php:createLocked' => 'neutral: a new event or series has no days',
             'Domain/Events.php:googleCreate' => 'neutral: a new event or series has no days',
             'Domain/Events.php:detachToCalendar' => 'neutral: a standalone event',
-            'Domain/People.php:updateLocked' => 'neutral: a person merged, the same set function on every event',
+            'Domain/People.php:merge' => 'neutral: a person merged, the same set function on every event',
             'Domain/Tags.php:rename' => 'run: a tag merged, the same set function on every event, and its undo',
             'Domain/Tags.php:delete' => 'run: a tag deleted, the same set function on every event, and its undo',
             'Plugin/PluginHost.php:syncEvents' => 'neutral: plugin events have no series',

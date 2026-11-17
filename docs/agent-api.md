@@ -140,7 +140,7 @@ curl -s "$BC/events/42" -X DELETE -H "@$AUTH_FILE" -H 'Content-Type: application
 | Enable or run plugins | `POST /plugins/:id/enable`, `/disable`, `/run` | `set_plugin_enabled`, `run_plugin` | Can have outside effects; runs are queued for the worker |
 | List calendars | `GET /calendars` | `list_calendars` | Includes folders, tags and feed health |
 | Show or hide calendars | `PATCH /calendars` | `set_calendars_visible` | Many at once; a display preference, not in Activity |
-| Undo | `POST /undo` | `undo` | Each call undoes the most recent change not yet undone, so repeating it steps further back (within 7 days). A change that can't be undone is refused with its `entryId`; send that back as `past` to go on to the change before it |
+| Undo | `POST /undo` | `undo` | Each call undoes the most recent change not yet undone, so repeating it steps further back (within 7 days). A change that can't be undone, or whose undo asks a question (`google_changed`), answers with its `entry` id; send that back as `past` to go on to the change before it, or answer the question with `POST /activity/:id/undo` |
 | Manage calendars and folders | `POST/PATCH/DELETE /calendars`, `/folders` | none | REST only |
 | Manage tags | `GET /tags`, `PATCH/DELETE /tags/:id` | none | REST only; a rename onto a name taken merges |
 | Outbound feeds, push devices, reminder email address | `/outfeeds`, `POST /push/subscribe`, `POST /push/unsubscribe`, `PATCH /settings` | none | REST only; what a key creates belongs to it |

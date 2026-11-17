@@ -213,7 +213,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/undo", function (Request $req) use ($undo): Response {
             $past = $req->body['past'] ?? null;
             if ($past !== null && (!is_int($past) || $past <= 0)) {
-                throw HttpError::badRequest('past must be the entryId of an earlier refusal', 'invalid_request');
+                throw HttpError::badRequest('past must be the entry id of an earlier refusal or question', 'invalid_request');
             }
             $undone = $undo->undoLatest((int) $req->user['id'], Domain\RequestAuthority::request($req), $past);
             return Response::json(['ok' => true, 'undone' => array_diff_key($undone, ['kept' => true])] + array_intersect_key($undone, ['kept' => true]));

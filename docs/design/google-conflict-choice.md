@@ -90,6 +90,112 @@ Values are in the served form; `time` is `{"start", "end", "allDay", "tzid"}`, t
 
 ---
 
+# Slice 2: What a Change to One Day of a Repeating Event Promises
+
+Written 2026-11-16, against `main` at 1.5.8 (`14fb5f27`), before any of it was built. This page is what gets built for one day of a repeating event on a Google calendar: an edit, a drag or resize, a delete, "Use series value", Planned or Maybe on a day, and an answer to a repeating invitation. It is the slice 1 page's rule with one more reading, what "this day" is on each side, and nothing else new: the same seven fields, the same comparison, the same step, the same question, the same setting. Where it is simpler than the model below, this page wins. A change to all events, "this and following", Finish, Put back and every undo are not in it and keep what they do today.
+
+Until this slice a change in Google Calendar to anything in the repeating event refused every change to any of its days (`google_conflict`): someone renaming another Tuesday refused a drag of this Tuesday.
+
+### The cases, most likely first
+
+Each promise names its test: a **row** of the day table (`server/tests/google-conflict-day.php`, included by `server/tests/run.php`), or a **scenario** of the request-level database test (`server/tests/db/google-conflict-day.test.php`), which sends client-shaped requests to the stand-in for Google.
+
+1. **Nothing changed in Google Calendar since the day was shown.** The change goes through as it did before: one read of the repeating event, one conditional write, no question, nothing kept. (For a day Google Calendar keeps no record of, the write's version is read by the day's id after the list, as before.) Rows: every field G = B. Scenario: "unchanged repeating event: an edit, a drag, Maybe and a delete of a day each send one write; `kept` is empty".
+2. **Someone changed another day of the same repeating event** (renamed, moved or deleted another Tuesday). Not a change to this day: your change goes through, nothing is asked and nothing is listed as kept. The other day shows as Google Calendar has it (the read is stored). Rows: a change to another day's record leaves this day's G = B in every field. Scenario: "another day renamed in Google Calendar: a drag of this day goes through, nothing asked, nothing kept, the other day holds its new title here".
+3. **Someone changed the whole repeating event in a field you are not changing** (the organiser renamed it; you drag this day). Your change goes through; this day shows the new value, here and there, and the toast names it as kept. Rows: a day that does not own the field takes the repeating event's value, G ≠ B, not wanted gives `kept`. Scenario: "the repeating event renamed in Google Calendar, this day dragged: the PATCH sends the time alone, `kept` names the title".
+4. **Someone changed the whole repeating event in the field you are changing on this day** (they renamed it; you rename this day). Nothing is sent and nothing of the request is written. You are asked, and told the change was to the whole repeating event; Overwrite gives this day your value and the other days keep Google Calendar's. Rows: a day that does not own the field, wanted, G ≠ B and G ≠ W gives `ask`, `from` series. Scenario: "the repeating event renamed, this day renamed here: 409 `google_changed` with `from` series, nothing sent, the rows hold Google Calendar's title".
+5. **Someone changed this day's own record in the field you are changing** (they moved this Tuesday; you drag it). Asked, `from` day. Overwrite sends your change again and it goes through. Rows: the day's record G ≠ B and G ≠ W gives `ask`, `from` day. Scenarios: "this day moved in Google Calendar, dragged here: 409 about the time with `from` day"; "Overwrite after the question for a day: one PATCH, the rows hold your time".
+6. **Someone changed this day's own record in another field.** Your change goes through; theirs is kept and named. Rows: the day's record G ≠ B, not wanted gives `kept`. Scenario: "this day's place changed in Google Calendar, its title changed here: `kept` names the place".
+7. **Both sides made the same change to this day.** No question. Row: G = W ≠ B gives `send`. Scenario: "the same title for this day in Google Calendar and here: no question".
+8. **A poll brought the change in while the day was open.** You are still asked: the comparison is with what you were shown. Scenario: "poll between serve and save for a day: the request echoes the served title in `over`, the save asks".
+9. **You delete a day that changed in Google Calendar** (its own record, or the whole repeating event in a value this day shows). Asked: what changed, Cancel or Delete. A delete of a day when only other days changed goes as before. Rows: a delete wants every field. Scenarios: "delete of a day over a change to its place asks"; "Delete after the question deletes the day"; "delete of a day when another day changed sends one DELETE".
+10. **The whole repeating event changed in a field this day holds a value of its own for** (they renamed the repeating event; this day already had its own title). Not a change to this day: stored, not asked about, not listed as kept. Rows: a day that owns the field, the repeating event's value changed, G = B. Scenario: "the repeating event renamed, a day with its own title edited: nothing asked, nothing kept".
+11. **Planned or Maybe on one day.** The `status` field like any other: with two values it never asks about itself; a change to another field of the day is kept. Scenario: "Maybe on a day over a rename of the repeating event: one PATCH of the status, `kept` names the title".
+12. **"Use series value" on an edited day.** A change to this day of the fields named, to the repeating event's values: compared like any change, so a change in Google Calendar to the same field of this day asks. What is sent after the read is the repeating event's value as stored then. Scenario: "Use series value over a change to this day's title in Google Calendar asks".
+13. **Answering a repeating invitation that changed in Google Calendar.** Never asked about: the click is the choice. Whatever the answer is for (the invitation's own row for all events, or one day's own row), the read is stored, the answer is sent, and `kept` names what changed in what was answered: the repeating event's own fields for an answer to all events, that day's fields for an answer to one day. A change to another day is stored and not listed. Scenario: "answer to a repeating invitation over a rename in Google Calendar: one PATCH of the guest list, `kept` names the title".
+14. **The setting is off:** every day path is the code it was, refusing with `google_conflict` and `GoogleWriter::CONFLICT_MESSAGE`. Scenario: "setting off, a day: the refusal for each of the above"; and `google-etag.test.php` keeps its refusal for a day with the setting off.
+
+### Unlikely: what the person sees, and nothing more is built
+
+- **The day is no longer a day of the repeating event** once the read is stored (it was deleted in Google Calendar, or the repeating event's time, zone or repeat changed there, or it was made a single event). An edit is refused, `google_conflict`, with its own sentence: "That day is no longer one of the days of 'Team sync': the repeating event was changed in Google Calendar. Your change wasn't saved, and the calendar shows it as Google Calendar has it now." The read stays stored. A delete of such a day completes with nothing sent: it is gone already. Scenarios: "a day deleted in Google Calendar: an edit is refused with the day's sentence, the read stored"; "a day deleted in Google Calendar: a delete completes, nothing sent".
+- **The whole repeating event was deleted in Google Calendar:** an edit of a day gets the `google_deleted` sentence it gets today; a delete of a day completes, as today.
+- **Google Calendar changed again between the question and Overwrite:** the question comes back with the newer value. No new code.
+- **A change in Google Calendar in the seconds between our read and our write:** Google's 412, today's `google_conflict` sentence. Otherwise the last write wins.
+- **An edited day whose row is gone once the read is stored, with nothing to ask** (its record went back to the repeating event's values in a way the comparison does not see): today's refusal (`google_conflict`, `CONFLICT_MESSAGE`), the read stored.
+- **The rows do not equal the read once it is stored** (the store reads a day's record otherwise than the write's condition does): today's refusal, and nothing is stored (the refusal comes from inside the write and takes the store with it).
+- **A zone-only change, notes that differ only in formatting, view-only or busy-only access:** as the slice 1 page says for one event.
+- **A tab left open from 1.5.8** sends no `over` for a day, and its time in parts: never refused for that. Its change is read against the day as stored, so a change a poll already stored is not asked about. Only a page that sends `over` with a day's time in parts gets 400 `client_outdated`; no released version does.
+- **An API caller, Review applying an invitation's update or cancellation to one day, a plugin's run:** no dialog and no `over`: the base is the day as stored, the 409 carries the whole sentence, and Review keeps the item open.
+- **A day of a repeating event whose clock time holds in any zone** (floating): `over` is read on the device's clock as the body is; not checked by its own scenario.
+- **"Use series value" when the repeating event's own value changed in Google Calendar:** not a change to this day (case 10), so nothing is asked; the day takes the value the repeating event has after the read.
+
+### The contract builders share
+
+**(a) The fields, the comparison, the setting.** The slice 1 page's seven fields with their equalities, `GoogleConflict::threeWay`, and `google_conflict_choice` (on as shipped, the one switch). Nothing is added to any of them.
+
+**(b) Where a day's `base` comes from.** For each field, the value in the request's `over` (parsed as the same key in the body is, `Events::overColumns`), else the day read as the series state reads it (`GoogleSeries::stateOf`, through one function, `GoogleSeries::dayStored`): an edited day's own fields from its row, a field it does not own from the repeating event's row, and an ordinary day the stored repeating event at that day (its fields, the day's start, the event's length). The app sends `over` for every field of a day it changes, from the occurrence it showed. **A time is one value** here too (the slice 1 page, (b) T1 to T4; issue 299, item 5): a request for one day that carries `over` and changes the time sends `start`, `end`, `allDay` and `tzid` together, and an `over` that names the time names all four; a time in parts in either place is 400 `client_outdated` before anything is read from Google or written. A request with no `over` is read as it is today.
+
+**(c) Where "now" comes from.** The day's record in the read when Google Calendar holds one, else the repeating event's values at that day as the read has them (`GoogleSeries::dayNow`). A change to another day's record, or to a field of the repeating event that this day's record holds its own value for, therefore leaves this day's "now" as it was: it is stored like a poll would store it, and neither asked about nor listed as kept. A day lists a value as kept only when the day itself shows it.
+
+**(d) The precondition: still a day of the repeating event as stored after the read.** Decided from the stored event by the function that already decides what an occurrence is (`Events::requireInstance` over the repeating event's row after the store: the day has a row, or the stored rule gives that day and no skip takes it), never from a GET of the instance. Not a day: the refusal or the completed delete in the list above.
+
+**(e) The read and the store.** The read is the one every change to a day already makes first: the list of the repeating event by its iCalendar UID with deleted records shown (`GoogleWriter::readNow` with the repeating event's id), decided by `admit`. It is stored whole, as a read-back of the repeating event is (`GoogleSeries::store`, through `Feeds::sync`), with the Activity entry a poll's has (`journal: true`), before the comparison's outcome is acted on. The write then passes the list as its condition's read and reads the list no second time.
+
+**(f) The question.** 409 `google_changed`, as for one event, with two additions:
+
+```json
+{"error": {
+  "code": "google_changed",
+  "message": "Since Tue, Nov 17 of 'Team sync' was last shown to you, its title was changed in Google Calendar, for the whole repeating event. It is now 'Standup' there; your change makes it 'Weekly sync'. It wasn't changed; open that day to see it and make the change again.",
+  "day": {"start": "2026-11-17T10:00:00-08:00", "end": "2026-11-17T11:00:00-08:00", "allDay": false, "tzid": "America/Los_Angeles"},
+  "fields": [{"field": "title", "was": "Team sync", "now": "Standup", "yours": "Weekly sync", "from": "series"}],
+  "kept": []
+}}
+```
+
+`day` is the day's time as the person was shown it (the base's time, whole): what the sentences name the day by. `from` says where the change the person is asked about was made, computed from the data and from nothing else: `series` when the repeating event's own value for that field at that day differs between the row as stored before the read and the row as stored after it, and the day now shows that new value; `day` otherwise (the day's own record changed, or a poll had already stored the change). An entry for an event in no series carries neither key. Overwrite is the same request again (same path, scope and `instanceStart`) with `over` set to each asked field's `now` and the body's value to its `yours`, the time whole. "Use series value" names no values, so its Overwrite changes `over` alone.
+
+**(g) Kept on success.** As for one event: `kept: [{field, now}]` on the 200 of `PATCH /events/:id`, `POST /events/:id/relationship` and `POST /events/:id/rsvp`, the day's values in the served form. A PATCH answer for a day carries no `occurrence` (a day's change touches rows this record does not hold); the app refetches the window, as it does for every change to a repeating event.
+
+**(h) Words.** One module composes them (`googleChangedAsk` and `keptWords` in `web/src/lib/planwords.js`; the 409's `message` from `GoogleConflict::question`, held to it by `server/tests/fixtures/google-changed-words.json`). For a day:
+
+- The lead names the day: "Since Tue, Nov 17 of 'Team sync' was last shown to you, ...", the day in the person's date format, with its year when any date in the question says its year.
+- A change made to the whole repeating event says so after where it was made: "its title was changed in Google Calendar, for the whole repeating event. It is now 'Standup' there; your change makes it 'Weekly sync'." In a line: "Title, for the whole repeating event: 'Standup' in Google Calendar; 'Weekly sync' in your change."
+- A change to the day's own record reads as it does for one event: "its time was changed in Google Calendar. It is now Tue, Nov 17, 10:30 AM to 11:30 AM there; your change makes it Wed, Nov 18, 10:00 AM to 11:00 AM."
+- The dialog's foot: "Overwrite saves your change for this day only. Cancel saves nothing, and the day shows as it is in Google Calendar now." (or "... and takes you back to your change."). For a delete, titled "Delete this day anyway?": "Delete deletes this day here and in Google Calendar. Cancel keeps it, as it is in Google Calendar now."
+- The 409's own message ends "It wasn't changed; open that day to see it and make the change again." or "It wasn't deleted; open that day to see it, and delete it again if you still mean to."
+- The toast's kept line is the one an event has: "A separate change there was kept: the title is now 'Standup'."
+
+Never "series", never "at Google", times in the person's 12 or 24 hour setting where the app composes them, two values never joined by "to".
+
+**(i) The step, one function.** `Events::googleChoice` takes the day (the repeating event's row and the day's key) beside what it takes for one event, and is the only place a day is compared: `GoogleWriter::readAndStore` (the same function, given the repeating event and the day's key) reads, compares with `GoogleConflict::threeWay` and stores; `googleChoice` checks (d), then defers the 409 or hands back the stored rows, the list for the write's condition, the columns to send and the fields kept. A field the request sets at its base value that Google Calendar changed is kept, so it is taken out of what the path goes on to write (the request's keys for it, or the field named to "Use series value"): sending it would put the old value back over Google Calendar's. Each path then runs the code it had, over the rows as stored.
+
+**(j) Every path that can send Google Calendar a change to one day.**
+
+| Path | Server entry | Disposition |
+| --- | --- | --- |
+| Edit, drag or resize of an ordinary day (the repeating event's id, scope this, the day's key) | `Events::googlePatchThis`, the branch with no row | Through the step |
+| The same for a day that has a row, by the repeating event's id and the day's key | `Events::googlePatchThis`, the branch with a row | Through the step |
+| Edit, drag or resize of an edited day by its own row (what the app sends) | `Events::googlePatchAll` with a day's row | Through the step |
+| Delete of a day by the repeating event's id and the day's key | `Events::googleDeleteThis` | Through the step |
+| Delete of an edited day by its own row | `Events::googleDeleteOverride` | Through the step |
+| "Use series value", by either id | `SeriesPlans::useSeriesValues` | Through the step |
+| Planned or Maybe on a day of one of my calendars | `Events::setRelationship`, then `patch` with the status | Through the step, as an edit |
+| Planned or Maybe on a day of an invitation | `Events::setAttendance` | Held here alone: sends nothing |
+| Tags, people, reminders, an icon, a place's coordinates on a day | `googlePatchThis`, `googlePatchAll` with no field Google holds | Held here alone: sends nothing, reads nothing |
+| Answer to a repeating invitation, for all events or by one day's row | `Rsvp::answerAtGoogle` | The same read, comparison (nothing wanted) and store; never asked; then the answer as before |
+| Review applying an invitation's update or cancellation to one day | `ReviewQueue`, through `Events::patch` and `deleteEvent` with scope this | Through the step (the same server path); no `over`; the whole message on the item |
+| A plugin's run, an agent token, the MCP server | `Events::patch`, `deleteEvent` | Through the step; no `over` |
+| A trip moved or deleted that is one day of a repeating event | `Events::patch`, `deleteEvent` | Through the step (the same server path) |
+| Copy to another calendar, or a move of a day off a Google calendar | `copyTo`, `detachToCalendar` | Not a write of the day to Google: a Google calendar's events stay there (`google_move`) |
+| Undo of a change to one day | `GoogleUndo` | Not in this slice: today's refusal (slice 3) |
+| A day's step inside a change to all events, Finish, Put back | `GoogleSeries::run`, `sendDays` | Not in this slice: unchanged |
+| A move's import of a repeating event's days | `GoogleMove` | Stays: writes records it has just imported |
+
+**(k) What is stored when it asks.** The read, and nothing of the request: no field, tag, person, reminder or trip flag. The store commits through the deferred error (`googleDeferred`, `throwDeferred`), as for one event.
+
+---
+
 # A Change Over Someone Else's Change at Google
 
 Status of this revision (2026-11-13, third version, citations re-pointed at 1.5.6 on 2026-11-14 for sections 1, 2, 3, 5 and 7): every section is revised after the second independent read (`workfolder/reviews/google-156/read-models-2-report.md`) and the owner's rulings on it. Not done: a reader's pass over this version, and the live probes in section 8. The page above, for slice 1, outranks this model where they differ. Sections 4, 6, 8 and 9 still cite the pre-1.5.6 tree.

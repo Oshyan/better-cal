@@ -1592,7 +1592,9 @@ trait SeriesPlans
             $this->google()->apply($google, [$resp], false); // one day's record: no recurrence sent
         }
         $after = $gone ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
-        $summary = "Used the series' " . Words::andList(array_map(static fn(string $f): string => $f === 'location' ? 'place' : $f, $fields)) . " for '" . (string) $row['title'] . "'";
+        // A person reads this in Activity: "the repeating event", and each field by the name the app gives it.
+        $names = ['location' => 'place', 'url' => 'link', 'allDay' => 'all-day setting', 'status' => 'planned or maybe', 'showAs' => 'free or busy setting'];
+        $summary = "Used the repeating event's " . Words::andList(array_map(static fn(string $f): string => $names[$f] ?? $f, $fields)) . " for '" . (string) $row['title'] . "'";
         $beforeTables = ['events' => [$row]] + $links;
         $afterTables = ['events' => $after === null ? [] : [$after]] + ($after === null ? [] : Undo::linksOf($this->db, [$id]));
         if ($resp !== null) {

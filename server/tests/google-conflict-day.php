@@ -161,4 +161,53 @@ if (!function_exists('check') || !class_exists('ThreeWayReference')) {
     $cancelled = ['status' => 'cancelled'] + $resource($S, true);
     checkEq('Day table, by hand: a day skipped in Google Calendar, and a day the read\'s rule does not give, have no now', [null, null],
         [GoogleSeries::dayNow([$resource($S, false), $cancelled], 'smplrep1', $key), GoogleSeries::dayNow([$resource($S, false)], 'smplrep1', '2027-03-11 22:00:00')]);
+
+    // ---- Time forms, by hand ------------------------------------------------------------------------------------------
+    $plain = ['title' => 'Team day', 'description' => null, 'location' => null, 'url' => null, 'status' => 'confirmed', 'show_as' => 'busy'];
+    $timeOfMap = static fn(?array $row): ?array => $row === null ? null : GoogleConflict::mapOf($row)['time'];
+    $gPlain = ['kind' => 'calendar#event', 'etag' => '"e1"', 'summary' => 'Team day', 'status' => 'confirmed'];
+
+    // An all-day repeating event, Wednesdays from 3 March 2027: a day is its date and the day after, all-day.
+    $allDayMaster = $plain + ['id' => 1, 'uid' => 'smplday1@google.com', 'google_event_id' => 'smplday1', 'rrule' => 'FREQ=WEEKLY;COUNT=6', 'exdates_json' => null,
+        'start_utc' => '2027-03-03 00:00:00', 'end_utc' => '2027-03-04 00:00:00', 'all_day' => 1, 'tzid' => 'UTC'];
+    $gAllDay = $gPlain + ['id' => 'smplday1', 'iCalUID' => 'smplday1@google.com', 'start' => ['date' => '2027-03-03'], 'end' => ['date' => '2027-03-04'], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=6']];
+    $dayKey = '2027-03-10 00:00:00';
+    $allDayBase = ['start_utc' => '2027-03-10 00:00:00', 'end_utc' => '2027-03-11 00:00:00', 'all_day' => 1];
+    checkEq('Day table, all-day: an ordinary day\'s base and its now are its date and the day after, all-day', [$allDayBase, $allDayBase],
+        [$timeOfMap(GoogleSeries::dayStored($allDayMaster, null, $dayKey)), $timeOfMap(GoogleSeries::dayNow([$gAllDay], 'smplday1', $dayKey))]);
+    // The day moved to the next date in Google Calendar: a record of the event's own form.
+    $movedDay = $gPlain + ['id' => 'smplday1_20270310', 'iCalUID' => 'smplday1@google.com', 'recurringEventId' => 'smplday1', 'originalStartTime' => ['date' => '2027-03-10'],
+        'start' => ['date' => '2027-03-11'], 'end' => ['date' => '2027-03-12']];
+    $movedNow = GoogleConflict::mapOf((array) GoogleSeries::dayNow([$gAllDay, $movedDay], 'smplday1', $dayKey));
+    $base = GoogleConflict::mapOf(GoogleSeries::dayStored($allDayMaster, null, $dayKey));
+    $dragged = ['start_utc' => '2027-03-12 00:00:00', 'end_utc' => '2027-03-13 00:00:00', 'all_day' => 1];
+    checkEq('Day table, all-day: the day moved in Google Calendar: its now is the new date; a drag elsewhere asks, a rename keeps the time, the same drag is sent',
+        [['start_utc' => '2027-03-11 00:00:00', 'end_utc' => '2027-03-12 00:00:00', 'all_day' => 1], 'ask', 'kept', 'send'],
+        [$movedNow['time'], GoogleConflict::threeWay($base, $movedNow, ['time' => $dragged])['time'], GoogleConflict::threeWay($base, $movedNow, ['title' => 'Planning day'])['time'],
+            GoogleConflict::threeWay($base, $movedNow, ['time' => $movedNow['time']])['time']]);
+    // A day of the other form: made timed in Google Calendar (a day may take the other form there).
+    $timedDay = ['start' => ['dateTime' => '2027-03-10T10:00:00+00:00', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2027-03-10T11:00:00+00:00', 'timeZone' => 'UTC']] + $movedDay;
+    $timedNow = GoogleConflict::mapOf((array) GoogleSeries::dayNow([$gAllDay, $timedDay], 'smplday1', $dayKey));
+    checkEq('Day table, all-day: a day made timed in Google Calendar: its now is timed; kept when the time is not wanted, asked about on a drag of the dates',
+        [['start_utc' => '2027-03-10 10:00:00', 'end_utc' => '2027-03-10 11:00:00', 'all_day' => 0], 'kept', 'ask'],
+        [$timedNow['time'], GoogleConflict::threeWay($base, $timedNow, [])['time'], GoogleConflict::threeWay($base, $timedNow, ['time' => $dragged])['time']]);
+    // The same day stored here timed, as its own (the row owns its all-day setting and time): the base is the row's.
+    $timedRow = $plain + ['id' => 2, 'uid' => 'smplday1@google.com', 'google_event_id' => 'smplday1_20270310', 'rrule' => null, 'recurrence_parent_id' => 1, 'recurrence_instance_utc' => $dayKey,
+        'start_utc' => '2027-03-10 10:00:00', 'end_utc' => '2027-03-10 11:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'override_fields' => json_encode(['allDay', 'time', 'length'])];
+    checkEq('Day table, all-day: a day stored timed as its own has its row\'s time as base, and nothing differs from the read', [['start_utc' => '2027-03-10 10:00:00', 'end_utc' => '2027-03-10 11:00:00', 'all_day' => 0], 'same'],
+        [$timeOfMap(GoogleSeries::dayStored($allDayMaster, $timedRow, $dayKey)), GoogleConflict::threeWay(GoogleConflict::mapOf(GoogleSeries::dayStored($allDayMaster, $timedRow, $dayKey)), $timedNow, [])['time']]);
+
+    // A zone with a clock change: Sundays at 01:00 for half an hour in America/Los_Angeles from 7 March 2027; the clocks
+    // go forward at 02:00 on 14 March. 01:00 is 09:00 UTC on the 7th and the 14th (standard time), 08:00 UTC on the 21st.
+    $zoneMaster = $plain + ['id' => 1, 'uid' => 'smplnight1@google.com', 'google_event_id' => 'smplnight1', 'rrule' => 'FREQ=WEEKLY;COUNT=4', 'exdates_json' => null,
+        'start_utc' => '2027-03-07 09:00:00', 'end_utc' => '2027-03-07 09:30:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles'];
+    $gZone = $gPlain + ['id' => 'smplnight1', 'iCalUID' => 'smplnight1@google.com', 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4'],
+        'start' => ['dateTime' => '2027-03-07T01:00:00-08:00', 'timeZone' => 'America/Los_Angeles'], 'end' => ['dateTime' => '2027-03-07T01:30:00-08:00', 'timeZone' => 'America/Los_Angeles']];
+    foreach (['the week before' => '2027-03-07 09:00:00', 'the night of the change' => '2027-03-14 09:00:00', 'the week after' => '2027-03-21 08:00:00'] as $label => $k) {
+        $want = ['start_utc' => $k, 'end_utc' => substr($k, 0, 14) . '30:00', 'all_day' => 0];
+        checkEq("Day table, a zone with a clock change, $label: the day's base and its now are its own instant and the event's half hour", [$want, $want],
+            [$timeOfMap(GoogleSeries::dayStored($zoneMaster, null, $k)), $timeOfMap(GoogleSeries::dayNow([$gZone], 'smplnight1', $k))]);
+    }
+    // An instant the event's clock does not give on that date is no day of it: 01:00 daylight time on the 21st is one, 01:00 standard time is not.
+    checkEq('Day table, a zone with a clock change: the week after, the standard-time instant is no day of the event', null, GoogleSeries::dayNow([$gZone], 'smplnight1', '2027-03-21 09:00:00'));
 })();

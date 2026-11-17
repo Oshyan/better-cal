@@ -29,13 +29,14 @@ use BetterCal\Support\Time;
 require_once __DIR__ . '/google-hunt-lib.php';
 
 return static function (Db $db): void {
-    $fresh = static function (bool $on = true) use ($db): object {
+    $fresh = static function (bool $on = true, ?array $create = null) use ($db): object {
         $u = freshUser($db);
         $settings = json_decode((string) $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$u]), true) ?: [];
         $db->update('users', ['settings_json' => json_encode(['google_conflict_choice' => $on] + $settings)], 'id = ?', [$u]);
         $d = domains($db);
         $s = GoogleStand::make($db, $d->undo, $u);
-        $id = (int) $s->events->create($u, eventAt($s->calendarId, 'Team sync', '2027-03-03', ['location' => 'Room 2', 'rrule' => 'FREQ=WEEKLY;COUNT=6']))['eventId'];
+        $id = (int) $s->events->create($u, $create !== null ? ['calendarId' => $s->calendarId] + $create
+            : eventAt($s->calendarId, 'Team sync', '2027-03-03', ['location' => 'Room 2', 'rrule' => 'FREQ=WEEKLY;COUNT=6']))['eventId'];
         $gid = (string) $db->scalar('SELECT google_event_id FROM events WHERE id = ?', [$id]);
         $token = 'sample-session-' . bin2hex(random_bytes(8));
         $db->insert('sessions', ['token_hash' => hash('sha256', $token), 'user_id' => $u, 'csrf' => str_repeat('c', 32), 'authenticated_at' => Time::nowDb(), 'expires_at' => '2099-01-01 00:00:00']);
@@ -418,6 +419,229 @@ return static function (Db $db): void {
         // A page that sends no `over` (1.5.8) is read as before: a start and an end alone move the day.
         [$status] = $day($t, 'patch', $o, ['start' => '2027-03-11T18:00:00+00:00', 'end' => '2027-03-11T19:00:00+00:00']);
         checkEq('no `over`: a time in parts is read as before', 200, $status);
+        H::done($t);
+    });
+
+    // ---- Time forms (the page, (b): a day's time is one value, sent whole and served whole) --------------------------
+    // Expectations by hand, from the page and the API contract (an all-day time is dates at +00:00, its zone UTC; a
+    // timed one instants on its zone's clock).
+    $rowAt = static fn(object $t, string $key): ?array => $db->one('SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$t->id, $key]);
+    $timeOf = static fn(array $o): array => [$o['start'] ?? null, $o['end'] ?? null, $o['allDay'] ?? null, $o['tzid'] ?? null];
+
+    scenario('an all-day repeating event: a day dragged, renamed over a rename of the whole event, and deleted; its time sent and served whole', function () use ($fresh, $day, $occ, $over, $timeKeys, $allKeys, $atGoogle, $mark, $writes, $methods, $bodyKeys, $keptOf, $rowAt, $timeOf, $master): void {
+        $t = $fresh(true, ['title' => 'Team day', 'start' => '2027-03-03', 'end' => '2027-03-04', 'allDay' => true, 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=6']);
+        $o = $occ($t, '2027-03-10');
+        checkEq('the day is served whole: its dates at +00:00, all-day, the zone UTC', ['2027-03-10T00:00:00+00:00', '2027-03-11T00:00:00+00:00', true, 'UTC'], $timeOf($o));
+        $atGoogle($t, $t->gid . '_20270317', ['summary' => 'Offsite']);
+        $m = $mark($t);
+        [$status, $json] = $day($t, 'patch', $o, ['start' => '2027-03-11T00:00:00+00:00', 'end' => '2027-03-12T00:00:00+00:00', 'allDay' => true, 'tzid' => 'UTC', 'over' => $over($o, $timeKeys)]);
+        $w = $writes($t, $m);
+        checkEq('a drag over another day\'s rename: 200, one PATCH of the dates, nothing kept; the day on its new date here and served whole', [200, ['PATCH'], ['2027-03-11', '2027-03-12'], [], '2027-03-11 00:00:00', ['2027-03-11T00:00:00+00:00', '2027-03-12T00:00:00+00:00', true, 'UTC']],
+            [$status, $methods($w), [$w[0][1]['start']['date'] ?? null, $w[0][1]['end']['date'] ?? null], $keptOf($json), $rowAt($t, '2027-03-10 00:00:00')['start_utc'] ?? null, $timeOf($occ($t, '2027-03-11'))]);
+        [$status, $json] = $day($t, 'patch', $o, ['start' => '2027-03-12T00:00:00+00:00', 'end' => '2027-03-13T00:00:00+00:00', 'over' => $over($o, $timeKeys)]);
+        checkEq('a time in parts beside `over`: 400 client_outdated', [400, 'client_outdated'], [$status, $json['error']['code'] ?? null]);
+        $o = $occ($t, '2027-03-24');
+        $atGoogle($t, $t->gid, ['summary' => 'Team day out']);
+        [$status, $json] = $day($t, 'patch', $o, ['title' => 'Planning day', 'over' => $over($o, ['title'])]);
+        $e = $json['error'] ?? [];
+        checkEq('a rename over a rename of the whole event: asked, from series, the day named by its date, whole',
+            [409, [['field' => 'title', 'was' => 'Team day', 'now' => 'Team day out', 'yours' => 'Planning day', 'from' => 'series']], ['start' => '2027-03-24T00:00:00+00:00', 'end' => '2027-03-25T00:00:00+00:00', 'allDay' => true, 'tzid' => 'UTC']],
+            [$status, $e['fields'] ?? null, $e['day'] ?? null]);
+        checkEq('its message names the date', "Since Wed, Mar 24, 2027 of 'Team day' was last shown to you, its title was changed in Google Calendar, for the whole repeating event. It is now 'Team day out' there; your change makes it 'Planning day'. It wasn't changed; open that day to see it and make the change again.", $e['message'] ?? null);
+        $o = $occ($t, '2027-03-31');
+        $m = $mark($t);
+        [$status] = $day($t, 'delete', $o, ['over' => $over($o, $allKeys)]);
+        checkEq('a delete of an unchanged day: 200, one DELETE, the day skipped', [200, ['DELETE'], true], [$status, $methods($writes($t, $m)), str_contains((string) $master($t)['exdates_json'], '2027-03-31 00:00:00')]);
+        H::done($t);
+    });
+
+    scenario('a day of the other form: a day of an all-day repeating event made timed in Google Calendar is kept as its time, then dragged timed', function () use ($fresh, $day, $occ, $over, $timeKeys, $atGoogle, $googleTime, $mark, $writes, $methods, $keptOf, $instants, $at, $rowAt, $timeOf): void {
+        $t = $fresh(true, ['title' => 'Team day', 'start' => '2027-03-03', 'end' => '2027-03-04', 'allDay' => true, 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=6']);
+        $o = $occ($t, '2027-03-10');
+        $atGoogle($t, $t->gid . '_20270310', ['start' => ['dateTime' => '2027-03-10T10:00:00+00:00', 'timeZone' => 'UTC', 'date' => null], 'end' => ['dateTime' => '2027-03-10T11:00:00+00:00', 'timeZone' => 'UTC', 'date' => null]]);
+        [$status, $json] = $day($t, 'patch', $o, ['title' => 'Planning day', 'over' => $over($o, ['title'])]);
+        $kept = $keptOf($json);
+        checkEq('a rename over the day made timed: 200; `kept` the time, timed and whole', [200, ['time'], $at('2027-03-10T10:00:00+00:00', '2027-03-10T11:00:00+00:00'), true],
+            [$status, is_array($kept) ? array_column($kept, 'field') : $kept, is_array($kept) ? $instants($kept[0]['now'] ?? null) : null, is_array($kept) && isset($kept[0]['now']['tzid'])]);
+        $o = $occ($t, '2027-03-10');
+        checkEq('the day is served timed, whole, with a zone', [false, true, '2027-03-10 10:00:00'], [$o['allDay'] ?? null, is_string($o['tzid'] ?? null) && $o['tzid'] !== '', $rowAt($t, '2027-03-10 00:00:00')['start_utc'] ?? null]);
+        $m = $mark($t);
+        [$status, $json] = $day($t, 'patch', $o, ['start' => '2027-03-10T12:00:00+00:00', 'end' => '2027-03-10T13:00:00+00:00', 'allDay' => false, 'tzid' => $o['tzid'], 'over' => $over($o, $timeKeys)]);
+        checkEq('a drag of the timed day: 200, one PATCH, nothing kept, the day at its new time', [200, ['PATCH'], [], '2027-03-10 12:00:00'],
+            [$status, $methods($writes($t, $m)), $keptOf($json), $rowAt($t, '2027-03-10 00:00:00')['start_utc'] ?? null]);
+        H::done($t);
+    });
+
+    // Sundays at 01:00 for half an hour in America/Los_Angeles, where the clocks go forward at 02:00 on 14 March 2027:
+    // 7 March at 01:00 PST (09:00 UTC), 14 March at 01:00 PST, the night of the change (09:00 UTC), 21 March at 01:00 PDT (08:00 UTC).
+    scenario('a repeating event in a zone with a clock change: a day before it, on its night and after it, each dragged two hours later over a rename', function () use ($fresh, $day, $occ, $over, $timeKeys, $atGoogle, $googleTime, $mark, $writes, $methods, $keptOf, $instants, $at, $rowAt, $timeOf): void {
+        $create = ['title' => 'Night check', 'start' => '2027-03-07T01:00:00-08:00', 'end' => '2027-03-07T01:30:00-08:00', 'allDay' => false, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY;COUNT=4'];
+        foreach ([
+            'the week before' => ['2027-03-07', '2027-03-07 09:00:00', '2027-03-07T01:00:00-08:00', '2027-03-07T01:30:00-08:00', '2027-03-07T03:00:00-08:00', '2027-03-07T03:30:00-08:00', '2027-03-07 11:00:00'],
+            'the night of the change' => ['2027-03-14', '2027-03-14 09:00:00', '2027-03-14T01:00:00-08:00', '2027-03-14T01:30:00-08:00', '2027-03-14T03:00:00-07:00', '2027-03-14T03:30:00-07:00', '2027-03-14 10:00:00'],
+            'the week after' => ['2027-03-21', '2027-03-21 08:00:00', '2027-03-21T01:00:00-07:00', '2027-03-21T01:30:00-07:00', '2027-03-21T03:00:00-07:00', '2027-03-21T03:30:00-07:00', '2027-03-21 10:00:00'],
+        ] as $label => [$date, $key, $start, $end, $newStart, $newEnd, $storedStart]) {
+            $t = $fresh(true, $create);
+            $o = $occ($t, $date);
+            checkEq("$label: the day is served whole, on its zone's clock", [$start, $end, false, 'America/Los_Angeles'], $timeOf($o));
+            $atGoogle($t, $t->gid, ['summary' => 'Night round']);
+            $m = $mark($t);
+            [$status, $json] = $day($t, 'patch', $o, ['start' => $newStart, 'end' => $newEnd, 'allDay' => false, 'tzid' => 'America/Los_Angeles', 'over' => $over($o, $timeKeys)]);
+            $w = $writes($t, $m);
+            checkEq("$label: 200, one PATCH whose start is the dragged instant, `kept` the title; the day stored at that instant and served whole on its clock",
+                [200, ['PATCH'], strtotime($newStart), [['field' => 'title', 'now' => 'Night round']], $storedStart, [$newStart, $newEnd, false, 'America/Los_Angeles']],
+                [$status, $methods($w), strtotime((string) ($w[0][1]['start']['dateTime'] ?? '')), $keptOf($json), $rowAt($t, $key)['start_utc'] ?? null, $timeOf($occ($t, $date))]);
+            H::done($t);
+        }
+        // The same field on the night of the change: the day moved in Google Calendar, dragged here.
+        $t = $fresh(true, $create);
+        $o = $occ($t, '2027-03-14');
+        $atGoogle($t, $t->gid . '_20270314T090000Z', ['start' => ['dateTime' => '2027-03-14T04:00:00-07:00', 'timeZone' => 'America/Los_Angeles'], 'end' => ['dateTime' => '2027-03-14T04:30:00-07:00', 'timeZone' => 'America/Los_Angeles']]);
+        [$status, $json] = $day($t, 'patch', $o, ['start' => '2027-03-14T03:00:00-07:00', 'end' => '2027-03-14T03:30:00-07:00', 'allDay' => false, 'tzid' => 'America/Los_Angeles', 'over' => $over($o, $timeKeys)]);
+        $f = $json['error']['fields'][0] ?? [];
+        checkEq('the night of the change, the same field: asked about the time, from day, each value whole with its zone',
+            [409, 'time', 'day', $at('2027-03-14T01:00:00-08:00', '2027-03-14T01:30:00-08:00'), $at('2027-03-14T04:00:00-07:00', '2027-03-14T04:30:00-07:00'), $at('2027-03-14T03:00:00-07:00', '2027-03-14T03:30:00-07:00'), ['America/Los_Angeles', 'America/Los_Angeles', 'America/Los_Angeles']],
+            [$status, $f['field'] ?? null, $f['from'] ?? null, $instants($f['was'] ?? null), $instants($f['now'] ?? null), $instants($f['yours'] ?? null), [$f['was']['tzid'] ?? null, $f['now']['tzid'] ?? null, $f['yours']['tzid'] ?? null]]);
+        H::done($t);
+    });
+
+    // The same clock time in any zone: 09:00 for an hour, seen from a device in New York. Its times are served on
+    // the device's clock and sent back on it, in the request and in `over`.
+    scenario('a repeating event that keeps the same clock time in any zone: a day dragged and renamed from a device in another zone', function () use ($fresh, $day, $occ, $over, $timeKeys, $atGoogle, $mark, $writes, $methods, $keptOf, $timeOf): void {
+        $t = $fresh(true, ['title' => 'Morning walk', 'start' => '2027-03-03T09:00:00+00:00', 'end' => '2027-03-03T10:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC', 'floating' => true, 'rrule' => 'FREQ=WEEKLY;COUNT=6']);
+        $t->e->viewFrom('America/New_York');
+        $o = $occ($t, '2027-03-10');
+        checkEq('the day is served at 09:00 on the device\'s clock, whole', ['2027-03-10T09:00:00-05:00', '2027-03-10T10:00:00-05:00', false], array_slice($timeOf($o), 0, 3));
+        $atGoogle($t, $t->gid . '_20270317T090000Z', ['summary' => 'Long walk']);
+        $m = $mark($t);
+        [$status, $json] = $day($t, 'patch', $o, ['start' => '2027-03-10T11:00:00-05:00', 'end' => '2027-03-10T12:00:00-05:00', 'allDay' => false, 'tzid' => $o['tzid'], 'over' => $over($o, $timeKeys)]);
+        checkEq('a drag to 11:00 on the device\'s clock over another day\'s rename: 200, one PATCH, nothing asked, nothing kept; served at 11:00 on the device\'s clock',
+            [200, ['PATCH'], [], ['2027-03-10T11:00:00-05:00', '2027-03-10T12:00:00-05:00', false]],
+            [$status, $methods($writes($t, $m)), $keptOf($json), array_slice($timeOf($occ($t, '2027-03-10')), 0, 3)]);
+        [$status, $json] = $day($t, 'patch', $o, ['start' => '2027-03-10T12:00:00-05:00', 'over' => $over($o, $timeKeys)]);
+        checkEq('a time in parts beside `over`: 400 client_outdated', [400, 'client_outdated'], [$status, $json['error']['code'] ?? null]);
+        $o = $occ($t, '2027-03-24');
+        $atGoogle($t, $t->gid, ['summary' => 'Morning run']);
+        [$status, $json] = $day($t, 'delete', $o, ['over' => $over($o, array_merge(['title'], $timeKeys))]);
+        $e = $json['error'] ?? [];
+        checkEq('a delete over a rename of the whole event: asked about the title alone, the day named at 09:00 on the device\'s clock (daylight time by then)',
+            [409, ['title'], '2027-03-24T09:00:00-04:00'], [$status, array_column($e['fields'] ?? [], 'field'), $e['day']['start'] ?? null]);
+        H::done($t);
+    });
+
+    // ---- The paths that follow by sharing an entry (the page, (j)) -----------------------------------------------------
+
+    scenario('a plain edit of an already-edited day by the repeating event\'s id and the day\'s key goes through over another day\'s rename', function () use ($fresh, $send, $day, $occ, $over, $atGoogle, $dayId, $mark, $writes, $methods, $bodyKeys, $keptOf, $dayRow): void {
+        $t = $fresh();
+        $day($t, 'patch', $occ($t, '2027-03-10'), ['title' => 'Planning day']);
+        $o = $occ($t, '2027-03-10');
+        $atGoogle($t, $dayId($t, '2027-03-17'), ['summary' => 'Offsite']);
+        $m = $mark($t);
+        [$status, $json] = $send($t, 'patch', $t->id, ['scope' => 'this', 'instanceStart' => '2027-03-10T18:00:00+00:00', 'location' => 'Room 5', 'over' => $over($o, ['location'])]);
+        $w = $writes($t, $m);
+        checkEq('200; one PATCH of the place alone; nothing kept; the day keeps its title and takes the place', [200, ['PATCH'], ['location'], [], ['Planning day', 'Room 5']],
+            [$status, $methods($w), $bodyKeys($w[0][1] ?? null), $keptOf($json), [$dayRow($t, '2027-03-10')['title'] ?? null, $dayRow($t, '2027-03-10')['location'] ?? null]]);
+        // The same field of that day changed in Google Calendar: asked.
+        $o = $occ($t, '2027-03-10');
+        $atGoogle($t, $dayId($t, '2027-03-10'), ['location' => 'Sample Hall']);
+        [$status, $json] = $send($t, 'patch', $t->id, ['scope' => 'this', 'instanceStart' => '2027-03-10T18:00:00+00:00', 'location' => 'Room 9', 'over' => $over($o, ['location'])]);
+        checkEq('the day\'s place changed in Google Calendar, changed here: asked, from day', [409, [['field' => 'location', 'was' => 'Room 5', 'now' => 'Sample Hall', 'yours' => 'Room 9', 'from' => 'day']]], [$status, $json['error']['fields'] ?? null]);
+        H::done($t);
+    });
+
+    scenario('an answer on one day\'s row over a change to that day\'s place: the answer is sent, `kept` names the place as the day shows it', function () use ($fresh, $send, $db, $mark, $writes, $methods, $bodyKeys, $keptOf): void {
+        $t = $fresh();
+        $guests = [['email' => 'host@example.test', 'responseStatus' => 'accepted'], ['email' => 'owner@example.test', 'self' => true, 'responseStatus' => 'needsAction']];
+        $base = ['iCalUID' => 'smplseries2@google.com', 'summary' => 'Sample planning', 'organizer' => ['email' => 'host@example.test'], 'attendees' => $guests];
+        $t->s->fake->seed(['id' => 'smplseries2', 'etag' => '"i1"', 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4'],
+            'start' => ['dateTime' => '2027-03-05T18:00:00+00:00', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2027-03-05T19:00:00+00:00', 'timeZone' => 'UTC']] + $base);
+        $t->s->fake->seed(['id' => 'smplseries2_20270312T180000Z', 'etag' => '"i2"', 'recurringEventId' => 'smplseries2', 'originalStartTime' => ['dateTime' => '2027-03-12T18:00:00+00:00', 'timeZone' => 'UTC'],
+            'start' => ['dateTime' => '2027-03-12T20:00:00+00:00', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2027-03-12T21:00:00+00:00', 'timeZone' => 'UTC']] + $base);
+        $t->s->poll();
+        $id = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [$t->s->calendarId, 'smplseries2_20270312T180000Z']);
+        checkEq('the day has a row of its own here', true, $id > 0);
+        [$st] = H::atGoogle($t, 'PATCH', '/events/smplseries2_20270312T180000Z', ['location' => 'Sample Hall']);
+        [$st2] = H::atGoogle($t, 'PATCH', '/events/smplseries2', ['summary' => 'Sample planning, new agenda']);
+        checkEq('the day\'s place and the whole event\'s title changed in Google Calendar', [200, 200], [$st, $st2]);
+        $m = $mark($t);
+        [$status, $json] = $send($t, 'rsvp', $id, ['answer' => 'accepted']);
+        $w = $writes($t, $m);
+        $self = array_values(array_filter((array) ($t->s->fake->events['smplseries2_20270312T180000Z']['attendees'] ?? []), static fn(array $a): bool => !empty($a['self'])));
+        $kept = $keptOf($json);
+        checkEq('200; one PATCH of the guest list; the day answered in Google Calendar; `kept` names the title and the place the day now shows',
+            [200, ['PATCH'], ['attendees'], 'accepted', ['location' => 'Sample Hall', 'title' => 'Sample planning, new agenda']],
+            [$status, $methods($w), $bodyKeys($w[0][1] ?? null), $self[0]['responseStatus'] ?? null, is_array($kept) ? (static function (array $k): array { $o = array_column($k, 'now', 'field'); ksort($o); return $o; })($kept) : $kept]);
+        H::done($t);
+    });
+
+    // Review applies an invitation's update or cancellation to one day by these two calls (ReviewQueue::accept: patch
+    // with scope this, the day and the fields, and deleteEvent with scope this), under the request's authority and
+    // with no `over`. The calls are made here as it makes them; the mail item that leads to them is not built.
+    scenario('Review\'s update and cancellation of one day: no `over`, the base is the day as stored; a change to the same field asks with the whole message', function () use ($fresh, $atGoogle, $dayId, $mark, $writes, $methods, $dayRow, $master): void {
+        $t = $fresh();
+        $atGoogle($t, $dayId($t, '2027-03-17'), ['summary' => 'Offsite']);
+        $m = $mark($t);
+        $t->e->patch($t->u, $t->id, ['scope' => 'this', 'instanceStart' => '2027-03-10T18:00:00+00:00', 'location' => 'Room 5']);
+        checkEq('an update over another day\'s rename: one PATCH, the day holds the place', [['PATCH'], 'Room 5'], [$methods($writes($t, $m)), $dayRow($t, '2027-03-10')['location'] ?? null]);
+        $atGoogle($t, $dayId($t, '2027-03-10'), ['location' => 'Sample Hall']);
+        $got = null;
+        try {
+            $t->e->patch($t->u, $t->id, ['scope' => 'this', 'instanceStart' => '2027-03-10T18:00:00+00:00', 'location' => 'Room 9']);
+        } catch (HttpError $e) {
+            $got = [$e->errorCode, $e->getMessage()];
+        }
+        checkEq('an update of a field the day changed in since the last poll: 409 google_changed, the sentence whole on its own',
+            ['google_changed', "Since Wed, Mar 10, 2027 of 'Team sync' was last shown to you, its location was changed in Google Calendar. It is now 'Sample Hall' there; your change makes it 'Room 9'. It wasn't changed; open that day to see it and make the change again."], $got);
+        $m = $mark($t);
+        $t->e->deleteEvent($t->u, $t->id, 'this', '2027-03-24T18:00:00+00:00');
+        checkEq('a cancellation of an unchanged day: one DELETE, the day skipped', [['DELETE'], true], [$methods($writes($t, $m)), str_contains((string) $master($t)['exdates_json'], '2027-03-24 18:00:00')]);
+        H::done($t);
+    });
+
+    scenario('a plugin\'s run changing one day: no `over`; over another day\'s rename it goes through, and it never overwrites', function () use ($fresh, $atGoogle, $dayId, $mark, $writes, $methods, $dayRow): void {
+        $t = $fresh();
+        $atGoogle($t, $dayId($t, '2027-03-17'), ['summary' => 'Offsite']);
+        $m = $mark($t);
+        \BetterCal\Domain\ActivityContext::with('plugin:sample', fn() => $t->e->patch($t->u, $t->id, ['scope' => 'this', 'instanceStart' => '2027-03-10T18:00:00+00:00', 'title' => 'Sample run']));
+        checkEq('one PATCH; the day holds the run\'s title', [['PATCH'], 'Sample run'], [$methods($writes($t, $m)), $dayRow($t, '2027-03-10')['title'] ?? null]);
+        $atGoogle($t, $dayId($t, '2027-03-10'), ['summary' => 'Review day']);
+        $m = $mark($t);
+        $code = null;
+        try {
+            \BetterCal\Domain\ActivityContext::with('plugin:sample', fn() => $t->e->patch($t->u, $t->id, ['scope' => 'this', 'instanceStart' => '2027-03-10T18:00:00+00:00', 'title' => 'Sample run two']));
+        } catch (HttpError $e) {
+            $code = $e->errorCode;
+        }
+        checkEq('the day renamed in Google Calendar since: 409 google_changed, nothing written, the day holds Google Calendar\'s title', ['google_changed', [], 'Review day'], [$code, $writes($t, $m), $dayRow($t, '2027-03-10')['title'] ?? null]);
+        H::done($t);
+    });
+
+    scenario('an API caller with no `over`: the base is the day as stored, so a change a poll stored is not asked about, and one not yet polled is', function () use ($fresh, $send, $atGoogle, $dayId, $mark, $writes, $methods, $keptOf, $dayRow): void {
+        $t = $fresh();
+        $atGoogle($t, $dayId($t, '2027-03-10'), ['summary' => 'Standup']);
+        $t->s->poll();
+        $m = $mark($t);
+        [$status, $json] = $send($t, 'patch', $t->id, ['scope' => 'this', 'instanceStart' => '2027-03-10T18:00:00+00:00', 'title' => 'Weekly sync']);
+        checkEq('after the poll: 200, one PATCH, nothing kept; the day holds the caller\'s title', [200, ['PATCH'], [], 'Weekly sync'], [$status, $methods($writes($t, $m)), $keptOf($json), $dayRow($t, '2027-03-10')['title'] ?? null]);
+        $atGoogle($t, $dayId($t, '2027-03-10'), ['summary' => 'Review day']);
+        [$status, $json] = $send($t, 'patch', $t->id, ['scope' => 'this', 'instanceStart' => '2027-03-10T18:00:00+00:00', 'title' => 'Monthly sync']);
+        checkEq('not yet polled: 409 google_changed, was the title as stored', [409, [['field' => 'title', 'was' => 'Weekly sync', 'now' => 'Review day', 'yours' => 'Monthly sync', 'from' => 'day']]], [$status, $json['error']['fields'] ?? null]);
+        H::done($t);
+    });
+
+    scenario('a trip that is one day of a repeating event: moved over another day\'s rename, and asked about over its own move', function () use ($fresh, $day, $occ, $over, $timeKeys, $whole, $atGoogle, $dayId, $googleTime, $mark, $writes, $methods, $keptOf, $dayRow, $db): void {
+        $t = $fresh(true, eventAt(0, 'Sample trip', '2027-03-03', ['isContainer' => true, 'rrule' => 'FREQ=WEEKLY;COUNT=6']));
+        checkEq('the repeating event is a trip', 1, (int) $db->scalar('SELECT is_container FROM events WHERE id = ?', [$t->id]));
+        $o = $occ($t, '2027-03-10');
+        $atGoogle($t, $dayId($t, '2027-03-17'), ['summary' => 'Offsite']);
+        $m = $mark($t);
+        [$status, $json] = $day($t, 'patch', $o, $whole('2027-03-11T18:00:00+00:00', '2027-03-11T19:00:00+00:00') + ['over' => $over($o, $timeKeys)]);
+        checkEq('200, one PATCH, nothing kept; the day moved and still a trip', [200, ['PATCH'], [], ['2027-03-11 18:00:00', 1]],
+            [$status, $methods($writes($t, $m)), $keptOf($json), [$dayRow($t, '2027-03-10')['start_utc'] ?? null, (int) ($dayRow($t, '2027-03-10')['is_container'] ?? 0)]]);
+        $o = $occ($t, '2027-03-24');
+        $atGoogle($t, $dayId($t, '2027-03-24'), $googleTime('2027-03-24T20:00:00+00:00', '2027-03-24T21:00:00+00:00'));
+        [$status, $json] = $day($t, 'patch', $o, $whole('2027-03-25T18:00:00+00:00', '2027-03-25T19:00:00+00:00') + ['over' => $over($o, $timeKeys)]);
+        checkEq('its own move in Google Calendar, moved here: asked about the time', [409, ['time']], [$status, array_column($json['error']['fields'] ?? [], 'field')]);
         H::done($t);
     });
 

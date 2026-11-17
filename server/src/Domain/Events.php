@@ -1204,6 +1204,23 @@ final class Events
         return array_map(static fn(string $f): array => ['field' => $f, 'now' => $served[$f]], $fields);
     }
 
+    /**
+     * `kept` for fields of the event $id as it shows: a day of a repeating
+     * event as the series' state reads it (dayRow, the reading the question
+     * uses), any other event its row.
+     *
+     * @param list<string> $fields
+     */
+    public function keptOfEvent(int $userId, int $id, array $fields): array
+    {
+        if ($fields === []) {
+            return [];
+        }
+        $row = $this->get($userId, $id);
+        $master = empty($row['recurrence_parent_id']) ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]);
+        return $this->keptOf($master === null ? $row : $this->dayRow($master, $row, (string) $row['recurrence_instance_utc']), $fields);
+    }
+
     /** What the last change to one Google event left as Google changed it (`kept` of a 200); [] when nothing. */
     public function kept(): array
     {

@@ -432,7 +432,7 @@ return [
         'id' => 'untouched-extra-link', 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['c-untouched'],
         // Both flags stay false, so the link is dormant and the trip rule allows it; it is journaled, so Undo takes it away.
         'what' => 'a commit that links the series, as a trip, to the account\'s latest event of its own made before it',
-        'patch' => [["            \$now = Time::nowDb();\n            if (\$w['master'] !== []) {\n", "            \$now = Time::nowDb();\n            \$other = \$this->db->scalar('SELECT id FROM events WHERE user_id = ? AND id < ? AND recurrence_parent_id IS NULL AND rrule IS NULL ORDER BY id DESC LIMIT 1', [\$userId, \$id]);\n            if (\$other !== null) {\n                \$this->db->run('INSERT IGNORE INTO event_links (container_id, event_id) VALUES (?, ?)', [\$id, (int) \$other]);\n            }\n            if (\$w['master'] !== []) {\n"]],
+        'patch' => [["            if (\$w['master'] !== []) {\n", "            \$other = \$this->db->scalar('SELECT id FROM events WHERE user_id = ? AND id < ? AND recurrence_parent_id IS NULL AND rrule IS NULL ORDER BY id DESC LIMIT 1', [\$userId, \$id]);\n            if (\$other !== null) {\n                \$this->db->run('INSERT IGNORE INTO event_links (container_id, event_id) VALUES (?, ?)', [\$id, (int) \$other]);\n            }\n            if (\$w['master'] !== []) {\n"]],
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
     [
@@ -444,9 +444,26 @@ return [
     [
         'id' => 'untouched-extra-calendar', 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['c-untouched'],
         'what' => 'a commit that adds a calendar to the account',
-        'patch' => [["            \$now = Time::nowDb();\n            if (\$w['master'] !== []) {\n", "            \$now = Time::nowDb();\n            \$this->db->insert('calendars', ['user_id' => \$userId, 'name' => 'Sample extra', 'color' => '#336699', 'kind' => 'local', 'position' => 999]);\n            if (\$w['master'] !== []) {\n"]],
+        'patch' => [["            if (\$w['master'] !== []) {\n", "            \$this->db->insert('calendars', ['user_id' => \$userId, 'name' => 'Sample extra', 'color' => '#336699', 'kind' => 'local', 'position' => 999]);\n            if (\$w['master'] !== []) {\n"]],
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
+    // Where a day kept as an event of its own came from (came_from_uid, _key, _how; migration 081), as f-redo compares
+    // it: the source's uid by the role of the row holding it, the key and how as they are. Each mutation writes one of
+    // the three wrong when the edit is applied again after its undo (an undone entry stands), so only f-redo sees it:
+    // the source named as the series the later part was split from, the key a day late, the how as a split.
+    ...array_map(static fn(array $m): array => [
+        'id' => $m[0], 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['f-redo'],
+        'what' => "the edit applied again after its undo writes a kept day's {$m[1]}",
+        'patch' => [["            // The series' tags and people. The plan names, besides the\n",
+            "            if (\$source !== null && (int) \$this->db->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = ? AND undone = 1', [\$userId]) > 0) {\n"
+            . "                \$this->db->run(\"UPDATE events SET {$m[2]} WHERE user_id = ? AND came_from_how = 'kept' AND came_from_uid = ?\", [{$m[3]}\$userId, (string) \$source['uid']]);\n"
+            . "            }\n            // The series' tags and people. The plan names, besides the\n"]],
+        'cases' => ['mutation-following-keeps-an-edited-day-of-the-later-part'],
+    ], [
+        ['redo-came-from-wrong-source', 'source as the series the later part was split from', 'came_from_uid = ?', "(string) \$source['came_from_uid'], "],
+        ['redo-came-from-wrong-key', 'key a day late', 'came_from_key = DATE_ADD(came_from_key, INTERVAL 1 DAY)', ''],
+        ['redo-came-from-wrong-how', 'how as a split', "came_from_how = 'split'", ''],
+    ]),
     // The preselection check (PlanPreselect): the design's table, not the plan's order.
     [
         'id' => 'preselect-new-rule-keeps-keys', 'file' => $model, 'checks' => ['c-preselect-design'],
@@ -700,11 +717,13 @@ return [
     // What keeps a series' skipped days through an answer for all events and its undo since 1.5.6: the read made after
     // the write lists the series with its cancelled records, and that list is stored as a poll stores one
     // (GoogleSeries::writeBesideDays, store). A read back stored without its cancelled records is taken as everything
-    // Google holds of the series, so every skipped day comes back.
+    // Google holds of the series, so every skipped day comes back. store() also stores the read the conflict choice
+    // makes before a change ($journal); the damage is to the change's own read back alone, so that read is left whole
+    // (cut there too, the answer is refused before it is sent and no named assertion is reached).
     [
         'id' => 'readback-stored-without-cancelled', 'file' => 'server/src/Domain/GoogleSeries.php', 'dbtest' => 'google-answer-skips',
         'what' => 'a read back is stored without the cancelled records it lists, so the series\' stored skips go',
-        'patch' => [["            foreach (\$list as \$item) {\n                \$items[] = \$item;\n            }", "            foreach (\$list as \$item) {\n                if ((string) (\$item['status'] ?? '') !== 'cancelled') {\n                    \$items[] = \$item;\n                }\n            }"]],
+        'patch' => [["            foreach (\$list as \$item) {\n                \$items[] = \$item;\n            }", "            foreach (\$list as \$item) {\n                if (\$journal || (string) (\$item['status'] ?? '') !== 'cancelled') {\n                    \$items[] = \$item;\n                }\n            }"]],
         'checks' => [
             'after the answer: 6 January is still a skipped day, and the calendar shows 5 and 7 January only',
             'after the undo of the answer: 6 January is still a skipped day, and the calendar shows 5 and 7 January only',
@@ -1105,9 +1124,22 @@ return [
     [
         'id' => 'choice-tags-on-question', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-choice',
         'what' => 'the tags of a request that asks are written anyway',
-        'patch' => [["            \$step = \$this->googleChoice(\$userId, \$calendar, \$event, \$base, \$googleFields, \$authority);\n            if (\$step === null) {\n",
-            "            \$step = \$this->googleChoice(\$userId, \$calendar, \$event, \$base, \$googleFields, \$authority);\n            if (\$step === null) {\n                if (is_array(\$in['tagNames'] ?? null)) {\n                    \$this->labels->setEventTags(\$userId, \$id, \$in['tagNames']);\n                }\n"]],
+        'patch' => [["            \$step = \$this->googleChoice(\$userId, \$calendar, \$event, \$base, \$googleFields, \$authority, \$day);\n            if (\$step === null) {\n",
+            "            \$step = \$this->googleChoice(\$userId, \$calendar, \$event, \$base, \$googleFields, \$authority, \$day);\n            if (\$step === null) {\n                if (is_array(\$in['tagNames'] ?? null)) {\n                    \$this->labels->setEventTags(\$userId, \$id, \$in['tagNames']);\n                }\n"]],
         'checks' => ['the row holds Google\'s title, nothing else changed, the tags not written'],
+    ],
+    // The same damage on one day of a repeating event (Events::patchThis, the page "Slice 2"): the day, which has no
+    // row, is given one to hold the tags of a request that asked.
+    [
+        'id' => 'choice-day-tags-on-question', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-day',
+        'what' => 'the tags of a request for one day of a repeating event that asks are written anyway, on a row made for the day',
+        'patch' => [["                \$step = \$this->googleChoice(\$userId, \$calendar, \$dayRow, \$base, \$wantedGoogle, \$authority, ['master' => \$master, 'key' => \$instanceUtc]);\n                if (\$step === null) {\n",
+            "                \$step = \$this->googleChoice(\$userId, \$calendar, \$dayRow, \$base, \$wantedGoogle, \$authority, ['master' => \$master, 'key' => \$instanceUtc]);\n                if (\$step === null) {\n                    if (is_array(\$in['tagNames'] ?? null)) {\n                        \$this->labels->setEventTags(\$userId, (int) \$this->ensureOverride(\$userId, \$master, \$instanceUtc)['id'], \$in['tagNames']);\n                    }\n"]],
+        // The row made for the day holds a tag it does not own, so the link rule each scenario ends with fails too.
+        'checks' => [
+            'nothing written to Google; the repeating event holds Google Calendar\'s title here; the day has no row and no tag',
+            "the repeating event renamed, this day renamed here: 409 `google_changed` with `from` series, nothing sent, the rows hold Google Calendar's title: every live day row holds its own tags and people, or exactly its series'",
+        ],
     ],
     [
         'id' => 'choice-base-value-sent', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'google-conflict-choice',

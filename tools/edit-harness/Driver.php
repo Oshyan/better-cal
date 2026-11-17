@@ -845,9 +845,21 @@ final class Driver
                 $role[$id] = ($role[(int) $r['recurrence_parent_id']] ?? 'X') . ':' . ($r['recurrence_instance_utc'] ?? '');
             }
         }
+        // Where an event came from (came_from_uid, migration 081) names its source by uid, which a second application
+        // makes anew as it makes ids: it is compared as the role of the row holding that uid, the way recurrence_parent_id
+        // is by the role it names. A uid no row here holds stays as it is, so it differs between two runs and fails.
+        $uidRole = [];
+        foreach ($snap['events'] as $r) {
+            if ($r['recurrence_parent_id'] === null && $r['uid'] !== null) {
+                $uidRole[(string) $r['uid']] = $role[(int) $r['id']];
+            }
+        }
         $events = [];
         foreach ($snap['events'] as $r) {
             $key = $role[(int) $r['id']];
+            if (($r['came_from_uid'] ?? null) !== null && isset($uidRole[(string) $r['came_from_uid']])) {
+                $r['came_from_uid'] = 'role ' . $uidRole[(string) $r['came_from_uid']];
+            }
             unset($r['id'], $r['uid'], $r['created_at'], $r['updated_at'], $r['recurrence_parent_id']);
             $r['deleted_at'] = $r['deleted_at'] === null ? null : 'deleted';
             $events[$key] = $r;

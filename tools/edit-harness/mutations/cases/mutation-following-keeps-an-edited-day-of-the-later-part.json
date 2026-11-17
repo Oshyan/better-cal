@@ -1,0 +1,91 @@
+{
+    "n": 821,
+    "seed": 7,
+    "series": {
+        "family": "monthly_day_late",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=31",
+        "import": false,
+        "bound": "count",
+        "boundAt": 16,
+        "untilForm": "exact",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2026-12-31",
+        "length": 2,
+        "floating": false
+    },
+    "exceptions": [
+        {
+            "at": 15,
+            "kind": "edit",
+            "own": [
+                "title",
+                "length"
+            ],
+            "days": 2,
+            "mins": -30,
+            "zone": "Asia/Tokyo",
+            "len": 60
+        }
+    ],
+    "acted": 10,
+    "from": "later",
+    "vector": {
+        "scope": "following",
+        "date": 1,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 66600,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=WEEKLY;BYDAY=TU,TH",
+        "bound": null,
+        "via": "row",
+        "startOnly": false
+    },
+    "stack": null,
+    "everyOption": false,
+    "typed": false,
+    "path": "following",
+    "choices": {
+        "edit": {
+            "bound": "count",
+            "outside": "keep"
+        }
+    },
+    "preselected": {
+        "edit": true
+    },
+    "create": {
+        "calendarId": 17,
+        "title": "Sample series",
+        "location": "Sample Hall",
+        "allDay": true,
+        "tzid": "UTC",
+        "tagNames": [
+            "sample"
+        ],
+        "personNames": [
+            "Alex Example"
+        ],
+        "start": "2026-12-31",
+        "end": "2027-01-02",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=31;COUNT=16"
+    },
+    "request": {
+        "edit": {
+            "target": "master",
+            "body": {
+                "scope": "following",
+                "instanceStart": "2028-05-31",
+                "start": "2028-06-01",
+                "end": "2028-06-03"
+            }
+        }
+    }
+}

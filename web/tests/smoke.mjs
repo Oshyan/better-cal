@@ -1943,6 +1943,14 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('location kind: the server says later', locationKind({ location: 'Address TBD', noPlace: 'later' }), 'later');
   eq('location kind: a draft with a pending phrase', locationKind({ location: "Location available once RSVP'd" }), 'later');
   eq('location kind: a draft with a link', locationKind({ location: 'https://example.com/e/1' }), 'link');
+  // A pin a person placed shows whatever the text: the server sends no
+  // noPlace for it; a lookup's guess for a room comes with noPlace.
+  const pin = { locationLat: 12.3456, locationLng: -65.4321 };
+  eq('location kind: a room with a pin a person placed', locationKind({ location: 'Room 12B', ...pin }), 'place');
+  eq('location kind: a meeting with a pin a person placed', locationKind({ location: 'Google Meet', ...pin }), 'place');
+  eq('location kind: a pending phrase with a pin a person placed', locationKind({ location: 'Address TBD', ...pin }), 'place');
+  eq('location kind: a lookup\'s pin for a room is not shown', locationKind({ location: 'Room 12B', noPlace: 'room', ...pin }), 'text');
+  eq('location kind: a room with no pin', locationKind({ location: 'Room 12B', noPlace: 'room' }), 'text');
   const { readFileSync: readKindSource } = await import('node:fs');
   // No surface decides on its own: the ones that draw a pin row or a
   // Directions link take locationKind, none reads noPlace or the pending

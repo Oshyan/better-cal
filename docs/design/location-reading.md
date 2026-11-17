@@ -41,6 +41,18 @@ A location is an optional name, an optional address and an optional rest, over p
 
 A text that opens with its address makes no form 3 or 4. This is the 1.5.8 rule (`Geocode::variants`) with its comma replaced by any separator and its "part that starts with a street number" replaced by the start of an address; there is no second rule beside it.
 
+## Whether an Event Shows a Place
+
+One function answers it for the server and every surface (`LocationText::shownNoPlace`, served as `noPlace`, read in the app by `locationKind`). The reading decides what a lookup may ask and what an event with no pin shows; it never hides a pin someone chose.
+
+| The event holds | Shows a place |
+|---|---|
+| A pin a person placed or picked (`location_source` picked), one the event's own data supplied (supplied), or one of unknown origin (null) | Always, with Directions and the map, whatever the text: "Room 12B" with the hall picked on the map is placed |
+| A pin a lookup placed (lookup) | Only when the text reads as a place. A pin a lookup placed before 1.5.9 for text that names nothing was a guess: it stays stored, unshown, since clearing it would be a new pass over placed events; a new location text or a pick replaces it as before |
+| No pin | As the text reads (the table above) |
+
+The place dropdown leaves rooms and parts that name nothing out of what it searches, so "Room 12B, Sample Hall" finds the hall and the event can be placed by hand; "Room 12B" alone says a room has no place by itself and lists nothing, and typing the venue finds it.
+
 ## What Is Stored
 
 Nothing new. An event whose text is not a place, or is a room, is stamped `geocoded_at` with no coordinates, as a link has been since 1.0, which is also what "looked up and found nothing" stores. The two are told apart by reading the text again, which the lookup does on every call; nothing in a row says which it was. Typed coordinates are stored as `location_source = 'lookup'` with `location_provider` null.

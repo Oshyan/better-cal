@@ -15,7 +15,10 @@ declare(strict_types=1);
 // Columns, per result of the reading:
 //   texts      distinct location texts (per account)
 //   events     events carrying them; upcoming of those
-//   placed     events with coordinates (any source)
+//   placed     events with coordinates (any source); of those:
+//   kept       pins a person placed or picked, or the event's own data gave
+//              (or of unknown origin): always shown, whatever the text
+//   guessed    pins a lookup placed: shown only when the text reads as a place
 //   missed     events the sweep tried that have none
 //   untried    events nobody has looked up yet
 //   before     requests the lookup could make for those texts the first time
@@ -101,18 +104,19 @@ $now = gmdate('Y-m-d H:i:s');
 
 $groups = []; // account + text => counts
 foreach ($db->all(
-    "SELECT user_id, location, tzid, location_lat, geocoded_at,
+    "SELECT user_id, location, tzid, location_lat, location_source, geocoded_at,
             (end_utc >= ? OR (rrule IS NOT NULL AND rrule <> '')) AS upcoming
        FROM events WHERE deleted_at IS NULL AND location IS NOT NULL AND location <> ''",
     [$now]
 ) as $e) {
     $key = $e['user_id'] . "\0" . GeocodeSweep::normalizeLocation((string) $e['location']);
     $g = &$groups[$key];
-    $g ??= ['user' => (int) $e['user_id'], 'text' => (string) $e['location'], 'tzid' => $e['tzid'], 'events' => 0, 'upcoming' => 0, 'placed' => 0, 'missed' => 0, 'untried' => 0];
+    $g ??= ['user' => (int) $e['user_id'], 'text' => (string) $e['location'], 'tzid' => $e['tzid'], 'events' => 0, 'upcoming' => 0, 'placed' => 0, 'kept' => 0, 'guessed' => 0, 'missed' => 0, 'untried' => 0];
     $g['events']++;
     $g['upcoming'] += (int) $e['upcoming'];
     if ($e['location_lat'] !== null) {
         $g['placed']++;
+        $g[($e['location_source'] ?? null) === 'lookup' ? 'guessed' : 'kept']++;
     } elseif ($e['geocoded_at'] !== null) {
         $g['missed']++;
     } else {
@@ -127,8 +131,8 @@ foreach ($groups as $g) {
     $r = LocationText::read($g['text']);
     $shape = shape($r);
     $row = &$rows[$shape];
-    $row ??= ['texts' => 0, 'events' => 0, 'upcoming' => 0, 'placed' => 0, 'missed' => 0, 'untried' => 0, 'before' => 0, 'after' => 0, 'new' => 0];
-    foreach (['events', 'upcoming', 'placed', 'missed', 'untried'] as $k) {
+    $row ??= ['texts' => 0, 'events' => 0, 'upcoming' => 0, 'placed' => 0, 'kept' => 0, 'guessed' => 0, 'missed' => 0, 'untried' => 0, 'before' => 0, 'after' => 0, 'new' => 0];
+    foreach (['events', 'upcoming', 'placed', 'kept', 'guessed', 'missed', 'untried'] as $k) {
         $row[$k] += $g[$k];
     }
     $row['texts']++;
@@ -146,7 +150,7 @@ foreach ($groups as $g) {
 }
 ksort($rows);
 
-$cols = ['texts', 'events', 'upcoming', 'placed', 'missed', 'untried', 'before', 'after', 'new'];
+$cols = ['texts', 'events', 'upcoming', 'placed', 'kept', 'guessed', 'missed', 'untried', 'before', 'after', 'new'];
 $total = array_fill_keys($cols, 0);
 printf("%-40s%s\n", 'reading', implode('', array_map(static fn(string $c): string => str_pad($c, 10, ' ', STR_PAD_LEFT), $cols)));
 foreach ($rows as $shape => $row) {

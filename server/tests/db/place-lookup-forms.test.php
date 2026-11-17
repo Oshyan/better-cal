@@ -164,4 +164,49 @@ return static function (Db $db): void {
             str_contains($listed, 'Sample Nowhere Shack'), str_contains($listed, 'Google Meet'), str_contains($listed, 'Room 12B'),
         ]);
     });
+
+    // Whether an event shows a place (LocationText::shownNoPlace): a pin a
+    // person placed, or the event's own data gave, always shows whatever the
+    // text; a lookup's pin shows only for text that reads as a place; with no
+    // pin, the text decides.
+    scenario('place shown: a pin a person placed shows whatever the text, a lookup\'s guess does not', function () use ($db): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = (int) $d->calendars->create($u, ['name' => 'Sample shown'])['id'];
+        $day = (new DateTimeImmutable('+5 days'))->format('Y-m-d');
+        $pin = ['locationLat' => 12.3456, 'locationLng' => -65.4321];
+        $rows = [
+            'picked room' => ['Room 12B', $pin + ['locationSource' => 'picked'], null],
+            'picked meeting' => ['Google Meet', $pin + ['locationSource' => 'picked'], null],
+            'picked phone' => ['+1 555-010-0199', $pin + ['locationSource' => 'picked'], null],
+            'picked note' => ['sometime after lunch', $pin + ['locationSource' => 'picked'], null],
+            'picked later' => ['Address TBD', $pin + ['locationSource' => 'picked'], null],
+            'picked link' => ['example.com/events/fall-social', $pin + ['locationSource' => 'picked'], null],
+            'supplied room' => ['Room 14', $pin + ['locationSource' => 'supplied'], null],
+            'lookup room' => ['Room 12B', $pin + ['locationSource' => 'lookup'], 'room'],
+            'lookup meeting' => ['Zoom link to follow', $pin + ['locationSource' => 'lookup'], 'meeting'],
+            'lookup place' => ['Sample Hall, 12 Example Street', $pin + ['locationSource' => 'lookup'], null],
+            'no pin room' => ['Room 12B', [], 'room'],
+            'no pin place' => ['Sample Hall', [], null],
+        ];
+        $ids = [];
+        $full = [];
+        foreach ($rows as $k => [$loc, $more]) {
+            $occ = $d->events->create($u, eventAt($cal, 'Sample ' . $k, $day, ['location' => $loc] + $more));
+            $ids[(int) $occ['eventId']] = $k;
+            $full[$k] = $occ['noPlace'] ?? null;
+        }
+        $listed = [];
+        foreach ($d->events->window($u, new DateTimeImmutable($day . 'T00:00:00Z'), new DateTimeImmutable($day . 'T23:59:59Z'), null, null, false) as $o) {
+            if (isset($ids[(int) $o['eventId']])) {
+                $listed[$ids[(int) $o['eventId']]] = $o['noPlace'] ?? null;
+            }
+        }
+        $want = array_map(static fn(array $r): ?string => $r[2], $rows);
+        ksort($listed);
+        ksort($want);
+        ksort($full);
+        checkEq('place shown: the full record says it', $want, $full);
+        checkEq('place shown: the list shape says the same', $want, $listed);
+    });
 };

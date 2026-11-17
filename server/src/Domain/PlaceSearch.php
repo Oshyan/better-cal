@@ -710,7 +710,11 @@ final class PlaceSearch
             $this->reason = LocationText::sentence($reading);
             return [];
         }
-        $q = $reading['text'];
+        // Rooms and parts that name nothing are left out of what is searched,
+        // so "Room 12B, Sample Hall" finds the hall to place the event by.
+        $q = count(LocationText::parts(LocationText::withoutBrackets($reading['text']))) !== count($reading['parts'])
+            ? implode(', ', $reading['parts'])
+            : $reading['text'];
 
         $candidates = $this->found($q, $biasLat, $biasLng, $limit, $language);
         if ($candidates === []) {

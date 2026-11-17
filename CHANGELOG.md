@@ -16,7 +16,7 @@ Google calendars, finishing what 1.5.7 started: one day of a repeating event, an
 - Not yet covered, as before: undo of a change to all events ([#235](https://github.com/Oshyan/better-cal/issues/235)).
 
 **Places**
-- **Text that names no place is never looked up:** a link, a meeting service, a phone number, "location comes later", a room by itself. The event shows the text with no pin and no Directions.
+- **Text that names no place is never looked up:** a link, a meeting service, a phone number, "location comes later", a room by itself. The event shows the text with no pin and no Directions, unless you placed it on the map yourself.
 - **An address is found after a dash, @, / or | as well as a comma,** and typed coordinates are used as they are.
 - A note after a venue ("with Alex") is left out of the lookup.
 

@@ -106,12 +106,15 @@ export function isPendingLocation(text) {
 // decides on its own. 'place' gets a pin, a Directions link and a map;
 // 'later' the after-RSVP mark; 'link' a link; 'text' (a meeting, a phone
 // line, a note, a room alone) is shown as words, never with a pin or
-// Directions. null when there is no location. A row the server has not
-// sent yet (a draft) is read by the shared phrases and a scheme only.
+// Directions. null when there is no location. The server's answer already
+// keeps a pin a person placed, whatever the text (LocationText::shownNoPlace).
+// A row the server has not sent yet (a draft) shows a pin it holds, else is
+// read by the shared phrases and a scheme only.
 export function locationKind(occ) {
   const loc = ((occ && occ.location) || '').trim();
   if (!loc) return null;
-  const why = occ.noPlace || (isPendingLocation(loc) ? 'later' : (/^(https?:\/\/|www\.)\S+$/i.test(loc) ? 'link' : null));
+  const drafted = !occ.noPlace && !validCoordinates(occ.locationLat, occ.locationLng);
+  const why = occ.noPlace || (drafted && isPendingLocation(loc) ? 'later' : (drafted && /^(https?:\/\/|www\.)\S+$/i.test(loc) ? 'link' : null));
   if (!why) return 'place';
   return why === 'later' || why === 'link' ? why : 'text';
 }

@@ -7152,6 +7152,21 @@ checkEq('place search: typed coordinates are one row there, nothing asked', [1, 
 $readingTransport->asked = [];
 $readingSearch->search('Sample Cafe with Alex', null, null, 6);
 check('place search: a with-clause is not searched for', $readingTransport->asked !== [] && array_filter($readingTransport->asked, static fn(string $q): bool => stripos($q, 'alex') !== false) === [], json_encode($readingTransport->asked));
+$readingTransport->asked = [];
+$readingSearch->search('Room 12B, Sample Hall', null, null, 6);
+check('place search: a room with its venue searches the venue, so the event can be placed by hand', $readingTransport->asked !== [] && array_filter($readingTransport->asked, static fn(string $q): bool => stripos($q, 'room') !== false) === [] && array_filter($readingTransport->asked, static fn(string $q): bool => stripos($q, 'sample hall') !== false) !== [], json_encode($readingTransport->asked));
+// Whether an event shows a place: a pin that was not a lookup's guess always
+// does; a lookup's pin, or none, as the text reads.
+$shownRows = [
+    ['Room 12B', true, 'picked', null], ['Google Meet', true, 'picked', null], ['+1 555-010-0199', true, 'picked', null],
+    ['sometime after lunch', true, 'picked', null], ['Address TBD', true, 'picked', null], ['example.com/e/1', true, 'picked', null],
+    ['Room 12B', true, 'supplied', null], ['Room 12B', true, null, null],
+    ['Room 12B', true, 'lookup', 'room'], ['Google Meet', true, 'lookup', 'meeting'], ['Sample Hall', true, 'lookup', null],
+    ['Room 12B', false, null, 'room'], ['Sample Hall', false, null, null],
+];
+foreach ($shownRows as [$loc, $pin, $source, $want]) {
+    checkEq('place shown: ' . $loc . ($pin ? ', pin from ' . ($source ?? 'unknown') : ', no pin'), $want, \BetterCal\Domain\LocationText::shownNoPlace($loc, $pin, $source));
+}
 // What a form that leaves the name out may keep: a spot holding the part it
 // starts with, never a town or an area.
 checkEq('geo form keeps: a spot with the part, not a town, not a near-miss number, anything for a form that keeps the start', [true, false, false, true, false],

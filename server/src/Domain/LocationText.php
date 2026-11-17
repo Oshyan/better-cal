@@ -326,10 +326,24 @@ final class LocationText
     }
 
     /**
-     * Why a location has no place ('link', 'phone', 'meeting', 'later',
-     * 'note', 'room'), or null when it is a place (or empty). What every
-     * surface that shows a pin or a Directions link decides by, sent on each
-     * occurrence as `noPlace`. Remembered per text for the request, since a
+     * Whether an event shows a place: null when it does, else why not, sent
+     * on each occurrence as `noPlace` and what every surface that shows a
+     * pin, a Directions link or a map decides by. A pin that was not a
+     * lookup's guess (a person placed or picked it, the event's own data
+     * supplied it, or its origin is unknown) is always shown, whatever the
+     * text. A lookup's pin, or no pin, is shown as the text reads
+     * (noPlace()): a lookup's pin for text that names no place was a guess
+     * from nothing, and stays stored but unshown.
+     */
+    public static function shownNoPlace(?string $location, bool $hasPin, ?string $source): ?string
+    {
+        return $hasPin && $source !== 'lookup' ? null : self::noPlace($location);
+    }
+
+    /**
+     * Why a location's text names no place ('link', 'phone', 'meeting',
+     * 'later', 'note', 'room'), or null when it is a place (or empty): what a
+     * lookup may ask for it. Remembered per text for the request, since a
      * window repeats a few texts on many rows.
      */
     public static function noPlace(?string $location): ?string

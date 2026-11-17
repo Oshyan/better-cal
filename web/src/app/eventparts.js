@@ -213,12 +213,14 @@ export function useEventGeo(occ, active) {
   const location = occ ? occ.location : null;
   useEffect(() => {
     if (!instanceId || !occ) { setGeo(null); return undefined; }
+    // Whether the event shows a place at all, pin or not (locationKind): a
+    // lookup's pin for text that names no place is not drawn.
+    if (locationKind(occ) !== 'place') { setGeo(null); return undefined; }
     const stored = validCoordinates(occ.locationLat, occ.locationLng);
     if (stored) {
       setGeo({ status: 'ok', ...stored });
       return undefined;
     }
-    if (locationKind(occ) !== 'place') { setGeo(null); return undefined; }
     let alive = true;
     setGeo({ status: 'loading' });
     // Same bias precedence as the place picker (home location, else event

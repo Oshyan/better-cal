@@ -3374,9 +3374,14 @@ final class Events
             'title' => (string) $row['title'],
             'description' => $row['description'] !== null ? (string) $row['description'] : null,
             'location' => $row['location'] !== null ? (string) $row['location'] : null,
-            // Why the location names no place (LocationText::noPlace), or
-            // null: every surface decides its pin row and Directions by it.
-            'noPlace' => LocationText::noPlace($row['location'] !== null ? (string) $row['location'] : null),
+            // Null when the event shows a place, else why not
+            // (LocationText::shownNoPlace): every surface decides its pin
+            // row, Directions and map by it. A pin a person placed always shows.
+            'noPlace' => LocationText::shownNoPlace(
+                $row['location'] !== null ? (string) $row['location'] : null,
+                isset($row['location_lat'], $row['location_lng']),
+                isset($row['location_source']) ? (string) $row['location_source'] : null
+            ),
             'locationLat' => isset($row['location_lat']) ? (float) $row['location_lat'] : null,
             'locationLng' => isset($row['location_lng']) ? (float) $row['location_lng'] : null,
             // When the sweep last tried to place this address. Set with no

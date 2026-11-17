@@ -31,7 +31,7 @@ final class LocationText
     ];
 
     /** Words that make a part a room when a number or letter follows. */
-    private const ROOM_WORDS = ['room', 'rm', 'suite', 'ste', 'floor', 'fl', 'level', 'lvl', 'unit', 'booth'];
+    private const ROOM_WORDS = ['room', 'rm', 'suite', 'ste', 'floor', 'fl', 'level', 'lvl', 'unit', 'apt', 'apartment', 'booth'];
 
     /** Meeting services by name: each is a sign that a part is a meeting. */
     private const MEETING_SERVICES = [
@@ -52,9 +52,18 @@ final class LocationText
         'link', 'links', 'call', 'video', 'meeting', 'conference', 'dial', 'dialin', 'bridge', 'id',
         'passcode', 'password', 'pin', 'code', 'join', 'details', 'info', 'location', 'address', 'venue',
         'description', 'email', 'invite', 'invitation', 'below', 'above', 'follow', 'follows', 'coming',
-        'once', 'after', 'upon', 'when', 'until', 'available', 'google', 'microsoft', 'phone', 'tel',
+        'once', 'after', 'before', 'upon', 'when', 'until', 'available', 'google', 'microsoft', 'phone', 'tel',
+        'breakfast', 'brunch', 'lunch', 'dinner',
+    ];
+
+    /**
+     * Words that hedge a time: each is the sign of a note. A date or time
+     * word alone is no sign ("Noon" may be a venue's name); with one of these
+     * and nothing else it is a note ("sometime after lunch").
+     */
+    private const HEDGES = [
         'early', 'late', 'around', 'about', 'approx', 'approximately', 'ish', 'maybe', 'probably',
-        'sometime', 'tentative', 'tentatively', 'mid',
+        'sometime', 'sometimes', 'tentative', 'tentatively', 'mid',
     ];
 
     /**
@@ -141,15 +150,21 @@ final class LocationText
 
     /**
      * Where the place in $text ends, in bytes: at a with-clause ("with Alex",
-     * "w/ Sam"), or at the separator before a later part that asks a
+     * "w/ Sam") that no address follows,
+     * or at the separator before a later part that asks a
      * question; the separator and spaces before the end are not the place's.
      * Quick add's place after "at" ends here too (FallbackParser::place).
      */
     public static function placeLength(string $text): int
     {
         $end = strlen($text);
+        // A with-clause ends the place only when no address follows it: "with"
+        // before an address is part of a name ("Cafe with a View, 12 Elm St").
         if (preg_match('/(?<![\p{L}\p{N}])(?:with\s|w\/)/iu', $text, $m, PREG_OFFSET_CAPTURE) === 1) {
-            $end = (int) $m[0][1];
+            $after = array_filter(self::parts(substr($text, (int) $m[0][1])), static fn(string $p): bool => self::addressStart($p) !== null);
+            if ($after === []) {
+                $end = (int) $m[0][1];
+            }
         }
         $pieces = preg_split(self::SEPARATOR, $text, -1, PREG_SPLIT_OFFSET_CAPTURE) ?: [];
         foreach ($pieces as $i => [$piece, $offset]) {
@@ -221,16 +236,25 @@ final class LocationText
         return preg_replace('/\s+,/u', ',', $bare) ?? $bare;
     }
 
-    /** A part that is a room with its number or letter ("Room 12B", "2nd floor"). */
+    /**
+     * A part that is a room: a room word (at most one word before it, as in
+     * "Conference Room") with its number, written as people number rooms:
+     * one to three digits with up to two letters after ("Room 12B", "Fl 3",
+     * "Apt 2B"), or one letter with up to three digits ("Suite A",
+     * "Conference Room B"); or an ordinal and a floor or level ("2nd floor").
+     * A postcode has four or more digits, so a region code and its postcode
+     * ("FL 32202") is never a room, nor are two letters ("Escape Room LA")
+     * or a floor with no number ("Top Floor").
+     */
     public static function isRoom(string $part): bool
     {
         if (self::addressStart($part) !== null) {
             return false;
         }
         $words = implode('|', self::ROOM_WORDS);
-        $id = '(?:\d[\p{L}\d-]{0,5}|(?-i:\p{Lu}{1,2}\d{0,4}))';
+        $id = '(?:\d{1,3}\p{L}{0,2}|(?-i:\p{Lu})\d{0,3})';
         return preg_match('/^(?:[\p{L}\'-]+\s+)?(?:' . $words . ')\.?\s*#?\s*' . $id . '$/iu', $part) === 1
-            || preg_match('/^(?:\d+(?:st|nd|rd|th)|ground|first|second|third|top|upper|lower|main)\s+(?:floor|level)$/iu', $part) === 1;
+            || preg_match('/^\d{1,3}(?:st|nd|rd|th)\s+(?:floor|fl\.?|level)$/iu', $part) === 1;
     }
 
     /**
@@ -258,7 +282,6 @@ final class LocationText
         }, $s);
         $when = FallbackParser::withoutWhen('at', $s, new \DateTimeImmutable());
         if (PlaceSearch::words($when) !== PlaceSearch::words(trim($s, " \t\n\r,.-@"))) {
-            $sign ??= 'note';
             $s = $when;
         }
         foreach (PlaceSearch::words($s) as $w) {
@@ -271,6 +294,10 @@ final class LocationText
             }
             if (in_array($w, self::LATER_WORDS, true)) {
                 $sign ??= 'later';
+                continue;
+            }
+            if (in_array($w, self::HEDGES, true)) {
+                $sign ??= 'note';
                 continue;
             }
             if (in_array($w, self::FILLER, true) || mb_strlen($w) < 2) {

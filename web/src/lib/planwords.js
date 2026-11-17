@@ -1177,6 +1177,19 @@ export function keptWords(kept, { there = false, now = new Date() } = {}) {
   return lead + joined + '.';
 }
 
+// ---- "Use series value" on one day -------------------------------------------
+//
+// An edited day gives fields back to its repeating event and takes its
+// values. Each field by its one name (fieldNoun): "Uses the repeating
+// event's title", "Uses the repeating event's date, time and notes".
+
+/** The toast when a day gave `fields` back: "Uses the repeating event's title". */
+export const useSeriesWords = (fields) => "Uses the repeating event's " + fieldList(fields);
+/** The toast when the server gave none of `fields` back: "Nothing changed: this day still has its own title" */
+export const stillOwnWords = (fields) => 'Nothing changed: this day still has its own ' + fieldList(fields);
+/** What a day's own-field control does, for its label: "Use the repeating event's title". */
+export const useSeriesLabel = (fields) => "Use the repeating event's " + (fields ? fieldList(fields) : 'values');
+
 /** A run of deletes stopped at a question the person cancelled, after some went: "Stopped. Already deleted: 'Sample hike' and 'Sample dinner'." */
 // Where a change went, on its toast, after what it did and which occurrences: one sent to Google Calendar happened
 // both here and there. Every toast of a change sent there says it this way (app/actions.js, app/serieschange.js), so

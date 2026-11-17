@@ -6972,7 +6972,7 @@ console.log('--- Use series value: aimed at the series with the day\'s key, its 
   // `over` is the title the day showed (googlechange.js): what a change in Google Calendar is compared with.
   eq('use series value: sent to the series with the day\'s key, not where it shows', sent, [['/events/70', { scope: 'this', instanceStart: '2027-03-17T03:00:00Z', useSeries: ['title'], over: { title: 'Rehearsal' } }]]);
   eq('use series value: the answer read back is applied to the day', [ok, st.occ.get(day.instanceId) && st.occ.get(day.instanceId).title, st.occ.get(day.instanceId) && st.occ.get(day.instanceId).ownFields], [true, 'Sample choir', ['date', 'time']]);
-  eq('use series value: the toast names what went back', toastsSince(t0), ["Uses the series' title"]);
+  eq('use series value: the toast names what went back', toastsSince(t0), ["Uses the repeating event's title"]);
 
   t0 = fresh();
   record = { ...day };
@@ -6982,7 +6982,7 @@ console.log('--- Use series value: aimed at the series with the day\'s key, its 
   t0 = fresh();
   record = null;
   eq('use series value: the last own fields given back, the day is an occurrence again', [await useSeriesValue(st.occ.get(day.instanceId), ['date', 'time', 'title']), toastsSince(t0)],
-    [true, ["Uses the series' date, time and title"]]);
+    [true, ["Uses the repeating event's date, time and title"]]);
 
   t0 = fresh();
   record = { ...day, ownFields: ['date', 'time'] };

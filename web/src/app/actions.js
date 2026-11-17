@@ -18,8 +18,8 @@ import { REL_KINDS, showRelFromConfig } from '../lib/relfilter.js';
 import { VIEW_LABELS } from './commanddefs.js';
 import { timeChange, listWords } from '../lib/changeline.js';
 import { openSeriesChange, seriesPlans, planOfError } from './serieschange.js';
-import { sendEventChange, CANCELLED, keptOf, failWords } from './googlechange.js';
-import { stoppedWords, whereWords } from '../lib/planwords.js';
+import { sendEventChange, CANCELLED, keptOf, failWords, sameItem } from './googlechange.js';
+import { stoppedWords, whereWords, useSeriesWords, stillOwnWords } from '../lib/planwords.js';
 
 // Split sits last so the number keys of the older views stay where they were.
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda', 'split'];
@@ -526,11 +526,12 @@ function followingThroughPlan(occ, scope, kind, route, body, done, rescope = nul
 // Every request that changes a series with a scope: sent as it is, and when
 // the server answers that it needs its plan confirmed (a change to all
 // events that turned out not direct), the same change goes to the series
-// dialog instead of failing. Resolves to the answer, or PLANNED.
+// dialog instead of failing. Resolves to the answer, or PLANNED. `send`:
+// sendEventChange's options (revert, back, base).
 const PLANNED = Symbol('planned');
-async function sendSeries(occ, path, method, body, dialog = {}, revert = null, back = false) {
+async function sendSeries(occ, path, method, body, dialog = {}, send = {}) {
   try {
-    return await sendEventChange(occ, path, method, body, { revert, back });
+    return await sendEventChange(occ, path, method, body, send);
   } catch (e) {
     if (e && e.code === 'series_plan_required' && planOfError(e)) {
       const { scope, instanceStart: _i, ...fields } = body;
@@ -631,9 +632,15 @@ function updateLine(occ, fields, scope, words, google) {
   return 'Updated' + where;
 }
 
-export async function updateEvent(occ, fields, scope, words = null, rescope = null) {
-  const done = updateLine(occ, fields, scope, words, googleBacked(occ));
-  const dialog = { done, rescope, apply: (s) => updateEvent(occ, fields, s, words) };
+// `occ` is what is being changed, its identity (the event, and for a
+// repeating event the day: the id the request goes to and instanceStart);
+// `base`, what the person was shown of it (the editor's base after a
+// question, editorBase), else `occ`: `over` and the toast's words come
+// from it (googlechange.js sendEventChange).
+export async function updateEvent(occ, fields, scope, words = null, rescope = null, base = null) {
+  const seen = base || occ;
+  const done = updateLine(seen, fields, scope, words, googleBacked(occ));
+  const dialog = { done, rescope, apply: (s) => updateEvent(occ, fields, s, words, null, base) };
   if (throughPlan({ ...dialog, occ, scope, body: fields })) return null;
   const body = { ...fields };
   if (occ.recurring) {
@@ -645,8 +652,8 @@ export async function updateEvent(occ, fields, scope, words = null, rescope = nu
     // (EditorDrawer.js): Cancel goes back there. The panel's time fields
     // close as they send (EventPopover.js), so from them Cancel leaves the
     // event as Google Calendar has it, and the question says so.
-    const held = !!(state.editor && state.editor.occ && state.editor.occ.eventId === occ.eventId);
-    const res = await sendSeries(occ, '/events/' + occ.eventId, 'PATCH', body, dialog, null, held);
+    const held = !!state.editor && sameItem(state.editor.occ, occ);
+    const res = await sendSeries(occ, '/events/' + occ.eventId, 'PATCH', body, dialog, { back: held, base });
     if (res === PLANNED) return null;
     // The person chose Cancel at the question: nothing was saved, and an
     // open editor stays open with their change.
@@ -664,8 +671,8 @@ export async function updateEvent(occ, fields, scope, words = null, rescope = nu
     if (!savedShown) { await refreshed; followSplit(occ, res); }
     // Tags, people, reminders and attendance are local even on a Google event; only content edits go to Google.
     const wentToGoogle = googleBacked(occ) && Object.keys(fields).some((k) => !['tagNames', 'personIds', 'personNames', 'reminders'].includes(k));
-    toast(updateLine(occ, fields, occ.recurring ? (scope || 'this') : null, words, wentToGoogle), {
-      title: fields.title || itemName(occ), undo: entriesOf(res), note: NO_UNDO, kept: keptOf(res),
+    toast(updateLine(seen, fields, occ.recurring ? (scope || 'this') : null, words, wentToGoogle), {
+      title: fields.title || itemName(seen), undo: entriesOf(res), note: NO_UNDO, kept: keptOf(res),
     });
     return true;
   } catch (e) {
@@ -681,13 +688,8 @@ export async function updateEvent(occ, fields, scope, words = null, rescope = nu
 
 // "Use series value" on an edited day of a series (docs/design/series-model.md,
 // Own Fields): the day gives these fields back to the series and takes its
-// values. A change to this day only: no dialog, one Undo.
-const OWN_FIELD_WORDS = {
-  date: 'date', time: 'time', length: 'length', allDay: 'all-day', title: 'title', location: 'place',
-  description: 'description', url: 'link', reminders: 'reminders', status: 'planned or maybe',
-  showAs: 'free or busy setting', attendance: 'attendance', tags: 'tags', people: 'people', icon: 'icon',
-};
-export function ownFieldWords(name) { return OWN_FIELD_WORDS[name] || name; }
+// values. A change to this day only: no dialog, one Undo. Its words, and
+// each own field's name, are planwords.js's (useSeriesWords, fieldNoun).
 // The request goes to the series with the day's key (seriesId, seriesKey:
 // the series' own date and time for that day, not where the day now
 // shows); a server that doesn't send them takes the edited day's own id.
@@ -729,12 +731,12 @@ export async function useSeriesValue(occ, names) {
   await refreshWindow();
   if (!given.length) {
     if (gone || after) {
-      toast('Nothing changed: this day still has its own ' + listWords(names.map(ownFieldWords)), { title: itemName(occ), error: true });
+      toast(stillOwnWords(names), { title: itemName(occ), error: true });
     }
     return false;
   }
   const title = (after && after.title) || occ.seriesTitle || itemName(occ);
-  toast(given.length === 1 ? "Uses the series' " + ownFieldWords(given[0]) : "Uses the series' " + listWords(given.map(ownFieldWords)), { title, undo: entriesOf(res), note: NO_UNDO, kept: keptOf(res) });
+  toast(useSeriesWords(given), { title, undo: entriesOf(res), note: NO_UNDO, kept: keptOf(res) });
   return true;
 }
 
@@ -861,7 +863,7 @@ export async function setRelationship(occ, relationship, scope, rescope = null) 
   try {
     const body = { relationship };
     if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
-    const res = await sendSeries(occ, '/events/' + occ.eventId + '/relationship', 'POST', body, { kind: 'answer', done: label0 + seriesWords(occ, body.scope, 'all'), rescope }, revert);
+    const res = await sendSeries(occ, '/events/' + occ.eventId + '/relationship', 'POST', body, { kind: 'answer', done: label0 + seriesWords(occ, body.scope, 'all'), rescope }, { revert });
     if (res === PLANNED) { revert(); return relationship; }
     if (res === CANCELLED) return null;
     localSaved([before]);

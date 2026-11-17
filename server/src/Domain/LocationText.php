@@ -31,7 +31,7 @@ final class LocationText
     ];
 
     /** Words that make a part a room when a number or letter follows. */
-    private const ROOM_WORDS = ['room', 'rm', 'suite', 'ste', 'floor', 'fl', 'level', 'lvl', 'unit', 'booth'];
+    private const ROOM_WORDS = ['room', 'rm', 'suite', 'ste', 'floor', 'fl', 'level', 'lvl', 'unit', 'apt', 'apartment', 'booth'];
 
     /** Meeting services by name: each is a sign that a part is a meeting. */
     private const MEETING_SERVICES = [
@@ -230,16 +230,25 @@ final class LocationText
         return preg_replace('/\s+,/u', ',', $bare) ?? $bare;
     }
 
-    /** A part that is a room with its number or letter ("Room 12B", "2nd floor"). */
+    /**
+     * A part that is a room: a room word (at most one word before it, as in
+     * "Conference Room") with its number, written as people number rooms:
+     * one to three digits with up to two letters after ("Room 12B", "Fl 3",
+     * "Apt 2B"), or one letter with up to three digits ("Suite A",
+     * "Conference Room B"); or an ordinal and a floor or level ("2nd floor").
+     * A postcode has four or more digits, so a region code and its postcode
+     * ("FL 32202") is never a room, nor are two letters ("Escape Room LA")
+     * or a floor with no number ("Top Floor").
+     */
     public static function isRoom(string $part): bool
     {
         if (self::addressStart($part) !== null) {
             return false;
         }
         $words = implode('|', self::ROOM_WORDS);
-        $id = '(?:\d[\p{L}\d-]{0,5}|(?-i:\p{Lu}{1,2}\d{0,4}))';
+        $id = '(?:\d{1,3}\p{L}{0,2}|(?-i:\p{Lu})\d{0,3})';
         return preg_match('/^(?:[\p{L}\'-]+\s+)?(?:' . $words . ')\.?\s*#?\s*' . $id . '$/iu', $part) === 1
-            || preg_match('/^(?:\d+(?:st|nd|rd|th)|ground|first|second|third|top|upper|lower|main)\s+(?:floor|level)$/iu', $part) === 1;
+            || preg_match('/^\d{1,3}(?:st|nd|rd|th)\s+(?:floor|fl\.?|level)$/iu', $part) === 1;
     }
 
     /**

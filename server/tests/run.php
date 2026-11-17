@@ -7072,6 +7072,31 @@ foreach ($readingRows as [$text, $want, $forms]) {
     $got = $r['kind'] . (isset($r['why']) ? ':' . $r['why'] : '');
     checkEq('location reading: ' . $text, [$want, $forms], [$got, Geocode::forms($text)]);
 }
+// What a room part is, against the parts of an address that look like one:
+// a region code and its postcode, a town that opens with a room word's
+// short form, a venue named with a room word, a floor with no number. Each
+// with a twin that must still be a room.
+$roomRows = [
+    ['FL 32202', false], ['Fl 3', true],
+    ['NY 10001', false], ['Rm 12', true],
+    ['Ste. Example', false], ['Ste 200', true],
+    ['Unit Example', false], ['Unit 4A', true],
+    ['Apt Example', false], ['Apt 2B', true],
+    ['Escape Room LA', false], ['Conference Room B', true],
+    ['Top Floor', false], ['3rd Floor', true],
+    ['Level Example', false], ['Level 2', true],
+    ['Suite 1200', false], ['Suite 120', true],
+    ['Booth Example Hall', false], ['Booth 7', true],
+    ['NSW 2000', false], ['Room 12B', true],
+];
+foreach ($roomRows as [$part, $room]) {
+    checkEq('location room: ' . $part, $room, \BetterCal\Domain\LocationText::isRoom($part));
+}
+checkEq('location room: a Florida address keeps its state and postcode in every form', [
+    ['Sample Diner, 123 Main St, Sampleville, FL 32202', null], ['123 Main St, Sampleville, FL 32202', '123 Main St'],
+], Geocode::forms('Sample Diner, 123 Main St, Sampleville, FL 32202'));
+checkEq('location room: a time word alone is a place, a hedged time is a note', ['place', 'place', 'none'],
+    [\BetterCal\Domain\LocationText::read('Noon')['kind'], \BetterCal\Domain\LocationText::read('Escape Room LA')['kind'], \BetterCal\Domain\LocationText::read('sometime around noon')['kind']]);
 checkEq('location reading: typed coordinates are read as numbers', [12.3456, -65.4321], [\BetterCal\Domain\LocationText::read('12.3456, -65.4321')['lat'], \BetterCal\Domain\LocationText::read('12.3456,-65.4321')['lng']]);
 checkEq('location reading: coordinates out of range are not coordinates', 'place', \BetterCal\Domain\LocationText::read('98.3456, -265.4321')['kind']);
 checkEq('location reading: the rest is kept apart, without its separator', ['the Sample Theater', 'tickets at the door?'],

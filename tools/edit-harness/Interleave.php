@@ -3534,8 +3534,6 @@ final class Interleave
 
     // ---- the undo of one edit (google-conflict-choice.md, Slice 3a), by the harness's own reading -------------------------
 
-    /** The fields an undo of an edit compares and that the stale check passes over on its target (Slice 3a, (d)); a day's place stays the stale check's. */
-    private const UNDO_COMPARED = ['title', 'description', 'url', 'status', 'showAs', 'start', 'end', 'allDay', 'tz'];
 
     /** A day as an identity map (byIdentity's) shows it: the series' values at the key, the row's where it owns them (series-model.md, Own Fields). */
     private static function identDay(array $ids, string $gid, string $key, bool $withRow = true): ?array
@@ -3595,7 +3593,8 @@ final class Interleave
         $key = $isDay ? $m[2] : null;
         // A later change the comparison does not read (tags, people, reminders, a skip, the row made again) is still the
         // stale check's, asked before anything is read ((d)): such an undo keeps the code it had.
-        if ($this->changedSince($state, $now, ['ident' => $ident, 'isDay' => $isDay]) !== []) {
+        $since = $this->changedSince($state, $now, ['ident' => $ident, 'isDay' => $isDay]);
+        if ($since !== []) {
             return null;
         }
         if ($isDay) {
@@ -3628,7 +3627,7 @@ final class Interleave
         $B = self::rawSix($after);
         $was = self::rawSix($before);
         $F = array_values(array_filter(self::CHOICE_FIELDS, static fn(string $f): bool => $B[$f] !== $was[$f]));
-        if ($F === []) {
+        if ($F === [] || $this->changedSince($state, $now, ['ident' => $ident, 'isDay' => $isDay, 'F' => $F]) !== []) {
             return null;
         }
         return ['entry' => $entry, 'ident' => $ident, 'isDay' => $isDay, 'gid' => $gid, 'key' => $key, 'B' => $B, 'W' => $W, 'F' => $F, 'followed' => $followed,
@@ -4221,9 +4220,15 @@ final class Interleave
         if ($uc === null || !isset($since[$uc['ident']])) {
             return $since;
         }
-        // Slice 3a, (d): for an entry the comparison judges, a later change to a compared field of its row is the
-        // comparison's (an event's place among them; a day's place stays the stale check's).
-        $compared = $uc['isDay'] ? self::UNDO_COMPARED : array_merge(self::UNDO_COMPARED, ['location']);
+        // Slice 3a, (d), as corrected 2026-11-16: for an entry the comparison judges, a later change to a compared field
+        // this undo puts back is the comparison's, for an event and a day alike; a place is its text and its pin together.
+        // Before the undo's fields are known (undoChoiceOf asks first), every compared field.
+        $columns = ['title' => ['title'], 'description' => ['description'], 'location' => ['location', 'lat', 'lng'], 'url' => ['url'], 'status' => ['status'],
+            'showAs' => ['showAs'], 'time' => ['start', 'end', 'allDay', 'tz']];
+        $compared = [];
+        foreach ($uc['F'] ?? array_keys($columns) as $f) {
+            $compared = array_merge($compared, $columns[$f] ?? []);
+        }
         $left = array_values(array_diff($since[$uc['ident']], $compared));
         if ($left === []) {
             unset($since[$uc['ident']]);
@@ -4267,7 +4272,12 @@ final class Interleave
             $ref = $state['before']['series:' . $m[1]] ?? $was;
             if ($is === null) {
                 $out[$d] = ['series gone'];
-            } elseif ($was['rrule'] !== null && $is['rrule'] !== null && Truth::isOccurrence($raw($was), self::shiftKey($m[2], $ref, $was)) && !Truth::isOccurrence($raw($is), self::shiftKey($m[2], $ref, $is))) {
+            } elseif ($was['rrule'] !== null && $is['rrule'] !== null && Truth::isOccurrence($raw($was), self::shiftKey($m[2], $ref, $was)) && !Truth::isOccurrence($raw($is), self::shiftKey($m[2], $ref, $is))
+                && !Truth::isOccurrence($raw($is), $m[2])) {
+                // A day whose own key is still a day of the series is one, whatever its start's clock did: a rule that names
+                // its hour (BYHOUR) keeps its days at that clock when the start moves (fresh seed 37440 case 222, the series'
+                // start moved an hour at Google and stored by an undo's read; reading the day at the start's new clock found
+                // none, a check defect).
                 $out[$d] = ['no longer an occurrence of its series'];
             }
         }

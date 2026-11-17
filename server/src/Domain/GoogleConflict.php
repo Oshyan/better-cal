@@ -123,11 +123,32 @@ final class GoogleConflict
      * $asks: [{field, was, now, yours}] in the served form; $title: the
      * title the person was shown; $now: the day the year is said against.
      */
-    public static function message(string $title, array $asks, bool $delete, ?\DateTimeImmutable $now = null): string
+    public static function message(string $title, array $asks, bool $delete, ?\DateTimeImmutable $now = null, ?array $day = null): string
     {
-        ['body' => $body, 'lines' => $lines] = self::question($title, $asks, $delete, $now);
+        ['body' => $body, 'lines' => $lines] = self::question($title, $asks, $delete, $now, $day);
+        $what = $day === null ? 'the event' : 'that day';
         return implode(' ', [$body, ...$lines]) . ' '
-            . ($delete ? "It wasn't deleted; open the event to see it, and delete it again if you still mean to." : "It wasn't changed; open the event to see it and make the change again.");
+            . ($delete ? "It wasn't deleted; open $what to see it, and delete it again if you still mean to." : "It wasn't changed; open $what to see it and make the change again.");
+    }
+
+    /** The 409 of a day that is no longer one of its repeating event's days once the read is stored (the page "Slice 2", the unlikely cases). */
+    public static function dayGone(string $title): string
+    {
+        return 'That day is no longer one of the days of ' . self::quoted($title !== '' ? $title : 'Untitled event')
+            . ": the repeating event was changed in Google Calendar. Your change wasn't saved, and the calendar shows it as Google Calendar has it now.";
+    }
+
+    /**
+     * Where the change a day's question asks about was made (the page
+     * "Slice 2", (f)), from the data alone: `series` when the repeating
+     * event's own value for the field at that day differs between its row
+     * before the read was stored ($seriesWas) and after ($seriesNow), and
+     * the day now shows that new value ($now); `day` otherwise. Each a map
+     * (mapOf). Pure.
+     */
+    public static function from(string $field, array $seriesWas, array $seriesNow, array $now): string
+    {
+        return !self::equal($field, $seriesWas[$field] ?? null, $seriesNow[$field] ?? null) && self::equal($field, $now[$field] ?? null, $seriesNow[$field] ?? null) ? 'series' : 'day';
     }
 
     /**
@@ -142,7 +163,7 @@ final class GoogleConflict
      *
      * @return array{body:string, lines:list<string>}
      */
-    public static function question(string $name, array $asks, bool $delete, ?\DateTimeImmutable $now = null): array
+    public static function question(string $name, array $asks, bool $delete, ?\DateTimeImmutable $now = null, ?array $day = null): array
     {
         $now ??= new \DateTimeImmutable();
         $list = array_values(array_filter($asks, static fn(mixed $a): bool => is_array($a) && isset($a['field']) && in_array($a['field'], self::FIELDS, true)));
@@ -152,12 +173,17 @@ final class GoogleConflict
                 array_push($times, $a['was'] ?? null, $a['now'] ?? null, $a['yours'] ?? null);
             }
         }
-        $withYear = self::yearSaid($times, $now);
+        $withYear = self::yearSaid([...$times, $day], $now);
         $said = static fn(string $f, mixed $v, mixed $other = null): string => self::valueWords($f, $v, $other, $withYear);
         $side = static fn(string $f, mixed $v, mixed $other): string => self::isEmpty($f, $v) ? 'no ' . self::nounOf($f) : $said($f, $v, $other);
-        $since = 'Since ' . self::quoted($name !== '' ? $name : 'Untitled event') . ' was last shown to you, ';
+        // One day of a repeating event ($day, its time as it was shown) is named by its date; a change made to the
+        // whole repeating event says so (an ask's `from`; the page "Slice 2", (h)).
+        $dayDates = self::timeDates($day);
+        $since = 'Since ' . ($dayDates === null ? '' : $dayDates[0]->format('D, M j' . ($withYear ? ', Y' : '')) . ' of ')
+            . self::quoted($name !== '' ? $name : 'Untitled event') . ' was last shown to you, ';
+        $whole = static fn(array $a): string => $day !== null && ($a['from'] ?? null) === 'series' ? ', for the whole repeating event' : '';
         if (count($list) !== 1) {
-            $lines = array_map(static fn(array $a): string => self::labelOf($a['field']) . ': ' . ($delete
+            $lines = array_map(static fn(array $a): string => self::labelOf($a['field']) . $whole($a) . ': ' . ($delete
                 ? self::stop('was ' . $side($a['field'], $a['was'] ?? null, $a['now'] ?? null) . '; now ' . $side($a['field'], $a['now'] ?? null, $a['was'] ?? null))
                 : $side($a['field'], $a['now'] ?? null, $a['yours'] ?? null) . ' in Google Calendar; ' . $side($a['field'], $a['yours'] ?? null, $a['now'] ?? null) . ' in your change.'), $list);
             return ['body' => $since . 'these were changed in Google Calendar:', 'lines' => $lines];
@@ -168,7 +194,7 @@ final class GoogleConflict
         $plural = (self::NOUNS[$f][1] ?? false) === true;
         [$wasWere, $isAre, $pronoun, $object] = $plural ? ['were', 'are', 'they', 'them'] : ['was', 'is', 'it', 'it'];
         $subject = self::NOUNS[$f] === null ? 'it' : 'its ' . self::nounOf($f);
-        $changed = static fn(string $how): string => "$subject $wasWere $how in Google Calendar";
+        $changed = static fn(string $how): string => "$subject $wasWere $how in Google Calendar" . $whole($a);
         $It = ucfirst($pronoun);
         if ($delete) {
             $text = self::isEmpty($f, $there) ? $changed('removed') . "; $pronoun $wasWere " . $said($f, $was)

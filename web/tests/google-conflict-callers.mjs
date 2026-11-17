@@ -35,7 +35,7 @@ options.debounceRendering = (cb) => Promise.resolve().then(cb);
 const { render, html } = await import('../vendor/index.js');
 const { state, set, subscribe, adoptEvent, invalidateRecords } = await import('../src/app/store.js');
 const { EditorDrawer } = await import('../src/app/EditorDrawer.js');
-const { deleteEvent, moveEvent, resizeEvent, updateEvent, moveTrip, maybePromptExtendTrip } = await import('../src/app/actions.js');
+const { deleteEvent, moveEvent, resizeEvent, updateEvent, moveTrip, maybePromptExtendTrip, setRelationship, useSeriesValue } = await import('../src/app/actions.js');
 const { AppReloadBanner } = await import('../src/app/updates.js');
 const { askConfirm } = await import('../src/app/ConfirmDialog.js');
 const { toISOWithOffset, parseISO, dayKeyOf } = await import('../src/lib/dates.js');
@@ -59,7 +59,7 @@ const off = subscribe((st) => {
   const a = st.confirmAsk;
   if (!a || a._seen) return;
   a._seen = true;
-  asked.push({ title: a.title, body: a.body });
+  asked.push({ title: a.title, body: a.body, foot: a.foot, confirmLabel: a.confirmLabel });
   if (!reply.length) return; // left open for the test to answer
   const yes = reply.shift();
   queueMicrotask(() => a.resolve(yes));
@@ -687,6 +687,165 @@ console.log('Google conflict, the editor\'s time: ' + eRows + ' edit and event r
   render(null, banner);
   set({ appUpdateReady: false, toasts: [] });
   console.log('Google conflict, a refused time: undone, said as given, Reload offered');
+}
+
+// ---- D: one day of a repeating event (slice 2) ----------------------------------
+//
+// A request that changes or deletes one day (scope 'this') carries `over`
+// from the day as shown, for each field it changes (every field the day
+// holds, for a delete), and a time whole, beside its scope and instanceStart,
+// which stay as they were. Overwrite after a question about the day is the
+// same request (same path, scope and instanceStart) with `over` at each asked
+// field's now and its value at yours; "Use series value" names fields, not
+// values, so its Overwrite changes `over` alone. A change to more than one
+// day (all events, this and following, Planned or Maybe with no scope
+// picked) sends no `over` and keeps its shape. Read against the rule and the
+// day as shown, never against the product's own builder.
+{
+  const zone = 'America/Los_Angeles';
+  // An ordinary day of a weekly event, as the window holds it (no notes),
+  // its instants on this device's clock so its date reads the same in every
+  // zone the suite runs in.
+  const dayShown = { instanceId: '31:0310', eventId: 31, calendarId: 3, recurring: true, rrule: 'FREQ=WEEKLY', title: 'Sample weekly',
+    location: 'Room 2', url: null, status: 'confirmed', relationship: 'planned', start: at(10, '10:00'), end: at(10, '11:00'), allDay: false, tzid: zone };
+  // An edited day of it: its own row (32), moved two hours, its own title,
+  // its key the day it repeats on.
+  const edited = { ...dayShown, instanceId: '32:0310', eventId: 32, seriesId: 31, seriesKey: at(10, '10:00'), isException: true, ownFields: ['title', 'time'],
+    title: 'Sample weekly (moved)', start: at(10, '12:00'), end: at(10, '13:00') };
+  const asShown = (o) => ({ start: o.start, end: o.end, allDay: false, tzid: zone });
+  const held = (o) => ({ title: o.title, location: o.location, url: o.url, status: o.status, ...asShown(o) });
+  // The question for a day: `day` is the day as shown, each field says where it changed.
+  const dayAsked = (o, fields) => json(409, { error: { code: 'google_changed', message: 'Changed in Google Calendar', day: asShown(o), fields, kept: [] } });
+  const googleTime = { start: at(10, '14:00'), end: at(10, '15:00'), allDay: false, tzid: zone };
+  const drop = { start: at(11, '10:00'), end: at(11, '11:00') };
+  const longer = { start: at(10, '10:00'), end: at(10, '12:00') };
+  const lead = /^Since Wed, Mar 10(, 2027)? of 'Sample weekly( \(moved\))?' was last shown to you, /;
+  const DAY_STAY = 'Overwrite saves your change for this day only. Cancel saves nothing, and the day shows as it is in Google Calendar now.';
+  const DAY_BACK = 'Overwrite saves your change for this day only. Cancel saves nothing and takes you back to your change.';
+  const DAY_DELETE = 'Delete deletes this day here and in Google Calendar. Cancel keeps it, as it is in Google Calendar now.';
+  const editorOn = async (o, edit) => {
+    render(null, ed);
+    set({ editor: null, editorDirty: false, occ: new Map([[o.instanceId, o]]) });
+    await settle();
+    set({ editor: { mode: 'edit', occ: { ...o, full: true } } });
+    render(html`<${EditorDrawer} />`, ed);
+    await settle();
+    for (const s2 of dom.doc.head.childNodes) if (s2.onerror && !s2.failed) { s2.failed = true; s2.onerror(); await settle(); }
+    await settle();
+    await edit();
+    q('form').dispatch('submit');
+    await turns(() => !state.editor || writes.length > 1 || (writes.length === 1 && !state.confirmAsk && asked.length), 200);
+    await settle();
+  };
+  // Each caller: what it does to the day, the path it goes to, the request
+  // it must send (from the rule: the day's key, and `over` from the day as
+  // shown for the fields changed), and the field a question asks about.
+  const DAY_CALLERS = [
+    { name: 'a drag', o: dayShown, run: (o) => moveEvent({ instanceId: o.instanceId, newStart: drop.start, newEnd: drop.end }),
+      want: (o) => ({ ...drop, allDay: false, tzid: zone, scope: 'this', instanceStart: o.start, over: asShown(o) }),
+      ask: (o) => ({ field: 'time', was: asShown(o), now: googleTime, yours: { ...drop, allDay: false, tzid: zone }, from: 'day' }) },
+    { name: 'a resize', o: dayShown, run: (o) => resizeEvent({ instanceId: o.instanceId, newStart: longer.start, newEnd: longer.end }),
+      want: (o) => ({ ...longer, allDay: false, tzid: zone, scope: 'this', instanceStart: o.start, over: asShown(o) }),
+      ask: (o) => ({ field: 'time', was: asShown(o), now: googleTime, yours: { ...longer, allDay: false, tzid: zone }, from: 'day' }) },
+    { name: 'a drag of an edited day', o: edited, run: (o) => moveEvent({ instanceId: o.instanceId, newStart: drop.start, newEnd: drop.end }),
+      want: (o) => ({ ...drop, allDay: false, tzid: zone, scope: 'this', instanceStart: o.start, over: asShown(o) }),
+      ask: (o) => ({ field: 'time', was: asShown(o), now: googleTime, yours: { ...drop, allDay: false, tzid: zone }, from: 'day' }) },
+    { name: 'the editor, a title, this event', o: dayShown, back: true, editor: true,
+      run: (o) => editorOn(o, () => type(q('.bc-ed-title'), 'Sample renamed')),
+      want: (o) => ({ title: 'Sample renamed', scope: 'this', instanceStart: o.start, over: { title: o.title } }),
+      ask: (o) => ({ field: 'title', was: o.title, now: 'Sample standup', yours: 'Sample renamed', from: 'series' }) },
+    { name: 'the editor, the start date, this event', o: dayShown, back: true, editor: true,
+      run: (o) => editorOn(o, async () => { const el = q('input[aria-label="Start date"]'); await type(el, dayOf(drop.start)); el.dispatch('blur'); await settle(); }),
+      want: (o) => ({ ...drop, allDay: false, tzid: zone, scope: 'this', instanceStart: o.start, over: asShown(o) }),
+      // The editor sends its typed clocks beside the time; they are not read here.
+      ignore: ['typed'],
+      ask: (o) => ({ field: 'time', was: asShown(o), now: googleTime, yours: { ...drop, allDay: false, tzid: zone }, from: 'day' }) },
+    { name: 'a delete of this day', o: dayShown, remove: true, run: (o) => deleteEvent(o, 'this'),
+      want: (o) => ({ scope: 'this', instanceStart: o.start, over: held(o) }),
+      ask: (o) => ({ field: 'location', was: o.location, now: 'Room 5', yours: null, from: 'day' }) },
+    // Planned or Maybe has two values: it never asks about itself, so no Overwrite here.
+    { name: 'Maybe on this day', o: dayShown, run: (o) => setRelationship(o, 'maybe', 'this'),
+      want: (o) => ({ relationship: 'maybe', scope: 'this', instanceStart: o.start, over: { status: 'confirmed' } }) },
+    { name: 'Use series value, by the repeating event and the day\'s key', o: edited, plans: true, path: 31, run: (o) => useSeriesValue(o, ['title', 'time']),
+      want: (o) => ({ scope: 'this', instanceStart: o.seriesKey, useSeries: ['title', 'time'], over: { title: o.title, ...asShown(o) } }),
+      ask: (o) => ({ field: 'title', was: o.title, now: 'Sample weekly (renamed)', yours: 'Sample weekly', from: 'day' }) },
+    { name: 'Use series value, by the day\'s own row', o: { ...edited, seriesKey: null }, plans: true, path: 32, run: (o) => useSeriesValue(o, ['location']),
+      want: (o) => ({ scope: 'this', instanceStart: o.start, useSeries: ['location'], over: { location: o.location } }),
+      ask: (o) => ({ field: 'location', was: o.location, now: 'Room 5', yours: 'Room 2', from: 'day' }) },
+  ];
+  const strip = (b, keys = []) => { const c = { ...b }; for (const k of keys) delete c[k]; return c; };
+  let dRows = 0;
+  for (const c of DAY_CALLERS) {
+    for (const mode of c.ask ? ['sent', 'overwrite', 'cancel'] : ['sent']) {
+      const label = c.name + ', ' + mode;
+      const o = c.o;
+      const path = c.path || o.eventId;
+      // The day's record as read back after the change: "Use series value"
+      // gave its fields back, so it holds none of its own.
+      records = { [o.eventId]: { ...o, full: true, ...(c.plans ? { ownFields: [] } : {}) } };
+      writes = []; calls = []; asked.length = 0;
+      reply = mode === 'overwrite' ? [true] : mode === 'cancel' ? [false] : [];
+      answerFor = (w, n) => (w.body.preview ? json(200, { plan: null })
+        : mode !== 'sent' && n === 1 ? dayAsked(o, [c.ask(o)])
+        : json(200, { kept: [{ field: 'title', now: 'Sample standup' }] }));
+      set({ occ: new Map([[o.instanceId, o]]), editor: null, popover: null, toasts: [], config: c.plans ? { seriesPlans: true } : {} });
+      await c.run(o);
+      await settle();
+      const mine = writes.filter((w) => !w.body.preview);
+      assert.ok(mine.length >= 1, label + ': a request is sent');
+      assert.deepEqual(mine.map((w) => w.id), mine.map(() => path), label + ': to the day\'s path, every time');
+      assert.deepEqual(strip(mine[0].body, c.ignore), c.want(o), label + ': over from the day as shown, the time whole, the scope and the day\'s key as they were');
+      if (mode === 'overwrite') {
+        const f = c.ask(o);
+        assert.equal(mine.length, 2, label + ': Overwrite sends again');
+        const valueOf = (v) => (f.field === 'time' ? v : { [f.field]: v });
+        // The same request, `over` at what Google holds now; the body's value
+        // at yours where the body sets the field ("Use series value" sets none).
+        const sets = c.plans || f.yours == null ? {} : valueOf(f.yours);
+        assert.deepEqual(strip(mine[1].body, c.ignore), { ...c.want(o), ...sets, over: { ...c.want(o).over, ...valueOf(f.now) } }, label + ': Overwrite is the same request, over at now');
+        assert.match(asked[0].body, lead, label + ': the lead names the day: ' + asked[0].body);
+        assert.equal(asked[0].foot, c.remove ? DAY_DELETE : c.back ? DAY_BACK : DAY_STAY, label + ': the foot is for this day');
+        if (c.remove) assert.equal(asked[0].title, 'Delete this day anyway?', label + ': titled for the day');
+        if (f.from === 'series') assert.match(asked[0].body, /in Google Calendar, for the whole repeating event\. /, label + ': the change to the whole repeating event said');
+      }
+      if (mode === 'cancel') {
+        assert.equal(mine.length, 1, label + ': Cancel sends nothing more');
+        assert.ok(!state.toasts.some((t) => !t.error), label + ': no toast of a change made: ' + JSON.stringify(state.toasts.map((t) => t.text)));
+      }
+      if (mode === 'sent' && !c.editor && !c.remove) {
+        const t = state.toasts[state.toasts.length - 1];
+        assert.ok(t && /the title is now 'Sample standup'/.test(t.kept || ''), label + ': the toast says what was kept: ' + JSON.stringify(t && [t.text, t.kept]));
+      }
+      if (c.editor) { render(null, ed); set({ editor: null, editorDirty: false }); await settle(); }
+      dRows++;
+    }
+  }
+  // A change to more than one day: no `over`, the shape as it was (the time
+  // in parts, as the series' own requests send it).
+  const MANY = [
+    { name: 'a drag, all events', run: (o) => moveEvent({ instanceId: o.instanceId, newStart: drop.start, newEnd: drop.end, scope: 'all' }),
+      want: (o) => ({ ...drop, scope: 'all', instanceStart: o.start }) },
+    { name: 'a resize, this and following', run: (o) => resizeEvent({ instanceId: o.instanceId, newStart: longer.start, newEnd: longer.end, scope: 'following' }),
+      want: (o) => ({ ...longer, scope: 'following', instanceStart: o.start }) },
+    { name: 'a title, all events', run: (o) => updateEvent(o, { title: 'Sample renamed' }, 'all'),
+      want: (o) => ({ title: 'Sample renamed', scope: 'all', instanceStart: o.start }) },
+    { name: 'a delete, all events', run: (o) => deleteEvent(o, 'all'), want: (o) => ({ scope: 'all', instanceStart: o.start }) },
+    { name: 'Maybe, no scope picked (all events)', run: (o) => setRelationship(o, 'maybe'), want: (o) => ({ relationship: 'maybe', scope: 'all', instanceStart: o.start }) },
+  ];
+  for (const c of MANY) {
+    records = { 31: { ...dayShown, full: true } };
+    writes = []; calls = []; asked.length = 0; reply = [];
+    answerFor = () => json(200, { kept: [] });
+    set({ occ: new Map([[dayShown.instanceId, dayShown]]), editor: null, popover: null, toasts: [], config: {} });
+    await c.run(dayShown);
+    await settle();
+    assert.equal(writes.length, 1, c.name + ': one request');
+    assert.deepEqual(writes[0].body, c.want(dayShown), c.name + ': no over, its own shape');
+    dRows++;
+  }
+  set({ config: {} });
+  reply = [];
+  console.log('Google conflict, one day of a repeating event: ' + dRows + ' caller rows, over from the day as shown, Overwrite for the day');
 }
 
 off();

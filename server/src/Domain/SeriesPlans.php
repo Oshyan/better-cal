@@ -1535,6 +1535,89 @@ trait SeriesPlans
     private function useSeriesValues(int $userId, array $master, array $row, array $fields, ?array $google = null, ?RequestAuthority $authority = null): void
     {
         $fields = OwnFields::normalize(array_map('strval', $fields));
+        // On a Google calendar it is a change to one day like any other (the
+        // conflict choice, the page "Slice 2", case 12), when it changes what
+        // Google holds: asked about over a change to the same field of the
+        // day, and a field Google Calendar changed that this takes back at
+        // the value shown stays the day's own. What is sent is the repeating
+        // event's value as stored after the read.
+        $items = null;
+        if ($google !== null && $this->choosesDayOverGoogle($userId) && !empty($master['google_event_id'])) {
+            $wanted = array_intersect_key($this->seriesValues($master, $row, $fields)[0], array_flip(GoogleWriter::GOOGLE_COLUMNS));
+            if (self::patchBody($row, $wanted) !== []) {
+                $key = (string) $row['recurrence_instance_utc'];
+                $day = $this->dayRow($master, $row, $key);
+                $step = $this->googleChoice($userId, $google, $day, $this->dayBase($userId, $day), $wanted, $authority, ['master' => $master, 'key' => $key]);
+                if ($step === null) {
+                    return;
+                }
+                $kept = array_merge(...array_map(static fn(string $f): array => $f === 'time' ? ['date', 'time', 'length', 'allDay'] : [$f], $step['kept']), ...[[]]);
+                $fields = array_values(array_diff($fields, $kept));
+                if ($step['event'] === null || $fields === []) {
+                    return; // an ordinary day again, or nothing left to take back
+                }
+                ['master' => $master, 'event' => $row, 'items' => $items] = $step;
+            }
+        }
+        [$set, $left] = $this->seriesValues($master, $row, $fields);
+        $id = (int) $row['id'];
+        $links = Undo::linksOf($this->db, [$id]);
+        // The write rule every writer shares: a row goes only when nothing of
+        // its own is left, nor anything referring to it (OwnFields::own).
+        $gone = OwnFields::own($left, self::referencesNaming($this->db, [$id])[$id] ?? []) === [];
+        // On a writable Google calendar, Google first: the day's record given
+        // the series' values for what it takes back (all of them when no own
+        // field is left), sent only when a field Google holds changes; its
+        // answer is stored on top of the write here, as a poll stores it.
+        $resp = null;
+        if ($google !== null) {
+            $body = self::patchBody($row, array_intersect_key($set, array_flip(GoogleWriter::GOOGLE_COLUMNS)));
+            if ($body !== []) {
+                $googleId = !empty($row['google_event_id']) ? (string) $row['google_event_id']
+                    : GoogleWriter::instanceId(self::requireGoogleId($master), (string) $row['recurrence_instance_utc'], (int) $master['all_day'] === 1);
+                $resp = $this->google()->patch($google, $googleId, $body, $this->googleBeforeSend($authority), items: $items);
+            }
+        }
+        $this->db->tx(function () use ($id, $set, $left, $gone, $fields, $master, $userId): void {
+            if ($gone) {
+                $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
+                return;
+            }
+            $this->db->update('events', $set + ['override_fields' => OwnFields::encode($left), 'updated_at' => Time::nowDb()], 'id = ?', [$id]);
+            // Tags or people taken back are the series' again (OwnFields::follow).
+            OwnFields::follow($this->db, (int) $master['id'], [$id]);
+            unset($userId, $fields);
+        });
+        if ($resp !== null) {
+            $this->google()->apply($google, [$resp], false); // one day's record: no recurrence sent
+        }
+        $after = $gone ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
+        $summary = "Used the series' " . Words::andList(array_map(static fn(string $f): string => $f === 'location' ? 'place' : $f, $fields)) . " for '" . (string) $row['title'] . "'";
+        $beforeTables = ['events' => [$row]] + $links;
+        $afterTables = ['events' => $after === null ? [] : [$after]] + ($after === null ? [] : Undo::linksOf($this->db, [$id]));
+        if ($resp !== null) {
+            // A Google edit like every other: undone by the fields it changed at Google, its rows by their snapshots (GoogleUndo).
+            $was = GoogleUndo::bodyOf($row);
+            $this->googleJournal($userId, $summary, $google, (int) $master['id'],
+                GoogleUndo::details(GoogleUndo::EDIT, $google, $googleId, $was, $row['google_etag'] ?? null, self::answerEtag($resp),
+                    ['changed' => GoogleUndo::editChanged($was, $after, $resp)]),
+                [$beforeTables, $afterTables]);
+            ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
+            return;
+        }
+        $this->undo->record($userId, 'event', $id, 'update', $beforeTables, $afterTables, $summary);
+        ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
+    }
+
+    /**
+     * What "Use series value" for $fields makes of an edited day's row: the
+     * columns it sets to the series' values, and the own list it leaves.
+     *
+     * @param list<string> $fields normalized own-field names
+     * @return array{0:array<string,mixed>, 1:list<string>}
+     */
+    private function seriesValues(array $master, array $row, array $fields): array
+    {
         $own = OwnFields::stored($row);
         $left = array_values(array_diff($own, $fields));
         $set = [];
@@ -1575,52 +1658,6 @@ trait SeriesPlans
             $set['all_day'] = $allDay ? 1 : 0;
             $set['tzid'] = in_array('allDay', $left, true) && $allDay ? (string) $row['tzid'] : ($ownTime ? (string) $row['tzid'] : (string) $master['tzid']);
         }
-        $id = (int) $row['id'];
-        $links = Undo::linksOf($this->db, [$id]);
-        // The write rule every writer shares: a row goes only when nothing of
-        // its own is left, nor anything referring to it (OwnFields::own).
-        $gone = OwnFields::own($left, self::referencesNaming($this->db, [$id])[$id] ?? []) === [];
-        // On a writable Google calendar, Google first: the day's record given
-        // the series' values for what it takes back (all of them when no own
-        // field is left), sent only when a field Google holds changes; its
-        // answer is stored on top of the write here, as a poll stores it.
-        $resp = null;
-        if ($google !== null) {
-            $body = self::patchBody($row, array_intersect_key($set, array_flip(GoogleWriter::GOOGLE_COLUMNS)));
-            if ($body !== []) {
-                $googleId = !empty($row['google_event_id']) ? (string) $row['google_event_id']
-                    : GoogleWriter::instanceId(self::requireGoogleId($master), (string) $row['recurrence_instance_utc'], (int) $master['all_day'] === 1);
-                $resp = $this->google()->patch($google, $googleId, $body, $this->googleBeforeSend($authority));
-            }
-        }
-        $this->db->tx(function () use ($id, $set, $left, $gone, $fields, $master, $userId): void {
-            if ($gone) {
-                $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
-                return;
-            }
-            $this->db->update('events', $set + ['override_fields' => OwnFields::encode($left), 'updated_at' => Time::nowDb()], 'id = ?', [$id]);
-            // Tags or people taken back are the series' again (OwnFields::follow).
-            OwnFields::follow($this->db, (int) $master['id'], [$id]);
-            unset($userId, $fields);
-        });
-        if ($resp !== null) {
-            $this->google()->apply($google, [$resp], false); // one day's record: no recurrence sent
-        }
-        $after = $gone ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
-        $summary = "Used the series' " . Words::andList(array_map(static fn(string $f): string => $f === 'location' ? 'place' : $f, $fields)) . " for '" . (string) $row['title'] . "'";
-        $beforeTables = ['events' => [$row]] + $links;
-        $afterTables = ['events' => $after === null ? [] : [$after]] + ($after === null ? [] : Undo::linksOf($this->db, [$id]));
-        if ($resp !== null) {
-            // A Google edit like every other: undone by the fields it changed at Google, its rows by their snapshots (GoogleUndo).
-            $was = GoogleUndo::bodyOf($row);
-            $this->googleJournal($userId, $summary, $google, (int) $master['id'],
-                GoogleUndo::details(GoogleUndo::EDIT, $google, $googleId, $was, $row['google_etag'] ?? null, self::answerEtag($resp),
-                    ['changed' => GoogleUndo::editChanged($was, $after, $resp)]),
-                [$beforeTables, $afterTables]);
-            ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
-            return;
-        }
-        $this->undo->record($userId, 'event', $id, 'update', $beforeTables, $afterTables, $summary);
-        ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
+        return [$set, $left];
     }
 }

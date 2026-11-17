@@ -783,11 +783,32 @@ final class GoogleWriter
      *
      * @param array<string,mixed> $base GoogleConflict::mapOf of what the person was shown
      * @param array<string,mixed> $wanted the fields the change sets (GoogleConflict::DELETE each, for a delete)
-     * @return array{outcomes:array<string,string>, read:array, items:list<array>}
+     *
+     * $series (the page "Slice 2", (c) and (e)): for a repeating event, its
+     * Google id, its iCalendar UID and `key`, the day compared (null: the
+     * repeating event's own fields, an answer for all events). "Now" is then
+     * that day in the read (its record, else the series' values there,
+     * GoogleSeries::dayNow), and the whole list is stored as a read-back of
+     * the series is (GoogleSeries::store), journaled as a poll's. `outcomes`
+     * is null when the read has no such day; the caller decides from the
+     * stored event whether it still is one.
+     *
+     * @param array{id:string, uid:string, key:?string}|null $series
+     * @return array{outcomes:?array<string,string>, read:array, items:list<array>}
      */
-    public function readAndStore(array $calendar, string $googleId, array $base, array $wanted, ?\Closure $beforeSend = null): array
+    public function readAndStore(array $calendar, string $googleId, array $base, array $wanted, ?\Closure $beforeSend = null, ?array $series = null): array
     {
         [$read, $items] = $this->readNow($calendar, $googleId, $beforeSend);
+        if ($series !== null) {
+            $master = GoogleSeries::held($items, $series['id'])['master'];
+            if ($master === null) {
+                throw self::deleted();
+            }
+            $now = $series['key'] === null ? $master : GoogleSeries::dayNow($items, $series['id'], $series['key']);
+            $outcomes = $now === null ? null : GoogleConflict::threeWay($base, GoogleConflict::mapOf($now), $wanted);
+            (new GoogleSeries($this->db, $this, $this->feeds))->store($calendar, [$series['uid'] => $items], [], null, true);
+            return ['outcomes' => $outcomes, 'read' => $read, 'items' => $items];
+        }
         $parsed = GoogleSync::toParsedList([$read])[0] ?? null;
         if (!is_array($parsed) || !empty($parsed['cancelled'])) {
             throw self::deleted();

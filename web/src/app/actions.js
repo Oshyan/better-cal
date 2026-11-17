@@ -693,20 +693,22 @@ export function ownFieldWords(name) { return OWN_FIELD_WORDS[name] || name; }
 // shows); a server that doesn't send them takes the edited day's own id.
 // What it did is read back, not assumed: the day's record says which
 // fields are still its own, and a day left with none is an occurrence
-// again, its row gone. The toast names only what went back.
+// again, its row gone. The toast names only what went back. On a Google
+// calendar it is a change to this day like any other (googlechange.js):
+// compared with the day as shown for the fields the names mean, so a change
+// in Google Calendar to one of them asks; Cancel saves nothing.
 export async function useSeriesValue(occ, names) {
   if (!occ || !names || !names.length || !seriesPlans()) return false;
   const viaSeries = occ.seriesId != null && !!occ.seriesKey;
   let res;
   try {
-    res = await api('/events/' + (viaSeries ? occ.seriesId : occ.eventId), {
-      method: 'PATCH',
-      body: { scope: 'this', instanceStart: viaSeries ? occ.seriesKey : occ.start, useSeries: names },
-    });
+    res = await sendEventChange(occ, '/events/' + (viaSeries ? occ.seriesId : occ.eventId), 'PATCH',
+      { scope: 'this', instanceStart: viaSeries ? occ.seriesKey : occ.start, useSeries: names });
   } catch (e) {
-    toast('Update failed: ' + e.message, { error: true });
+    toast(failWords('Update failed: ', e), { error: true });
     return false;
   }
+  if (res === CANCELLED) return false;
   let after = null;
   let gone = false;
   try {
@@ -732,7 +734,7 @@ export async function useSeriesValue(occ, names) {
     return false;
   }
   const title = (after && after.title) || occ.seriesTitle || itemName(occ);
-  toast(given.length === 1 ? "Uses the series' " + ownFieldWords(given[0]) : "Uses the series' " + listWords(given.map(ownFieldWords)), { title, undo: entriesOf(res), note: NO_UNDO });
+  toast(given.length === 1 ? "Uses the series' " + ownFieldWords(given[0]) : "Uses the series' " + listWords(given.map(ownFieldWords)), { title, undo: entriesOf(res), note: NO_UNDO, kept: keptOf(res) });
   return true;
 }
 

@@ -957,6 +957,7 @@ require __DIR__ . '/quickadd-golden.php';
 require __DIR__ . '/event-day.php';
 require __DIR__ . '/google-conflict-threeway.php';
 require __DIR__ . '/google-conflict-words.php';
+require __DIR__ . '/google-conflict-day.php';
 
 $invalid = [];
 foreach ($repeatCases as [$text, , , $rrule]) {

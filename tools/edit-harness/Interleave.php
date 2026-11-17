@@ -266,9 +266,25 @@ final class Interleave
             $block[] = ['do' => 'p-delta', 'pick' => 0.0];
         }
         $shown = $poll && $r->chance(0.3) ? 'now' : 'earlier';
-        $block[] = ['do' => 'w-single', 'pick' => 0.0, 'how' => $how, 'fields' => $mine, 'tags' => $how === 'edit' && $r->chance(0.3), 'shown' => $shown]
+        $block[] = ['do' => 'w-single', 'pick' => 0.0, 'how' => $how, 'fields' => $mine, 'tags' => $how === 'edit' && $r->chance(0.3), 'shown' => $shown, 'mark' => 's']
             + ($mineTime === null ? [] : ['time' => $mineTime]) + ($outdated === null ? [] : ['outdated' => $outdated]) + ($overClock ? ['overClock' => true] : []);
-        $block[] = ['do' => 'w-single', 'pick' => 0.0, 'how' => 'overwrite'];
+        $block[] = ['do' => 'w-single', 'pick' => 0.0, 'how' => 'overwrite', 'mark' => 's'];
+        // The undo of the edit (google-conflict-choice.md, Slice 3a), in most blocks that edit or answer Maybe: after a change
+        // at Google not yet read to a field the edit set (case 5) or to another (case 2), or nothing (case 1), sometimes
+        // read by a poll first (case 7). Drawn after every other draw of the block, so the block's own draws are as before.
+        if ($how !== 'delete' && $r->chance(0.6)) {
+            $plain = ['title', 'description', 'location', 'url', 'status', 'showAs'];
+            $set = array_values(array_intersect($mine, $plain));
+            $after = $r->weighted(['same' => 4, 'other' => 3, 'none' => 1]);
+            $field = $after === 'same' && $set !== [] ? $r->pick($set) : $r->pick(array_values(array_diff($plain, $set)));
+            if ($after !== 'none') {
+                $block[] = ['do' => 'r-single', 'pick' => 0.0, 'fields' => [$field], 'same' => []];
+                if ($r->chance(0.3)) {
+                    $block[] = ['do' => 'p-delta', 'pick' => 0.0];
+                }
+            }
+            $block[] = ['do' => 'u-entry', 'pick' => 0.0, 'entryOf' => 's'];
+        }
         $steps = $case['steps'];
         $keep = max(1, count($steps) - count($block));
         $steps = array_slice($steps, 0, $keep);
@@ -1730,6 +1746,16 @@ final class Interleave
             return;
         }
         if ($judge['expect'] === 'stale') {
+            // The question when the redo's entry left the day a row (the shape's own anchor: a day kept by its tag); a redo of an
+            // undo that removed the row has no base and keeps the stale check (Slice 3a, the unlikely list).
+            if ($this->choiceOn && ($judge['anchor'] ?? 'none') === 'row') {
+                // With the conflict choice on, newer notes on the day are a field the undo of an edit compares (Slice 3a,
+                // case 6 and (d)): the redo asks, nothing sent and nothing redone; x-choice judges the question.
+                $this->ran('x-day', 'asked over newer notes');
+                $this->expect('x-day', !$out['ok'] && $out['error'] === 'google_changed' && $wrote === [],
+                    "step {$this->step} ($do): a redo over notes given to the same day since asks (google_changed), with nothing sent", $context + ['out' => $out['error'], 'sent' => count($wrote)]);
+                return;
+            }
             $this->ran('x-day', 'stale');
             $this->expect('x-day', !$out['ok'] && $out['error'] === 'stale_undo' && $quiet,
                 "step {$this->step} ($do): a redo over notes given to the same day since is refused as stale, with nothing written here or sent", $context + ['out' => $out['error'], 'sent' => count($wrote)]);
@@ -2348,8 +2374,8 @@ final class Interleave
                 return ['skip' => true];
             }
             $this->lastAsked = $this->askedOfEntry($expect) + ['entry' => $expect];
-            $this->undo->undoLatest($this->userId);
-            return ['entry' => $expect, 'asked' => $this->lastAsked];
+            $answer = $this->undo->undoLatest($this->userId);
+            return ['entry' => $expect, 'asked' => $this->lastAsked, 'answer' => $answer];
         }
         if (isset($step['entryOf'])) {
             // A day shape's undo of the entry a marked step made (not the newest, which is the series' change since).
@@ -2358,8 +2384,8 @@ final class Interleave
                 return ['skip' => true];
             }
             $this->lastAsked = $this->askedOfEntry($id) + ['entry' => $id];
-            $this->undo->undoById($this->userId, $id);
-            return ['entry' => $id, 'asked' => $this->lastAsked];
+            $answer = $this->undo->undoById($this->userId, $id);
+            return ['entry' => $id, 'asked' => $this->lastAsked, 'answer' => $answer];
         }
         $pool = array_values(array_filter($entries, static fn(array $e): bool => (int) $e['undone'] === 0
             && ($do === 'redo' ? self::undoes($e['details_json']) !== null : !in_array($e['source'], ['feed', 'google', 'system'], true))));
@@ -2368,8 +2394,8 @@ final class Interleave
         }
         $id = (int) $pool[min(count($pool) - 1, (int) floor($step['pick'] * count($pool)))]['id'];
         $this->lastAsked = $this->askedOfEntry($id) + ['entry' => $id];
-        $this->undo->undoById($this->userId, $id);
-        return ['entry' => $id, 'asked' => $this->lastAsked];
+        $answer = $this->undo->undoById($this->userId, $id);
+        return ['entry' => $id, 'asked' => $this->lastAsked, 'answer' => $answer];
     }
 
     /**
@@ -2652,7 +2678,7 @@ final class Interleave
             // The series is already gone at Google: the removal completes here (decisions.md, "Removing a series already gone
             // at Google succeeds", case 303).
             $this->ran('x-conflict', 'removal of a series deleted at Google');
-            if (!empty($asked['whole']) && $failure === null) {
+            if (!empty($asked['whole']) && $failure === null && !$onPending) {
                 // A delete of the whole series from its first day; one from a later day is an edit of the series' end.
                 $this->expect('x-conflict', $out['ok'], "step {$this->step} ($do): removing a series already gone at Google succeeds", $context);
             }
@@ -2678,7 +2704,18 @@ final class Interleave
         // is the code it was").
         $dayChoice = $this->choiceOn && $this->daySent !== null && $kind === 'w-' && in_array($asked['kind'], ['this', 'del1'], true) && empty($asked['local'])
             && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !$changedNothing && !$onPending && $failure === null;
-        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !$changedNothing && !($removal && ($s0['g']['digest'][$gid] ?? null) === null) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !$choice && !$dayChoice && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
+        // The undo or redo of an edit of one event or one day, with it on, is compared too (Slice 3a), whatever changed at
+        // Google since; with it off, or for any other entry, the refusals below and x-undo-fields as before.
+        $undoEntry = $out['entry'] ?? ($asked['entry'] ?? null);
+        $uc = in_array($do, self::UNDO_KINDS, true) && $failure === null && !$onPending ? $this->undoChoiceOf($undoEntry === null ? null : (int) $undoEntry, $asked, $s0) : null;
+        // An undo of an entry that changed only what is held here alone sends Google nothing whatever changed there (Slice 3a,
+        // (i): "The undo of a change held here alone on a Google calendar (tags, reminders): Untouched: sends Google nothing").
+        $undoLocal = false;
+        if (in_array($do, self::UNDO_KINDS, true) && $undoEntry !== null && isset($this->entryStates[(int) $undoEntry])) {
+            $changed = self::entryChange($this->entryStates[(int) $undoEntry]);
+            $undoLocal = $changed !== [] && array_filter($changed, static fn(array $f): bool => array_diff($f, ['tags', 'people', 'reminders', 'icon', 'attendance', 'lat', 'lng', 'own', 'links']) !== []) === [];
+        }
+        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !$changedNothing && !($removal && ($s0['g']['digest'][$gid] ?? null) === null) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !$choice && !$dayChoice && $uc === null && !($this->choiceOn && $undoLocal) && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
             $this->ran('x-conflict', $do);
             // What protects the change made at Google is the refusal, whatever its reason: google_conflict, google_deleted for
             // a series deleted there (rule 8), or one decided here before Google is asked (stale_undo, invalid_recurrence_instance).
@@ -2716,6 +2753,8 @@ final class Interleave
         $dayStored = $dayChoice && $this->checkDayChoice($do, $out, $s0, $s1, $context);
         $daySent = $this->daySent;
         $this->daySent = null;
+        // x-choice for the undo of one edit: whether the step stored the read and refused.
+        $undoStored = $uc !== null && $this->checkUndoChoice($do, $out, $s0, $s1, $uc, $context);
 
         // x-pending: what a failure leaves.
         if ($failure !== null) {
@@ -2729,13 +2768,13 @@ final class Interleave
             $this->checkRecovery($do, $out, $s0, $s1, $context, $taken);
         }
         if (in_array($do, ['u-entry', 'u-bare', 'redo'], true)) {
-            $this->checkUndo($do, $out, $s0, $s1, $asked, $context, $taken);
+            $this->checkUndo($do, $out, $s0, $s1, $asked, $context, $taken, $uc);
         }
 
         // x-honest: a refusal with no pending change leaves both sides as they were; a write that changed something leaves an entry.
         // The conflict choice's question stores what it read from Google (google-conflict-choice.md, case 3: "the read is
         // stored"): x-choice judges what it leaves.
-        if ($isWrite && !$out['ok'] && $failure === null && !isset($out['extra']['pending']) && !in_array($do, ['finish', 'putback'], true) && !($choice && $error === 'google_changed') && !$dayStored) {
+        if ($isWrite && !$out['ok'] && $failure === null && !isset($out['extra']['pending']) && !in_array($do, ['finish', 'putback'], true) && !($choice && $error === 'google_changed') && !$dayStored && !$undoStored) {
             $this->ran('x-honest', 'refusal');
             $this->expect('x-honest', self::sameHere($s0, $s1) && $s0['g']['digest'] == $s1['g']['digest'], "step {$this->step} ($do): a refusal ($error) changes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
         }
@@ -2767,7 +2806,11 @@ final class Interleave
         // So does the choice for a day: the repeating event is read whole and stored (Slice 2, (e)).
         // A repeating event deleted at Google is not that: a day's delete completes "as today" and nothing says the deletion
         // is stored, so the series stays changed at Google since the last poll.
-        $readBack = $readBack || ($dayChoice && ($out['ok'] || $dayStored) && ($s0['g']['digest'][$gid] ?? null) !== null);
+        // Only when the step read Google: a change that changes nothing reads nothing and stores nothing.
+        $readGoogle = array_filter(array_slice($this->stand->fake->requests, $s0['req'], $s1['req'] - $s0['req']), static fn(array $q): bool => $q['method'] === 'GET' && !in_array('X-Harness: remote', $q['headers'], true)) !== [];
+        $readBack = $readBack || ($dayChoice && $readGoogle && ($out['ok'] || $dayStored) && ($s0['g']['digest'][$gid] ?? null) !== null);
+        // And the undo of one edit (Slice 3a, (c)): the read is stored whether it then goes through or asks.
+        $readBack = $readBack || ($uc !== null && $readGoogle && ($out['ok'] || $undoStored) && ($s0['g']['digest'][(string) $uc['gid']] ?? null) !== null);
         if ($readBack) {
             $series = $do === 'finish' ? array_keys($this->recovered['gids'] ?? []) : [$gid];
             foreach (array_filter($series, static fn($g): bool => $g !== null) as $g) {
@@ -2793,7 +2836,8 @@ final class Interleave
             // is the change's only where the change set it to something else. The store's entry (a source of Google's) is
             // never undone by a step here.
             $read = $choice && $gid !== null ? $this->withReadStored($s0, (string) $gid)
-                : ($dayChoice && $out['ok'] && $daySent !== null && ($s0['g']['digest'][$gid] ?? null) !== null ? $this->dayReadStored($s0, $s1, $daySent) : null);
+                : ($dayChoice && $out['ok'] && $daySent !== null && ($s0['g']['digest'][$gid] ?? null) !== null ? $this->dayReadStored($s0, $s1, $daySent)
+                : ($uc !== null && $out['ok'] ? $this->undoReadStored($s0, $s1, $uc) : null));
             $sources = [];
             if ($read !== null) {
                 [$in, $params] = Db::in($entries);
@@ -3283,6 +3327,15 @@ final class Interleave
         if (!isset($s0['rows'][$mid]) || $l0 === null) {
             return false;
         }
+        if ($action === 'useSeries') {
+            // "Use series value" for a field the day already shows at the series' value as stored here changes nothing:
+            // no read and nothing sent (decisions.md, "A request that changes nothing sends nothing and is no conflict").
+            $f = (string) $body['useSeries'][0];
+            if (self::rawSix(self::dayBase($s0['rows'], $mid, $key))[$f] === self::rawSix(self::seriesRawAt($l0, $key))[$f]) {
+                $this->ran('x-choice', "day: Use series value of a field already at the series' value (not judged)");
+                return false;
+            }
+        }
         // The repeating event deleted at Google (the unlikely list: "an edit of a day gets the google_deleted sentence it
         // gets today; a delete of a day completes, as today").
         if ($g0 === null) {
@@ -3479,6 +3532,319 @@ final class Interleave
         return $out;
     }
 
+    // ---- the undo of one edit (google-conflict-choice.md, Slice 3a), by the harness's own reading -------------------------
+
+
+    /** A day as an identity map (byIdentity's) shows it: the series' values at the key, the row's where it owns them (series-model.md, Own Fields). */
+    private static function identDay(array $ids, string $gid, string $key, bool $withRow = true): ?array
+    {
+        $s = $ids["series:$gid"] ?? null;
+        if ($s === null) {
+            return null;
+        }
+        $raw = self::seriesRawAt(['title' => $s['title'], 'description' => $s['description'], 'location' => $s['location'], 'url' => $s['url'], 'status' => $s['status'],
+            'showAs' => $s['showAs'], 'start' => $s['start'], 'end' => $s['end'], 'allDay' => $s['allDay']], $key);
+        $r = $withRow ? ($ids["day:$gid:$key"] ?? null) : null;
+        foreach ($r === null ? [] : ['title', 'description', 'location', 'url', 'status', 'showAs'] as $f) {
+            if (in_array($f, (array) $r['own'], true)) {
+                $raw[$f] = (string) $r[$f];
+            }
+        }
+        if ($r !== null && array_intersect(['date', 'time', 'length', 'allDay'], (array) $r['own']) !== []) {
+            $raw = ['start' => $r['start'], 'end' => $r['end'], 'allDay' => (int) $r['allDay']] + $raw;
+        }
+        return $raw;
+    }
+
+    /**
+     * Whether an undo or redo is the page's (Slice 3a): the conflict choice on, and the entry an edit of one event or one day
+     * (its step's request a change of one event or one day) that holds the row it left (its recorded states change that one
+     * row, and leave it there), and changed a field the comparison reads, with that row still here. Not: an entry that left
+     * a day no row (the redo of an undo that removed the row among them), a create, a delete, an answer, a change to all
+     * events, one held here alone. Returns what the judgement needs: the identity, B (the compared fields as the entry left
+     * them), W (as before it: a field the day did not own before the entry, the series' value at that day as stored before
+     * the undo, (b)), the fields the entry changed, and those the day followed.
+     */
+    private function undoChoiceOf(?int $entry, array $asked, array $s0): ?array
+    {
+        if (!$this->choiceOn || $entry === null || $this->heldBack($entry)) {
+            return null;
+        }
+        $state = $this->entryStates[$entry] ?? null;
+        $of = $asked['of'] ?? null;
+        // The person's own entry: a poll's or a store's (a source of Google's) is log only, never this.
+        if (in_array((string) $this->db->scalar('SELECT source FROM mutations WHERE id = ?', [$entry]), ['google', 'feed', 'system'], true)) {
+            return null;
+        }
+        if ($state === null || !in_array($of === null ? null : ($this->done[$of]['asked']['kind'] ?? null), ['this', 'single'], true)) {
+            return null;
+        }
+        $change = self::entryChange($state);
+        if (count($change) !== 1) {
+            return null;
+        }
+        $ident = (string) array_key_first($change);
+        $isDay = preg_match('/^day:([^:]+):(.+)$/', $ident, $m) === 1;
+        $now = $this->byIdentity($s0['rows']);
+        if ($change[$ident] === ['-'] || (!$isDay && (!str_starts_with($ident, 'event:') || $change[$ident] === ['+'])) || !isset($now[$ident])) {
+            return null;
+        }
+        $gid = $isDay ? $m[1] : substr($ident, strlen('event:'));
+        $key = $isDay ? $m[2] : null;
+        // A later change the comparison does not read (tags, people, reminders, a skip, the row made again) is still the
+        // stale check's, asked before anything is read ((d)): such an undo keeps the code it had.
+        $since = $this->changedSince($state, $now, ['ident' => $ident, 'isDay' => $isDay]);
+        if ($since !== []) {
+            return null;
+        }
+        if ($isDay) {
+            // A day keyed in its series as it is now: the series' clock unchanged since the entry (otherwise the journal's
+            // own placement rules decide, x-day's).
+            $sa = $state['after']["series:$gid"] ?? null;
+            $sn = $now["series:$gid"] ?? null;
+            if ($sa === null || $sn === null || self::clockOf($sa) !== self::clockOf($sn) || (int) $sa['allDay'] !== (int) $sn['allDay']) {
+                return null;
+            }
+            $after = self::identDay($state['after'], $gid, $key);
+            $before = self::identDay($state['before'], $gid, $key);
+            $seriesNow = self::rawSix((array) self::identDay($now, $gid, $key, false));
+            $row = $state['before'][$ident] ?? null;
+            $W = self::rawSix($before);
+            $followed = [];
+            foreach (self::CHOICE_FIELDS as $f) {
+                $owns = $row !== null && array_intersect($f === 'time' ? ['date', 'time', 'length', 'allDay'] : [$f], (array) $row['own']) !== [];
+                if (!$owns) {
+                    $W[$f] = $seriesNow[$f];
+                    $followed[] = $f;
+                }
+            }
+        } else {
+            $after = $state['after'][$ident];
+            $before = $state['before'][$ident];
+            $W = self::rawSix($before);
+            $followed = [];
+        }
+        $B = self::rawSix($after);
+        $was = self::rawSix($before);
+        $F = array_values(array_filter(self::CHOICE_FIELDS, static fn(string $f): bool => $B[$f] !== $was[$f]));
+        if ($F === [] || $this->changedSince($state, $now, ['ident' => $ident, 'isDay' => $isDay, 'F' => $F]) !== []) {
+            return null;
+        }
+        return ['entry' => $entry, 'ident' => $ident, 'isDay' => $isDay, 'gid' => $gid, 'key' => $key, 'B' => $B, 'W' => $W, 'F' => $F, 'followed' => $followed,
+            'redo' => ($asked['kind'] ?? '') === 'redo'];
+    }
+
+    /** The rows by identity as the undo's read leaves them before the undo is applied: the target's compared fields Google's, the rest of its series as stored after the step. */
+    private function undoReadStored(array $s0, array $s1, array $uc): array
+    {
+        $c = $this->byIdentity($s0['rows']);
+        $g0 = $s0['g']['digest'][$uc['gid']] ?? null;
+        if ($g0 === null || !isset($c[$uc['ident']])) {
+            return $c;
+        }
+        if ($uc['isDay']) {
+            // Every other row of the series as the store left it, where the read changed what it shows; as before the
+            // step elsewhere, so an undo that touches another day is still seen.
+            $after = $this->byIdentity($s1['rows']);
+            $l0 = $this->ldigest($s0['rows'])[$uc['gid']] ?? null;
+            $prefix = 'day:' . $uc['gid'] . ':';
+            foreach (array_unique(array_merge(array_keys($after), array_keys($c))) as $ident) {
+                if ($ident === $uc['ident'] || ($ident !== 'series:' . $uc['gid'] && !str_starts_with($ident, $prefix))) {
+                    continue;
+                }
+                $read = $l0 === null || ($ident === 'series:' . $uc['gid']
+                    ? array_diff_key($l0, ['records' => 1]) != array_diff_key($g0, ['records' => 1])
+                    : self::dayRaw($l0, substr($ident, strlen($prefix))) != self::dayRaw($g0, substr($ident, strlen($prefix))));
+                if (!$read) {
+                    continue;
+                }
+                if (isset($after[$ident])) {
+                    $c[$ident] = $after[$ident];
+                } else {
+                    unset($c[$ident]);
+                }
+            }
+            $raw = self::dayRaw($g0, (string) $uc['key']);
+            if ($raw === null) {
+                return $c;
+            }
+        } else {
+            $raw = ['title' => $g0['title'], 'description' => $g0['description'], 'location' => $g0['location'], 'url' => $g0['url'], 'status' => $g0['status'] ? 'tentative' : 'confirmed',
+                'showAs' => $g0['showAs'] ? 'free' : 'busy', 'start' => gmdate('Y-m-d H:i:s', $g0['time'][0]), 'end' => gmdate('Y-m-d H:i:s', $g0['time'][1]), 'allDay' => $g0['time'][2] ? 1 : 0];
+        }
+        // Only where the six differ: a value the comparison reads as equal (trimmed, "(No title)") keeps the row's spelling.
+        $mine = self::rawSix($c[$uc['ident']]);
+        $theirs = self::rawSix($raw);
+        foreach (['title', 'description', 'location', 'url', 'status', 'showAs'] as $f) {
+            if ($mine[$f] !== $theirs[$f]) {
+                $c[$uc['ident']][$f] = $raw[$f];
+            }
+        }
+        if ($mine['time'] !== $theirs['time']) {
+            $c[$uc['ident']] = ['start' => $raw['start'], 'end' => $raw['end'], 'allDay' => (int) $raw['allDay']] + $c[$uc['ident']];
+        }
+        if ($uc['isDay']) {
+            // A field the read changed on the day is the day's own exactly when Google holds it otherwise than the series
+            // there (as a poll reads a record: series-model.md, Google as a Contract); a field the read did not change keeps
+            // what the row said of it.
+            $series = self::rawSix(self::seriesRawAt($g0, (string) $uc['key']));
+            $own = (array) $c[$uc['ident']]['own'];
+            foreach (['title', 'description', 'location', 'url', 'status', 'showAs'] as $f) {
+                if ($mine[$f] !== $theirs[$f]) {
+                    $own = $theirs[$f] === $series[$f] ? array_values(array_diff($own, [$f])) : array_values(array_unique(array_merge($own, [$f])));
+                }
+            }
+            sort($own);
+            $c[$uc['ident']]['own'] = $own;
+        }
+        return $c;
+    }
+
+    /**
+     * x-choice for the undo of one edit (google-conflict-choice.md, Slice 3a, (j)): B the compared fields the entry changed
+     * as it left them, W as before it, G what the stand-in holds before the undo, and every other field's B the rows before
+     * the undo. Asks exactly when a field the entry changed has G ≠ B and G ≠ W: 409 google_changed with `entry`, those
+     * fields with was B, now G, yours W (a day's with `from` and `day`), nothing sent, the read stored, the entry not undone,
+     * nothing held here alone put back. Otherwise the entry is undone, each field it changed at W here and at Google (a field
+     * the day followed at the series' value after the read), every other compared field at G, `kept` naming exactly those
+     * with G ≠ B. The event or series gone at Google: google_deleted; a day no longer one, or whose row went with the read:
+     * google_conflict, the read stored. Returns whether the step stored the read and refused.
+     */
+    private function checkUndoChoice(string $do, array $out, array $s0, array $s1, array $uc, array $context): bool
+    {
+        $gid = (string) $uc['gid'];
+        $ident = (string) $uc['ident'];
+        $key = (string) $uc['key'];
+        $error = $out['ok'] ? null : (string) $out['error'];
+        $g0 = $s0['g']['digest'][$gid] ?? null;
+        $g1 = $s1['g']['digest'][$gid] ?? null;
+        $taken = $this->takenBetween($s0, $s1);
+        $undone = (int) $this->db->scalar('SELECT undone FROM mutations WHERE id = ?', [$uc['entry']]) === 1;
+        $what = ($uc['redo'] ? 'redo' : 'undo') . ' of an edit of ' . ($uc['isDay'] ? 'a day' : 'an event');
+        $context += ['entry' => $uc['entry'], 'fields' => $uc['F'], 'kind' => $what];
+        $app = array_values(array_filter(array_slice($this->stand->fake->requests, $s0['req'], $s1['req'] - $s0['req']), static fn(array $q): bool => !in_array('X-Harness: remote', $q['headers'], true)));
+        $reads = count(array_filter($app, static fn(array $q): bool => $q['method'] === 'GET'));
+        $s0ids = $this->byIdentity($s0['rows']);
+        $s1ids = $this->byIdentity($s1['rows']);
+        $held = static fn(?array $r): ?array => $r === null ? null : array_intersect_key($r, array_flip(['tags', 'people', 'reminders', 'icon', 'attendance', 'lat', 'lng', 'links']));
+        if ($g0 === null) {
+            $this->ran('x-choice', "undo: $what, deleted at Google");
+            $this->expect('x-choice', $error === 'google_deleted' && !$undone && $taken === [], "step {$this->step} ($do): the undo of an edit of something deleted at Google is refused google_deleted, nothing sent", $context + ['error' => $error]);
+            return false;
+        }
+        $l0 = $this->ldigest($s0['rows'])[$gid] ?? null;
+        $l1 = $this->ldigest($s1['rows'])[$gid] ?? null;
+        $mid = null;
+        if ($uc['isDay']) {
+            foreach (self::masters($s0['rows']) as $mr) {
+                if ((string) $mr['google_event_id'] === $gid) {
+                    $mid = (int) $mr['id'];
+                }
+            }
+            $gm = $g0['rule'];
+            $rule = 'FREQ=' . ($gm['FREQ'] ?? '') . implode('', array_map(static fn(string $k, string $v): string => ";$k=$v", array_keys(array_diff_key($gm, ['FREQ' => 1])), array_diff_key($gm, ['FREQ' => 1])));
+            $gRaw = self::dayRaw($g0, $key);
+            $isDay = $gRaw !== null && (isset($g0['records'][$key])
+                || Truth::isOccurrence(['start_utc' => $g0['start'], 'end_utc' => $g0['end'], 'rrule' => $rule, 'tzid' => $g0['zone'] ?? 'UTC', 'all_day' => $g0['allDay']], $key));
+            if ($mid === null || $l0 === null || !$isDay) {
+                $this->ran('x-choice', "undo: $what, no longer a day");
+                $this->expect('x-choice', $error === 'google_conflict' && !$undone && $taken === [], "step {$this->step} ($do): the undo of an edit of a day no longer one of the repeating event's days once the read is stored is refused google_conflict, nothing sent", $context + ['error' => $error]);
+                $this->expect('x-choice', $l1 == $g0, "step {$this->step} ($do): that refusal leaves the read stored", $context + ['diff' => self::digestDiff($g0, (array) $l1)]);
+                return !$out['ok'];
+            }
+            $G = self::rawSix($gRaw);
+            $Rest = self::rawSix(self::dayBase($s0['rows'], $mid, $key));
+            $mG = self::rawSix(self::seriesRawAt($g0, $key));
+            $m0 = self::rawSix(self::seriesRawAt($l0, $key));
+        } else {
+            $G = array_diff_key($g0, ['single' => 1]);
+            $Rest = self::rawSix($s0ids[$ident]);
+            $mG = $m0 = $G;
+        }
+        $B = $Rest;
+        foreach ($uc['F'] as $f) {
+            $B[$f] = $uc['B'][$f];
+        }
+        $W = $uc['W'];
+        $outcome = [];
+        foreach (self::CHOICE_FIELDS as $f) {
+            $outcome[$f] = in_array($f, $uc['F'], true) ? ($G[$f] === $B[$f] || $G[$f] === $W[$f] ? 'send' : 'ask') : ($G[$f] === $Rest[$f] ? 'same' : 'kept');
+        }
+        $asks = array_keys(array_filter($outcome, static fn(string $o): bool => $o === 'ask'));
+        $kept = array_keys(array_filter($outcome, static fn(string $o): bool => $o === 'kept'));
+        sort($asks);
+        sort($kept);
+        $context += ['outcomes' => $outcome];
+        $this->ran('x-choice', "undo: $what: " . ($asks !== [] ? 'asks' : ($kept !== [] ? 'keeps' : 'goes through')));
+        $this->expect('x-choice', $reads >= 1, "step {$this->step} ($do): the undo of an edit reads what Google holds first", $context + ['reads' => $reads]);
+        $told = static function (array $list): array {
+            $o = [];
+            foreach ($list as $item) {
+                $o[(string) ($item['field'] ?? '')] = $item;
+            }
+            ksort($o);
+            return $o;
+        };
+        if ($asks !== []) {
+            $this->expect('x-choice', $error === 'google_changed', "step {$this->step} ($do): the undo of an edit whose field was changed again since, to another value than before the edit, asks: 409 google_changed", $context + ['asks' => $asks, 'error' => $error]);
+            if ($error === 'google_changed') {
+                $this->expect('x-choice', (int) ($out['extra']['entry'] ?? 0) === (int) $uc['entry'], "step {$this->step} ($do): the undo's question names its entry", $context + ['told' => $out['extra']['entry'] ?? null]);
+                $byField = $told((array) ($out['extra']['fields'] ?? []));
+                $this->expect('x-choice', array_keys($byField) == $asks, "step {$this->step} ($do): the undo's question names exactly the fields changed again since", $context + ['fields' => $out['extra']['fields'] ?? null]);
+                foreach (array_intersect_key($byField, array_flip($asks)) as $f => $item) {
+                    $this->expect('x-choice', self::servedValue($f, $item['was'] ?? null) === $B[$f] && self::servedValue($f, $item['now'] ?? null) === $G[$f] && self::servedValue($f, $item['yours'] ?? null) === $W[$f],
+                        "step {$this->step} ($do): the undo's question gives each field as the entry left it (was), as Google holds it (now) and as the undo puts it back (yours)", $context + ['field' => $f, 'told' => $item, 'B' => $B[$f], 'G' => $G[$f], 'W' => $W[$f]]);
+                    if ($uc['isDay']) {
+                        $from = $mG[$f] !== $m0[$f] && $G[$f] === $mG[$f] ? 'series' : 'day';
+                        $this->expect('x-choice', ($item['from'] ?? null) === $from, "step {$this->step} ($do): the undo's question about a day says where the change was made (from)", $context + ['field' => $f, 'from' => $item['from'] ?? null, 'expected' => $from]);
+                    }
+                }
+                if ($uc['isDay']) {
+                    $day = $out['extra']['day'] ?? null;
+                    $this->expect('x-choice', is_array($day) && self::isWhole($day), "step {$this->step} ($do): the undo's question about a day names the day, whole", $context + ['dayTold' => $day]);
+                }
+            }
+            $this->expect('x-choice', !$undone && $taken === [] && $s1['g'] == $s0['g'], "step {$this->step} ($do): after the undo's question nothing is sent and the entry is not undone", $context + ['undone' => $undone, 'writes' => self::brief($taken)]);
+            $stored = $uc['isDay'] ? $l1 == $g0 : (isset($s1ids[$ident]) && self::rawSix($s1ids[$ident]) === $G);
+            $this->expect('x-choice', $stored, "step {$this->step} ($do): after the undo's question the rows hold what Google holds (the read is stored)", $context);
+            // A day's row the stored read took away (Google holds the day at the series' values again) holds nothing to compare.
+            $this->expect('x-choice', !isset($s1ids[$ident]) || $held($s1ids[$ident]) == $held($s0ids[$ident]), "step {$this->step} ($do): after the undo's question nothing held here alone is put back", $context + ['before' => $held($s0ids[$ident]), 'after' => $held($s1ids[$ident] ?? null)]);
+            return true;
+        }
+        if ($uc['isDay'] && !$out['ok'] && $error === 'google_conflict' && !isset($s1ids[$ident])) {
+            // Slice 3a, the unlikely list: "The day's row went with the stored read and nothing asks ...: the undo's whole
+            // refusal, the read stored."
+            $this->ran('x-choice', "undo: $what, its row gone with the stored read");
+            $this->expect('x-choice', !isset($g0['records'][$key]) && !$undone && $taken === [] && $l1 == $g0, "step {$this->step} ($do): an undo refused for a day's row gone with the read: Google holds the day at the series' values, nothing sent, the read stored", $context);
+            return true;
+        }
+        $this->expect('x-choice', $out['ok'] && $undone, "step {$this->step} ($do): the undo of an edit that asks about no field goes through", $context + ['error' => $error]);
+        if (!$out['ok'] || $g1 === null) {
+            return false;
+        }
+        $E = [];
+        foreach (self::CHOICE_FIELDS as $f) {
+            $E[$f] = in_array($f, $uc['F'], true) ? (in_array($f, $uc['followed'], true) ? $mG[$f] : $W[$f]) : ($outcome[$f] === 'kept' ? $G[$f] : $Rest[$f]);
+        }
+        if ($uc['isDay']) {
+            $here = $l1 === null ? null : self::dayRaw($l1, $key);
+            $there = self::dayRaw($g1, $key);
+            $here = $here === null ? null : self::rawSix($here);
+            $there = $there === null ? null : self::rawSix($there);
+        } else {
+            $here = isset($s1ids[$ident]) ? self::rawSix($s1ids[$ident]) : null;
+            $there = array_diff_key($g1, ['single' => 1]);
+        }
+        $this->expect('x-choice', $here === $E, "step {$this->step} ($do): after the undo the rows hold each field the entry changed as before it and every other as Google holds it", $context + ['here' => $here, 'expected' => $E]);
+        $this->expect('x-choice', $there === $E, "step {$this->step} ($do): after the undo Google holds each field the entry changed as before it and every other as it held it", $context + ['google' => $there, 'expected' => $E]);
+        $answer = (array) ($out['answer'] ?? []);
+        $this->expect('x-choice', array_key_exists('kept', $answer) && array_keys($told((array) $answer['kept'])) == $kept, "step {$this->step} ($do): the undo's answer names exactly the other fields changed in Google Calendar since (kept)", $context + ['kept' => $answer['kept'] ?? null, 'expected' => $kept]);
+        foreach (array_intersect_key($told((array) ($answer['kept'] ?? [])), array_flip($kept)) as $f => $item) {
+            $this->expect('x-choice', self::servedValue($f, $item['now'] ?? null) === $G[$f], "step {$this->step} ($do): the undo's answer gives a kept field as Google holds it", $context + ['field' => $f, 'now' => $item['now'] ?? null]);
+        }
+        return false;
+    }
+
     private function checkFailure(string $failure, array $out, array $s0, array $s1, array $asked, array $context): void
     {
         $taken = $this->stand->knobs->taken;
@@ -3650,7 +4016,7 @@ final class Interleave
         $this->settled($p);
     }
 
-    private function checkUndo(string $do, array $out, array $s0, array $s1, array $asked, array $context, array $taken): void
+    private function checkUndo(string $do, array $out, array $s0, array $s1, array $asked, array $context, array $taken, ?array $uc = null): void
     {
         $entry = $out['entry'] ?? ($asked['entry'] ?? null);
         $error = $out['ok'] ? null : (string) $out['error'];
@@ -3680,8 +4046,14 @@ final class Interleave
         $state = $this->entryStates[$entry] ?? null;
         if (!$out['ok']) {
             $this->ran('x-undo-fields', 'refused');
-            $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $taken === [] && $s0['g'] == $s1['g'], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
-            if ($state !== null && $this->changedSince($state, $this->byIdentity($s0['rows'])) === []) {
+            // The undo of one edit stores its read before it refuses (Slice 3a, (c)): what that refusal leaves is x-choice's.
+            if ($uc === null || !in_array($error, ['google_changed', 'google_conflict', 'google_deleted'], true)) {
+                $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $taken === [] && $s0['g'] == $s1['g'], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
+            }
+            if ($uc !== null && in_array($error, ['google_changed', 'google_conflict', 'google_deleted'], true)) {
+                return; // x-choice judged it
+            }
+            if ($state !== null && $this->changedSince($state, $this->byIdentity($s0['rows']), $uc) === []) {
                 // An undo of an entry nothing has changed since goes through (decisions.md, "An undo is stale when a poll has
                 // since brought a remote change of the same field" and "Staleness has one definition: grounds are fields"):
                 // the only refusals left are the pending gate while a change is half done, not_undoable from the release
@@ -3709,7 +4081,7 @@ final class Interleave
                         $hidden = $hidden || isset($this->remoteHidden[$d]);
                     }
                 }
-                $allowed = in_array($error, ['google_pending', 'not_undoable'], true) || ($unread && in_array($error, ['google_conflict', 'google_deleted'], true))
+                $allowed = in_array($error, ['google_pending', 'not_undoable'], true) || ($uc === null && $unread && in_array($error, ['google_conflict', 'google_deleted'], true))
                     || ($error === 'google_hidden_days' && $hides) || $hidden;
                 if (!$allowed) {
                     $this->fail('x-undo-fields', $error === 'stale_undo'
@@ -3724,7 +4096,9 @@ final class Interleave
             $this->ran('x-undo-fields', 'entry not recorded'); // made by a step the harness didn't record (a poll's)
             return;
         }
-        $this->judgeUndo($do, $state, $this->byIdentity($s0['rows']), $this->byIdentity($s1['rows']), $context);
+        // The undo of one edit stored its read first (Slice 3a, (c)): it is judged over the rows as the read left them, and the
+        // fields the comparison judged are no longer the stale check's ((d)).
+        $this->judgeUndo($do, $state, $uc === null ? $this->byIdentity($s0['rows']) : $this->undoReadStored($s0, $s1, $uc), $this->byIdentity($s1['rows']), $context, $uc);
     }
 
     /**
@@ -3840,7 +4214,31 @@ final class Interleave
      * brought a remote change of the same field", as settled 2026-11-09 after the second read; api-contract.md, `stale_undo`).
      * Staleness is the same field or the same day, never a dates change against a times change.
      */
-    private function changedSince(array $state, array $now): array
+    private function changedSince(array $state, array $now, ?array $uc = null): array
+    {
+        $since = $this->changedSinceAll($state, $now);
+        if ($uc === null || !isset($since[$uc['ident']])) {
+            return $since;
+        }
+        // Slice 3a, (d), as corrected 2026-11-16: for an entry the comparison judges, a later change to a compared field
+        // this undo puts back is the comparison's, for an event and a day alike; a place is its text and its pin together.
+        // Before the undo's fields are known (undoChoiceOf asks first), every compared field.
+        $columns = ['title' => ['title'], 'description' => ['description'], 'location' => ['location', 'lat', 'lng'], 'url' => ['url'], 'status' => ['status'],
+            'showAs' => ['showAs'], 'time' => ['start', 'end', 'allDay', 'tz']];
+        $compared = [];
+        foreach ($uc['F'] ?? array_keys($columns) as $f) {
+            $compared = array_merge($compared, $columns[$f] ?? []);
+        }
+        $left = array_values(array_diff($since[$uc['ident']], $compared));
+        if ($left === []) {
+            unset($since[$uc['ident']]);
+        } else {
+            $since[$uc['ident']] = $left;
+        }
+        return $since;
+    }
+
+    private function changedSinceAll(array $state, array $now): array
     {
         $state['after'] = self::inFrame($state['before'], $state['after']);
         $now = self::inFrame($state['before'], $now);
@@ -3874,7 +4272,12 @@ final class Interleave
             $ref = $state['before']['series:' . $m[1]] ?? $was;
             if ($is === null) {
                 $out[$d] = ['series gone'];
-            } elseif ($was['rrule'] !== null && $is['rrule'] !== null && Truth::isOccurrence($raw($was), self::shiftKey($m[2], $ref, $was)) && !Truth::isOccurrence($raw($is), self::shiftKey($m[2], $ref, $is))) {
+            } elseif ($was['rrule'] !== null && $is['rrule'] !== null && Truth::isOccurrence($raw($was), self::shiftKey($m[2], $ref, $was)) && !Truth::isOccurrence($raw($is), self::shiftKey($m[2], $ref, $is))
+                && !Truth::isOccurrence($raw($is), $m[2])) {
+                // A day whose own key is still a day of the series is one, whatever its start's clock did: a rule that names
+                // its hour (BYHOUR) keeps its days at that clock when the start moves (fresh seed 37440 case 222, the series'
+                // start moved an hour at Google and stored by an undo's read; reading the day at the start's new clock found
+                // none, a check defect).
                 $out[$d] = ['no longer an occurrence of its series'];
             }
         }
@@ -4005,7 +4408,7 @@ final class Interleave
      * was before the undo. An undo of an undo is a redo by the same rule, against the undo's own recorded states, so no
      * direction is worked out. When something the entry changed has changed again since, the undo is stale (A3).
      */
-    private function judgeUndo(string $do, array $state, array $now, array $result, array $context): void
+    private function judgeUndo(string $do, array $state, array $now, array $result, array $context, ?array $uc = null): void
     {
         // changedSince frames what it is given itself; framing twice is not a no-op when the frame's clock falls on another
         // local date than the series' clock (a series made timed west of UTC: 00:00 UTC is the evening before), so it gets
@@ -4024,7 +4427,7 @@ final class Interleave
             $rawState['exclude'] = $state['exclude'];
         }
         $change = self::entryChange($state);
-        $since = $this->changedSince($rawState, $rawNow);
+        $since = $this->changedSince($rawState, $rawNow, $uc);
         if ($since !== []) {
             $this->ran('x-undo-fields', 'stale');
             $this->fail('x-undo-fields', "step {$this->step} ($do): an undo went through though what its entry changed has changed since (step {$state['step']}): stale_undo by the rule (A3)", $context + ['since' => $since]);
@@ -4276,6 +4679,11 @@ final class Interleave
                 // An event in no series is its row, not a day of anything: its own tag moves with it when its date moves (a
                 // poll storing Google's new date, a drag here), and is gone only when its row no longer holds it.
                 $after = $s1['rows'][$rowId] ?? null;
+                if (in_array($do, self::UNDO_KINDS, true) && isset($this->singles[(string) ($asked['gid'] ?? '')]) && $this->singles[(string) $asked['gid']] === $rowId) {
+                    // The undo of a change to an event in no series reaches the event itself, on whatever date its change
+                    // left it (an undo's allowance is keyed by the date the change was asked on).
+                    continue;
+                }
                 if ($after !== null && $after['recurrence_parent_id'] === null && $after['rrule'] === null
                     && isset(self::alone([$rowId => $after])[self::dayOf($after, null)][$item])) {
                     continue;

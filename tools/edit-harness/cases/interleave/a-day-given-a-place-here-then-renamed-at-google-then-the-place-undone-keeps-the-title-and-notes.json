@@ -1,0 +1,32 @@
+{
+    "about": "One day given a place here, then that day renamed and given notes at Google, not yet read, then the place undone: goes through, the place back to the series', the title and notes kept and named (Slice 3a, case 2; x-choice).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.5,
+            "what": "location",
+            "mark": "d"
+        },
+        {
+            "do": "r-exc+",
+            "pick": 0.5
+        },
+        {
+            "do": "u-entry",
+            "pick": 0,
+            "entryOf": "d"
+        }
+    ]
+}

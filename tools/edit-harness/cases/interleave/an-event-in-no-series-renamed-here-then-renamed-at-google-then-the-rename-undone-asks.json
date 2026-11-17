@@ -1,0 +1,48 @@
+{
+    "about": "An event in no series renamed here, then renamed again at Google by another client, not yet read, then the rename undone: the title was changed again since, to another value than before the rename, so the undo asks, 409 google_changed with the entry, nothing sent, the read stored, the entry not undone (google-conflict-choice.md, Slice 3a, case 5; x-choice).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-create",
+            "pick": 0.25,
+            "single": true,
+            "zone": "America/Los_Angeles",
+            "clock": "15:00"
+        },
+        {
+            "do": "w-single",
+            "pick": 0,
+            "how": "edit",
+            "fields": [
+                "title"
+            ],
+            "tags": false,
+            "shown": "earlier",
+            "mark": "s"
+        },
+        {
+            "do": "r-single",
+            "pick": 0,
+            "fields": [
+                "title"
+            ],
+            "same": []
+        },
+        {
+            "do": "u-entry",
+            "pick": 0,
+            "entryOf": "s"
+        }
+    ]
+}

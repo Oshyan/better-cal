@@ -1,0 +1,38 @@
+{
+    "about": "A weekly series whose rule names its hour (BYDAY=MO;BYHOUR=9;BYMINUTE=30, Berlin), one day renamed and tagged here, another day deleted, then the series start moved an hour at Google by another client, not yet read, then the rename undone: the undo reads and stores the series, whose days stay at 09:30 by the rule, so the day is still a day and the undo goes through (Slice 3a; x-choice, x-undo-fields). Fresh seed 37440 case 222, shrunk: the harness read the day at the start's new clock and called it stale, a check defect.",
+    "series": {
+        "family": "onehour",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30",
+        "import": false,
+        "bound": "until",
+        "boundAt": 11,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2028-02-28 09:30",
+        "length": 120
+    },
+    "steps": [
+        {
+            "do": "w-this-m",
+            "pick": 0.095,
+            "what": "title+tags",
+            "onRemote": false,
+            "byRow": false
+        },
+        {
+            "do": "w-del1",
+            "pick": 0.445,
+            "onRemote": false,
+            "byRow": true
+        },
+        {
+            "do": "r-time",
+            "pick": 0.571
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.527
+        }
+    ]
+}

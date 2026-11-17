@@ -3,8 +3,8 @@
 // back into view and every 30 minutes; a page left open on screen could run
 // the old code against the updated server for up to that long. The server
 // reports the version it now serves in the 30-second change check (App.js),
-// so a page that differs looks right away, and then takes the new version at
-// its next page change (drafts.js) as well as when it's hidden.
+// so a page that differs looks right away, and then takes the new version as
+// soon as nothing would be lost (drafts.js).
 
 // main.js is loaded as /assets/src/app/main.js?v=<version> (Http\AppShell).
 export const pageVersion = (() => {

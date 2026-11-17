@@ -26,6 +26,18 @@
 // toasts, a confirm or password step-up), which is above everything. Full-screen modals don't use this for
 // themselves: their own backdrop receives the click.
 
+// The layers open now, from the DOM: every root marked data-layer. The top
+// ones (toasts, a confirm, a password step-up) only when `top` is asked for.
+// The one place that says what is open above the page: the keyboard asks it
+// whether a shortcut may act (keyboard.js), and a new version asks it
+// whether a reload would lose anything (drafts.js, whatWouldBeLost).
+export function openLayers({ top = false } = {}) {
+  try {
+    const all = [...document.querySelectorAll('[data-layer]')];
+    return top ? all : all.filter((el) => el.getAttribute('data-layer') !== 'top');
+  } catch { return []; }
+}
+
 let swallowNextClick = false;
 let armedAt = 0;
 

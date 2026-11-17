@@ -12,6 +12,7 @@ import {
 } from './actions.js';
 import { HOTKEYS } from './hotkeys.js';
 import { isMobile } from '../ui/DayExpand.js';
+import { openLayers } from '../ui/outside.js';
 
 function isTyping() {
   const el = document.activeElement;
@@ -116,12 +117,6 @@ export const handlers = {
 // key closes the palette. A top layer (a toast) holds no input and takes
 // nothing. The event panel is not a layer: its keys (e, r, Delete, [ ])
 // work while it is open.
-function openLayers() {
-  try {
-    return [...document.querySelectorAll('[data-layer]')].filter((el) => el.getAttribute('data-layer') !== 'top');
-  } catch { return []; }
-}
-
 // A shortcut may act with these layers open: only the palette's key, to
 // close the palette when it is the one open.
 export function shortcutActs(id, layers = openLayers()) {

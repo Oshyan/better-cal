@@ -34,7 +34,20 @@ export class ApiError extends Error {
  */
 export const NOT_MODIFIED = Symbol('not modified');
 
-export async function api(path, { method = 'GET', body, formData, signal, ifNoneMatch = null } = {}) {
+// Writes sent and not yet answered, and calendar list writes shown but not
+// yet sent (writeCalendars). A reload now would lose their answer: the
+// toast's Undo, or putting back what a failed one showed (drafts.js,
+// whatWouldBeLost). A read in flight loses nothing; the next page asks again.
+let writing = 0;
+export const writesPending = () => writing + calendarsUnsaved;
+
+export async function api(path, opts = {}) {
+  if (!opts.method || opts.method === 'GET') return request(path, opts);
+  writing++;
+  try { return await request(path, opts); } finally { writing--; }
+}
+
+async function request(path, { method = 'GET', body, formData, signal, ifNoneMatch = null } = {}) {
   const requestEpoch = authEpoch;
   if (method !== 'GET' && state.offlineReadOnly && path !== '/auth/login') {
     // The cached /me deliberately contains no CSRF value. Re-establish the

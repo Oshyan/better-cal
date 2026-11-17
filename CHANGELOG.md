@@ -4,6 +4,46 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 1.5.9 (2026-11-16)
+
+Google calendars, finishing what 1.5.7 started: one day of a repeating event, and Undo. Also a location's text read before any lookup, and more kept about where an event came from.
+
+**Google calendars**
+- **One day of a repeating event gets the choice a single event got in 1.5.7.** A change in Google Calendar to another day, or to something you are not changing, no longer stops yours: it goes through, and the toast says what was kept. A change to the same thing asks, Cancel or Overwrite, and says whether that day or the whole repeating event changed. A delete asks over any change to that day.
+- **Undo of an edit to one event or one day goes back the same way.** It no longer refuses because something else changed in Google Calendar. It asks only when what it would put back was changed again, showing both values, with Cancel or Undo anyway.
+- **Marking one day Maybe and then Planned again works.** It answered "not found" and showed Maybe until the next check; the same for a day's title or time put back to the repeating event's.
+- **An event you make on a Google calendar no longer shows as new** for its first day.
+- Not yet covered, as before: undo of a change to all events ([#235](https://github.com/Oshyan/better-cal/issues/235)).
+
+**Places**
+- **Text that names no place is never looked up:** a link, a meeting service, a phone number, "location comes later", a room by itself. The event shows the text with no pin and no Directions.
+- **An address is found after a dash, @, / or | as well as a comma,** and typed coordinates are used as they are.
+- A note after a venue ("with Alex") is left out of the lookup.
+
+**Import**
+- **An import leaves out a day you deleted from a repeating event,** and a day you moved to another calendar or kept as an event of its own, and says which: "1 left out because it is now in 'Work'".
+
+**Undo, Activity and people**
+- **A refused undo names the day and the later change in its way.**
+- **Activity names the API key behind a change,** also after the key is revoked.
+- **Merging two people by renaming one keeps both sets of notes** and everything else either had.
+- "Repeating event" wherever the app said "series".
+
+**The app**
+- **After an update the app reloads by itself** when nothing would be lost. With an editor, a draft or a question open it offers instead, and reloads once that is closed.
+
+**Kept from now on**
+- An event made out of another keeps where it came from: a day moved to another calendar or kept as an event of its own, the later part of "this and following", a copy. The import above reads it; nothing else shows it yet.
+
+**What an upgrade changes or loses**
+- Nothing is lost.
+- Days moved, splits and copies made before the update carry no link to where they came from, so an import counts a day moved earlier as removed. Changes made before the update name no API key, and events made on a Google calendar before it stay recorded as arriving from Google.
+- In the editor, a day's own values are labelled "location" and "notes".
+
+For API and plugin users ([docs/api-contract.md](docs/api-contract.md)): a change to one day of a repeating event takes `over` and answers with `kept` or 409 `google_changed` (with `day` and each field's `from`); `POST /activity/:id/undo` takes `over`; `POST /undo` takes `past`, and its refusals carry `entry`; `cameFrom` and `noPlace` on an event; `movedAway` and `keptAsOwn` on an import's answer; `key` on an Activity entry.
+
+Operators: two migrations (new columns only, nothing rewritten); `update.php` or the update page as usual.
+
 ## 1.5.8 (2026-11-16)
 
 Everyday use: quick add, search, tags, filters, phones and calendar apps, and plainer words throughout.

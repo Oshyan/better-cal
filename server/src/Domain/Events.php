@@ -604,19 +604,36 @@ final class Events
             $googleFields = [];
         }
         $this->googleCommit($authority, function () use ($calendar, $resp, $body, $id, $userId, $localFields, $in, $event): void {
+            $held = function () use ($id, $userId, $localFields, $in): void {
+                if ($localFields !== []) {
+                    $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
+                }
+                if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
+                    $this->labels->setEventTags($userId, $id, $in['tagNames']);
+                }
+                $this->applyPeoplePatch($userId, $id, $in);
+            };
+            // A day's row exists for its own fields and for whatever refers to
+            // it. What the request sets that is held here alone (tags,
+            // people, reminders, coordinates) is written, and listed as the
+            // day's own, before Google's answer is stored, as googlePatchThis
+            // writes a day's row first: the store then keeps the row when
+            // the request gives the day something of its own, and takes it
+            // only when the request leaves it nothing.
+            $day = !empty($event['recurrence_parent_id']);
+            if ($day) {
+                $held();
+                $this->ownAfterRowEdit($event, array_intersect_key($in, array_flip(\BetterCal\Domain\Series\OwnFields::feedEditKeys())));
+            }
             if ($resp !== null) {
                 $this->google()->apply($calendar, [$resp], GoogleWriter::sendsRecurrence($body));
             }
-            if (!empty($event['recurrence_parent_id']) && $this->leftAfter($id)[0] === null) {
-                return; // the day has nothing of its own left: an ordinary day again, its row gone with the answer
+            if ($day && $this->leftAfter($id)[0] === null) {
+                return; // nothing of its own left: an ordinary day again, its row gone with the answer
             }
-            if ($localFields !== []) {
-                $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
+            if (!$day) {
+                $held();
             }
-            if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
-                $this->labels->setEventTags($userId, $id, $in['tagNames']);
-            }
-            $this->applyPeoplePatch($userId, $id, $in);
             $this->ownAfterRowEdit($event, $in);
         });
         // A write that leaves a day with nothing of its own is a success, the

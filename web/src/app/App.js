@@ -204,7 +204,7 @@ export function App() {
       // Closed by opening a page (Settings, People, ...): the page takes over
       // this entry rather than stacking another on it.
       if (state.route && state.route !== 'calendar') history.replaceState({ bcRoute: state.route }, '');
-      else history.back();
+      else stepBack(1);
     };
   }, [sidebarOpen]);
   useEffect(() => installDrawerSwipe({

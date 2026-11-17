@@ -23,6 +23,7 @@ import { collapseDuplicates } from '../ui/duplicates.js';
 import { EmptyState } from './PageShell.js';
 import { quickAddFallback } from './commands.js';
 import { occurrenceDaySpan, isOvernight } from '../ui/monthmath.js';
+import { stepBack } from './historysteps.js';
 
 // "Fri, Oct 9 · 3:00 AM"; the year only when it isn't this one (0.6.9).
 // All-day says so, and something longer than a day says when it ends: a
@@ -145,7 +146,7 @@ export function SearchOverlay() {
         if (state.popover) history.replaceState({ bcSheet: 1 }, '');
         // Quick add from an empty search takes the entry over (backclose.js).
         else if (state.quickAddOpen) history.replaceState({ bcSheet: 1, bcHandoff: 1 }, '');
-        else history.back();
+        else stepBack(1);
       }
     };
   }, [open, phone]);

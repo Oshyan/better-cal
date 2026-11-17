@@ -46,6 +46,7 @@ import { creationLine } from '../lib/seriesplan.js';
 import { seriesScopes } from './scopes.js';
 import { timeOf, comparedOne } from './googlechange.js';
 import { fieldNoun, useSeriesLabel } from '../lib/planwords.js';
+import { stepBack } from './historysteps.js';
 
 const BYDAY = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
 
@@ -725,7 +726,7 @@ export function EditorDrawer() {
       // Back to the event it was opened from (0.7.3): the sheet takes this entry again.
       if (!popped && history.state && history.state.bcEditor) {
         if (state.popover) history.replaceState({ bcSheet: 1 }, '');
-        else history.back();
+        else stepBack(1);
       }
     };
   }, [phoneOpen]);

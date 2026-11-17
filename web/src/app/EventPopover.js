@@ -38,6 +38,7 @@ import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
 import { onOutsidePress, insideAny, swallowClickOfThisPress, opensEvent } from '../ui/outside.js';
 import { EventSheetBody } from './EventSheetBody.js';
 import { TripSheetBody } from './Trips.js';
+import { stepBack } from './historysteps.js';
 
 // Sheet gestures (phones): movement before a touch counts as a drag or a
 // swipe, and how far a release must travel to change the sheet.
@@ -182,7 +183,7 @@ export function EventPopover() {
       // stacking another; "‹ Search" hands it back to search (0.7.3).
       if (!poppedRef.current && history.state && history.state.bcSheet && !state.editor) {
         if (state.searchOpen) history.replaceState({ bcSearch: 1 }, '');
-        else history.go(-(1 + stepsRef.current));
+        else stepBack(1 + stepsRef.current);
       }
       poppedRef.current = false;
       stepsRef.current = 0;
@@ -202,7 +203,7 @@ export function EventPopover() {
       const n = stepsRef.current - steps;
       stepsRef.current = steps;
       ignorePopRef.current += 1;
-      history.go(-n);
+      stepBack(n);
     }
   }, [sheet, steps]);
 

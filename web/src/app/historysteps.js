@@ -7,21 +7,36 @@
 // goes back from the new one instead. Entries get stepped over and Back
 // bounces between surfaces.
 //
-// So surfaces that hand over to each other step back through stepBack(),
-// and push their entries inside afterHistorySettles(), which runs at once
+// So every step back the app takes goes through stepBack(), and surfaces
+// that hand over to each other push their entries inside
+// afterHistorySettles(), which runs at once
 // when nothing is in flight and otherwise right after the step's popstate.
 
 let inFlight = 0;
 
-if (typeof window !== 'undefined') {
-  // Registered at module load, so it runs before the listeners below.
+/**
+ * Steps back this app asked for that have not landed yet. Every step back
+ * the app takes goes through stepBack, so this is the one count of them: a
+ * reload begun before one lands is cancelled by it (drafts.js, whatWouldBeLost).
+ */
+export const stepsInFlight = () => inFlight;
+
+let listening = null; // the window listened on
+function listen() {
+  if (typeof window === 'undefined' || listening === window) return;
+  listening = window;
   window.addEventListener('popstate', () => { if (inFlight > 0) inFlight -= 1; });
 }
+// Registered at module load, so it runs before the listeners below (and
+// again at a step, for a window that was not there at load: the tests'
+// stand-in pages).
+listen();
 
 // Step back n entries. Only for entries this app knows are there: a step
 // past the start never lands, and nothing would ever settle.
 export function stepBack(n = 1) {
   if (n < 1) return;
+  listen();
   inFlight += 1;
   history.go(-n);
 }

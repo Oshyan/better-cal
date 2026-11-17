@@ -39,7 +39,7 @@ globalThis.location = { search: '', replace: (u) => replaced.push(u) };
 set({ booted: true, authed: false });
 
 // --- the rule over a snapshot: each input alone holds the reload ---------------
-const quiet = { layers: 0, forms: 0, question: false, toasts: 0, moving: false, typing: false, writes: 0, starting: false };
+const quiet = { layers: 0, forms: 0, question: false, toasts: 0, moving: false, typing: false, writes: 0, starting: false, steps: 0 };
 assert.deepEqual(whatWouldBeLost(quiet), [], 'nothing open: nothing would be lost');
 for (const key of Object.keys(quiet)) {
   const one = { ...quiet, [key]: typeof quiet[key] === 'number' ? 1 : true };
@@ -140,12 +140,15 @@ page.layers = [];
 drafts.reloadIfReady();
 assert.equal(replaced.length, 1, 'the editor closed: the page reloads by itself');
 assert.match(replaced[0], /^\/\?updated=/, 'by the same path as the banner\'s Reload');
-assert.equal(sessionStorage.getItem('bc-reloaded-for'), 'bc-v2', 'the version it reloaded for is written down');
+assert.equal(sessionStorage.getItem('bc-reload-attempt'), 'bc-v2', 'the version it is leaving for is written down as an attempt');
+assert.equal(sessionStorage.getItem('bc-reloaded-for'), null, 'not yet as a reload made');
 drafts.reloadIfReady();
 assert.equal(replaced.length, 1, 'once only while it leaves');
 
 // The page after that reload (a module of its own), still told of the same version.
 const after = await import('../src/app/drafts.js?after-reload');
+after.checkReloadTook(); // main.js, arriving with the marker: the attempt navigated
+assert.equal(sessionStorage.getItem('bc-reloaded-for'), 'bc-v2', 'the document that navigation brought counts it as a reload made');
 set({ appUpdateReady: false });
 after.newVersionActive('bc-v2');
 assert.equal(replaced.length, 1, 'reloaded for this version once already: no second reload');
@@ -157,7 +160,7 @@ assert.equal(replaced.length, 1, 'and none at the next change either');
 const next = await import('../src/app/drafts.js?next-version');
 next.newVersionActive('bc-v3');
 assert.equal(replaced.length, 2, 'a new version and nothing open: the page reloads right away');
-assert.equal(sessionStorage.getItem('bc-reloaded-for'), 'bc-v3');
+assert.equal(sessionStorage.getItem('bc-reload-attempt'), 'bc-v3');
 
 // --- an answer of yes holds the reload until its request is counted ----------------
 // The page as the browser runs it (as in the review probe): a render queued
@@ -248,6 +251,76 @@ for (const [name, after] of [['throws', () => { throw new Error('invented failur
 }
 rule = null;
 
+// --- a step back the app asked for holds the reload until it lands ---------------
+// On a phone a layer closing takes its history entry off with a step back
+// (backclose.js, historysteps.js). The step lands later, with a popstate,
+// and a reload begun before it is cancelled by it (the page stays).
+const { stepBack, stepsInFlight } = await import('../src/app/historysteps.js');
+const winListeners = [];
+globalThis.window = {
+  addEventListener: (type, fn) => winListeners.push([type, fn]),
+  removeEventListener: (type, fn) => { const i = winListeners.findIndex(([t, f]) => t === type && f === fn); if (i >= 0) winListeners.splice(i, 1); },
+};
+const goes = [];
+globalThis.history = { go: (n) => goes.push(n), state: null };
+const land = async () => { for (const [t, fn] of [...winListeners]) if (t === 'popstate') fn({ state: null }); await tick(); };
+let m = 0;
+// One page at a time: the page before this one (a module of its own) stops listening.
+const fresh = async () => {
+  for (let i = winListeners.length - 1; i >= 0; i--) if (String(winListeners[i][1]).includes('stepLanded')) winListeners.splice(i, 1);
+  return import('../src/app/drafts.js?steps-' + (++m));
+};
+
+// A layer whose close steps back, with an update waiting.
+let r = await fresh();
+let before = replaced.length;
+page.layers = [layer('')];
+r.newVersionActive('bc-h1');
+assert.equal(state.appUpdateReady, true, 'quick add open: the offer');
+stepBack(1); // its close takes its entry off
+page.layers = [];
+r.reloadIfReady(); // the observer: the layer left the page
+assert.deepEqual(whatWouldBeLost(), ['steps'], 'the step not landed holds the reload');
+assert.equal(replaced.length, before, 'no reload before the step lands');
+await land();
+assert.equal(stepsInFlight(), 0, 'the step landed');
+assert.equal(replaced.length, before + 1, 'one reload once it has');
+assert.deepEqual(goes, [-1]);
+
+// A step that never lands: the offer stays and the rule is not stranded.
+r = await fresh();
+before = replaced.length;
+set({ appUpdateReady: false });
+page.layers = [layer('')];
+r.newVersionActive('bc-h2');
+stepBack(1);
+page.layers = [];
+r.reloadIfReady();
+r.reloadIfReady();
+assert.equal(replaced.length, before, 'a step not landed: no reload');
+assert.equal(state.appUpdateReady, true, 'the offer stays, its Reload still works');
+await land();
+assert.equal(replaced.length, before + 1, 'when it does land, the rule applies again');
+
+// A reload begun and then cancelled by a step landing in this document: the
+// attempt is not a reload made, and the rule applies again.
+r = await fresh();
+before = replaced.length;
+sessionStorage.removeItem('bc-reloaded-for');
+r.newVersionActive('bc-h3');
+assert.equal(replaced.length, before + 1, 'nothing open: the reload begins');
+assert.equal(sessionStorage.getItem('bc-reload-attempt'), 'bc-h3');
+r.reloadIfReady();
+assert.equal(replaced.length, before + 1, 'while leaving, the page asks nothing');
+await land(); // a step the app did not count (Back pressed) lands: the document is still here
+assert.equal(replaced.length, before + 2, 'still here after a step landed: the rule applies again and reloads');
+assert.equal(sessionStorage.getItem('bc-reloaded-for'), null, 'the cancelled attempt never counted as a reload made');
+assert.equal(r.decideReload({ version: 'bc-h3', page: 'bc-old', lost: [] }), 'reload', 'so the guard still allows the real one');
+r.checkReloadTook();
+assert.equal(sessionStorage.getItem('bc-reloaded-for'), 'bc-h3', 'the reload that arrived is the one counted');
+
+delete globalThis.window;
+delete globalThis.history;
 set({ appUpdateReady: false, toasts: [] });
 Object.assign(globalThis, saved);
 console.log('Reload-for-a-new-version tests passed');

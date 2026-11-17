@@ -20,7 +20,9 @@ globalThis.ResizeObserver ??= Watcher;
 // The phone's sheet and search keep a history entry of their own.
 const hadHistory = 'history' in globalThis, savedHistory = globalThis.history;
 const hadMatchMedia = 'matchMedia' in globalThis, savedMatchMedia = globalThis.matchMedia;
-globalThis.history = { state: null, pushState(st) { this.state = st; }, replaceState(st) { this.state = st; }, back() { this.state = null; }, go() { this.state = null; } };
+// A step back lands later, with a popstate, as in a browser (historysteps.js counts it until then).
+const land = () => setImmediate(() => dom.win.dispatch('popstate', { state: null }));
+globalThis.history = { state: null, pushState(st) { this.state = st; }, replaceState(st) { this.state = st; }, back() { this.state = null; land(); }, go() { this.state = null; land(); } };
 globalThis.matchMedia = (q) => dom.win.matchMedia(q);
 const { options } = await import('../vendor/preact.module.js');
 const savedRaf = options.requestAnimationFrame;

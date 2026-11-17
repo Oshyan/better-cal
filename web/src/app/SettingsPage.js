@@ -35,6 +35,7 @@ import {
 } from '../lib/batterytip.js';
 import { TimedDefault, AllDayDefault } from './ReminderDefaults.js';
 import { askConfirm } from './ConfirmDialog.js';
+import { stepBack } from './historysteps.js';
 
 const VIEW_OPTIONS = [
   ['month', 'Month'], ['weeks3', '3 weeks'], ['weeks2', '2 weeks'],
@@ -934,7 +935,7 @@ export function SettingsPage() {
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
-      if (!popped && history.state && history.state.bcSetSection) history.back();
+      if (!popped && history.state && history.state.bcSetSection) stepBack(1);
     };
   }, [phone, chosen]);
 
@@ -953,7 +954,7 @@ export function SettingsPage() {
   return html`<${PageShell}
     title=${sectionLabel}
     note=${phone ? null : 'Changes are saved as you make them.'}
-    back=${phone ? { label: 'Settings', onClick: () => history.back() } : null}
+    back=${phone ? { label: 'Settings', onClick: () => stepBack(1) } : null}
   >
     ${!phone && html`<div class="bc-tabs" role="tablist" aria-label="Settings sections">
       ${SETTINGS_TABS.map(([id, label]) => html`<button

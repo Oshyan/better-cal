@@ -30,6 +30,7 @@ import { pageVersion } from './appversion.js';
 import { writesPending } from './api.js';
 import { questionPending } from './ConfirmDialog.js';
 import { openLayers } from '../ui/outside.js';
+import { stepsInFlight } from './historysteps.js';
 
 const EDITOR_KEY = 'bc-editor-draft';
 const QUICKADD_KEY = 'bc-quickadd-draft';
@@ -205,6 +206,7 @@ export function pageNow() {
     typing,
     writes: writesPending(),
     starting: !state.booted,
+    steps: stepsInFlight(),
   };
 }
 
@@ -226,14 +228,29 @@ export function pageNow() {
  *   writes   a write sent and not yet answered (api.js)
  *   starting the app has not finished starting: a link or a share it was
  *            opened with is not yet where it goes
+ *   steps    a step back in history the app asked for (a layer closing on
+ *            a phone takes its entry off) has not landed: landing, it would
+ *            cancel a reload begun before it (historysteps.js)
  */
 export function whatWouldBeLost(now = pageNow()) {
   return Object.keys(now).filter((k) => !!now[k]);
 }
 
 // The version this tab last reloaded for, by itself or from the banner.
+// Kept apart from an attempt: reloadForUpdate writes the version it is
+// leaving for as an attempt, and only the document that navigation brings
+// (main.js, the address's marker: checkReloadTook) makes it the version
+// reloaded for. An attempt that never navigated is not a reload made.
 const RELOADED_FOR = 'bc-reloaded-for';
-const reloadedFor = () => { try { return sessionStorage.getItem(RELOADED_FOR); } catch { return null; } };
+const ATTEMPT = 'bc-reload-attempt';
+const session = (key, value) => {
+  try {
+    if (value === undefined) return sessionStorage.getItem(key);
+    if (value === null) sessionStorage.removeItem(key); else sessionStorage.setItem(key, value);
+  } catch { /* no session storage: no guard, the banner's Reload only */ }
+  return null;
+};
+const reloadedFor = () => session(RELOADED_FOR);
 
 /**
  * What to do about `version` being active: 'none' when this page already
@@ -248,7 +265,7 @@ export function decideReload({ version, page = pageVersion, tried = reloadedFor(
 
 let readyVersion = null; // the version active behind this page, once one is
 let offered = false;
-let leaving = false; // the reload has begun: what happens until the page unloads asks nothing
+let leaving = false; // the reload has begun: until the page unloads, or a step back lands in it, nothing is asked
 let watching = false;
 
 // A fresh navigation rather than location.reload(), so the document is asked
@@ -262,7 +279,7 @@ export const UPDATED_PARAM = 'updated';
 export function reloadForUpdate() {
   saveResume();
   try { localStorage.setItem(UPDATE_FLAG, '1'); } catch { /* the start log just says reload */ }
-  try { sessionStorage.setItem(RELOADED_FOR, String(readyVersion || '')); } catch { /* no guard here: the banner's Reload only */ }
+  session(ATTEMPT, String(readyVersion || ''));
   location.replace('/?' + UPDATED_PARAM + '=' + Date.now().toString(36));
 }
 
@@ -293,7 +310,23 @@ function watch() {
     // page reads as having none focused.
     document.addEventListener('focusout', (e) => { if (!e.relatedTarget) reloadIfReady(); });
     document.addEventListener('visibilitychange', reloadIfReady);
+    // After every popstate listener, historysteps.js's count among them,
+    // whichever registered first.
+    window.addEventListener('popstate', () => queueMicrotask(stepLanded));
   } catch { /* no document: the banner's Reload is the way */ }
+}
+
+// A step back landed (historysteps.js counted it off first). A traversal
+// that lands in this document after a reload began cancelled that reload:
+// the document is still here, which a popstate proves, since it is
+// delivered only to the document the step lands in. The attempt is not a
+// reload made, and the rule applies again.
+export function stepLanded() {
+  if (leaving) {
+    leaving = false;
+    session(ATTEMPT, null);
+  }
+  reloadIfReady();
 }
 
 /** main.js: `version` is active behind this page. */
@@ -310,6 +343,8 @@ export function newVersionActive(version) {
  * take: offer it, never reload again.
  */
 export function checkReloadTook() {
+  const attempt = session(ATTEMPT);
+  if (attempt != null) { session(RELOADED_FOR, attempt); session(ATTEMPT, null); }
   const tried = reloadedFor();
   if (!tried || !pageVersion || tried === pageVersion) return;
   readyVersion = tried;

@@ -1,0 +1,32 @@
+{
+    "about": "A daily series in Auckland whose next day is made free at Google by another client, not yet read, then that day moved an hour through its own row (the read stores the day from Google record, a row owning its free or busy), then that move undone: the undo takes back only the time the move gave the day, which keeps owning its free or busy. Fresh seed 75790 case 51, shrunk: the harness built the rows as the read left them with the row the move left, its own time included, so it expected the undo to keep owning the time, a check defect (google-conflict-choice.md, Slice 2, (e): the read is stored as a read-back is; series-model.md, Google as a Contract).",
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "until",
+        "boundAt": 4,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "start": "2027-05-03 01:30",
+        "length": 120
+    },
+    "steps": [
+        {
+            "do": "r-free",
+            "pick": 0.682
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.584,
+            "what": "time",
+            "onRemote": true,
+            "byRow": true
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.149
+        }
+    ]
+}

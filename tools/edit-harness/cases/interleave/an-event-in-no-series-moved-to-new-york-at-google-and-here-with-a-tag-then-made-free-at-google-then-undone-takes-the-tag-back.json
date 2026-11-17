@@ -1,0 +1,77 @@
+{
+    "about": "An event in no series at 15:00 UTC moved at Google to the same clocks in New York that the change here then sends, with a tag, then made free at Google, then the change undone: Google already held the time and zone, so the change itself sent nothing and its entry changed only the tag; the undo takes the tag back and goes through. Fresh seed 75790 case 66, shrunk: the harness built the rows as the read left them without the zone the read stored, so the entry read as a change of the zone (x-conflict expected the whole refusal; x-undo-fields expected the zone back), a check defect (google-conflict-choice.md, slice 1, the step: the read stored as a poll stores it; T1, a time is one value, its zone included).",
+    "series": {
+        "family": "yearly_day",
+        "rrule": "FREQ=YEARLY;BYMONTH=5;BYMONTHDAY=22",
+        "import": false,
+        "bound": "none",
+        "boundAt": 2,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "start": "2027-05-07 21:15",
+        "length": 90
+    },
+    "steps": [
+        {
+            "do": "w-create",
+            "pick": 0.305,
+            "single": true,
+            "zone": "UTC",
+            "clock": "15:00"
+        },
+        {
+            "do": "r-single",
+            "pick": 0,
+            "fields": [
+                "time"
+            ],
+            "same": [
+                "time"
+            ],
+            "mineTime": {
+                "form": "zone",
+                "days": 2,
+                "secs": 0,
+                "zone": "America/New_York",
+                "tz": "shown",
+                "typed": false,
+                "clocks": null
+            }
+        },
+        {
+            "do": "w-single",
+            "pick": 0,
+            "how": "edit",
+            "fields": [
+                "time"
+            ],
+            "tags": true,
+            "shown": "earlier",
+            "mark": "s",
+            "time": {
+                "form": "zone",
+                "days": 2,
+                "secs": 0,
+                "zone": "America/New_York",
+                "tz": "shown",
+                "typed": false,
+                "clocks": null
+            },
+            "overClock": true
+        },
+        {
+            "do": "r-single",
+            "pick": 0,
+            "fields": [
+                "showAs"
+            ],
+            "same": []
+        },
+        {
+            "do": "u-entry",
+            "pick": 0,
+            "entryOf": "s"
+        }
+    ]
+}

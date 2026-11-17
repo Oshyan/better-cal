@@ -759,6 +759,23 @@ final class OracleProbes
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => false, 'error' => 'google_conflict', 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s0];
                 }],
+            // The rows as the read left them (fresh seed 75790): the corrected readings still catch what they are for.
+            ['check' => 'x-undo-fields', 'what' => "the undo of a day's move leaves the day owning the time the move gave it", 'case' => 'a-day-made-free-at-google-then-moved-by-its-row-then-the-move-undone-keeps-its-marking', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($day): array {
+                    foreach ($s1['rows'] as $id => $r) {
+                        if ($day($r)) {
+                            $own = array_values(array_unique(array_merge($r['own'], ['time'])));
+                            sort($own);
+                            $s1['rows'][$id]['own'] = $own;
+                        }
+                    }
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-undo-fields', 'what' => "the undo of a tag on an event puts back the zone it had before Google's read was stored", 'case' => 'an-event-in-no-series-moved-to-new-york-at-google-and-here-with-a-tag-then-made-free-at-google-then-undone-takes-the-tag-back', 'step' => 5,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $s1['rows'][$this->singles[(string) $this->single]]['tzid'] = 'UTC';
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
         ];
     }
 

@@ -980,7 +980,10 @@ final class Interleave
         }
         return ['rows' => $rows, 'l' => $this->lstate($rows), 'g' => $this->gstate(), 'req' => count($this->stand->fake->requests), 'here' => $this->here(),
             'differs' => (int) $this->db->scalar("SELECT COUNT(*) FROM review_items WHERE user_id = ? AND kind = 'google_differs'", [$this->userId]),
-            'mut' => (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) FROM mutations WHERE user_id = ?', [$this->userId]), 'half' => GoogleSeries::halfDoneOf($this->db, $this->userId)];
+            'mut' => (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) FROM mutations WHERE user_id = ?', [$this->userId]), 'half' => GoogleSeries::halfDoneOf($this->db, $this->userId),
+            // The zone each event in no series holds at the stand-in (the six fields leave it out: the zone is not compared),
+            // for the rows the conflict choice's read leaves (withReadStored).
+            'gzone' => array_map(fn(int $id): ?string => $this->stand->fake->events[array_search($id, $this->singles, true)]['start']['timeZone'] ?? null, $this->singles)];
     }
 
     /** What a refusal must leave as it was beyond the comparable rows: every row's Google etag and the calendar's sync token. */
@@ -2939,6 +2942,11 @@ final class Interleave
         $rows = $s0['rows'];
         $rows[$id] = ['title' => $g['title'], 'description' => $g['description'], 'location' => $g['location'], 'url' => $g['url'], 'status' => $g['status'] ? 'tentative' : 'confirmed', 'show_as' => $g['showAs'] ? 'free' : 'busy',
             'start_utc' => gmdate('Y-m-d H:i:s', $g['time'][0]), 'end_utc' => gmdate('Y-m-d H:i:s', $g['time'][1]), 'all_day' => $g['time'][2] ? 1 : 0] + $rows[$id];
+        // The zone with it: the read is stored "as a poll stores it" (google-conflict-choice.md, slice 1, the step), and a
+        // time is one value, its zone included (T1); an all-day one in UTC (api-contract.md, Time Zones and All-Day Events).
+        // Before, the zone was left as the row had it, so an entry whose only Google change was the zone Google already
+        // held read as a change of the zone (fresh seed 75790 case 66).
+        $rows[$id]['tzid'] = $g['time'][2] ? 'UTC' : ($s0['gzone'][$gid] ?? $rows[$id]['tzid']);
         return $this->byIdentity($rows);
     }
 
@@ -3283,7 +3291,22 @@ final class Interleave
         if (isset($was[$ident])) {
             $before[$ident] = $google + $was[$ident];
         } elseif ($g0 !== null && isset($g0['records'][$key]) && isset($before[$ident])) {
-            $before[$ident] = $google + $before[$ident];
+            // A row the store made from Google's record of the day: it owns what that record holds otherwise than the series
+            // there (series-model.md, Google as a Contract), never what the write itself then made its own (fresh seed 75790
+            // case 51: the write's time read as owned before it, so its undo was expected to keep owning it).
+            $mine = self::rawSix($raw);
+            $series = self::rawSix(self::seriesRawAt($g0, $key));
+            $own = array_values(array_diff((array) $before[$ident]['own'], ['title', 'description', 'location', 'url', 'status', 'showAs', 'date', 'time', 'length', 'allDay']));
+            foreach (['title', 'description', 'location', 'url', 'status', 'showAs'] as $f) {
+                if ($mine[$f] !== $series[$f]) {
+                    $own[] = $f;
+                }
+            }
+            if ($mine['time'] !== $series['time']) {
+                $own[] = 'time';
+            }
+            sort($own);
+            $before[$ident] = ['own' => $own] + $google + $before[$ident];
         } else {
             unset($before[$ident]);
         }

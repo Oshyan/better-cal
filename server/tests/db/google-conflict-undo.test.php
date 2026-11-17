@@ -407,6 +407,36 @@ return static function (Db $db): void {
         ], $askedThenAnyway($s, $entry, $gid, 'America/New_York'));
     });
 
+    // A place is one value, its text and its pin (the page, (d)): a place changed here, changed again in Google Calendar
+    // and stored by a poll is the comparison's question, for an event and for a day alike, never the stale refusal.
+    scenario('undo choice: the place changed here, then in Google Calendar, a poll stores that: the undo asks about the place, for an event and for a day', function () use ($setup, $last, $undo, $writes, $there, $day, $dayGid, $row, $dayRow): void {
+        $s = $setup();
+        $s->events->patch($s->u, $s->id, ['location' => 'Sample hall']);
+        $entry = $last($s);
+        $there($s, 'smpl5single', ['location' => 'Sample annex']);
+        ($s->poll)();
+        $a = $undo($s, $entry);
+        checkEq('an event: asked about the place with its values, nothing sent', [
+            'google_changed',
+            "After this change to 'Sample review', the location was changed again: it's 'Sample annex' now. Undo puts back 'Sample room 2', replacing 'Sample annex'. Nothing was undone.",
+            [['field' => 'location', 'was' => 'Sample hall', 'now' => 'Sample annex', 'yours' => 'Sample room 2']], [],
+        ], [$a[0], $a[1], $a[2]['fields'] ?? null, $writes($s)]);
+        $a = $undo($s, $entry, false, ['location' => 'Sample annex']);
+        checkEq('an event: Undo anyway puts the place back, one PATCH', ['ok', [['PATCH', 'smpl5single', ['location']]], 'Sample room 2'], [$a[0], $writes($s), (string) $row($s->id)['location']]);
+
+        $s = $setup();
+        $s->events->patch($s->u, $s->weekly, $day + ['tagNames' => ['sample-day']]);
+        $s->events->patch($s->u, $s->weekly, $day + ['location' => 'Sample hall']);
+        $entry = $last($s);
+        $there($s, $dayGid, ['location' => 'Sample annex']);
+        ($s->poll)();
+        $a = $undo($s, $entry);
+        checkEq('a day: asked about the place the same way, nothing sent', ['google_changed', [['yours' => '', 'field' => 'location', 'was' => 'Sample hall', 'now' => 'Sample annex', 'from' => 'day']], []],
+            [$a[0], array_map(static fn(array $f): array => ['yours' => (string) $f['yours']] + $f, $a[2]['fields'] ?? []), $writes($s)]);
+        $a = $undo($s, $entry, false, ['location' => 'Sample annex']);
+        checkEq('a day: Undo anyway takes the place off the day again', ['ok', ''], [$a[0], (string) ($dayRow($s)['location'] ?? '')]);
+    });
+
     // #241: one capture of "a row and its links" (Undo::linksOf). Each former site's entry holds every link table: here
     // the trip link of an event in a trip, which the two retired captures left out.
     scenario('undo choice: an entry made through each former capture site holds every link table (#241)', function () use ($db, $setup, $last, $undo): void {

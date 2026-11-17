@@ -1182,6 +1182,13 @@ final class GoogleUndo
         return array_values(array_filter(GoogleConflict::FIELDS, static fn(string $f): bool => array_intersect(GoogleWriter::keysOf([$f]), $changed) !== []));
     }
 
+    /** The compared fields an edit entry's undo puts back (comparedFields of its `changed`): what the stale check leaves to the comparison. Pure. @return list<string> */
+    public static function fieldsPutBack(array $mutation): array
+    {
+        $g = json_decode((string) ($mutation['details_json'] ?? ''), true)['google'] ?? null;
+        return is_array($g) ? self::comparedFields(self::changedOf($g)) : [];
+    }
+
     /** The columns of the compared fields $fields in $row, a time with its zone (one value). Pure. */
     private static function columnsOf(array $fields, array $row): array
     {

@@ -745,7 +745,9 @@ return [
     [
         'id' => 'dropped-day-by-own-form', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'activity-day-named',
         'what' => 'a removed day is named by its key read under the row\'s own form and zone, a day off for a day whose form is not its series\'',
-        'patch' => [["        \$frame = \$key !== null && \$series !== null ? \$series : \$row;", "        \$frame = \$row;"]],
+        // Since the one reading of a key's date (Time::keyDay, shared with GoogleSeries and Undo) the row's form can
+        // only reach it from the caller: keyDay is given the series alone, so the damage is the series swapped for the row here.
+        'patch' => [["Time::keyDay((string) \$key, \$series)", "Time::keyDay((string) \$key, \$row)"]],
         'checks' => ['the row is gone, and Activity names it by 6 January, the date it showed'],
     ],
     // The interleaving mode (README, Interleaving), each on a product file the Google paths share.
@@ -958,7 +960,7 @@ return [
     [
         'id' => 'undo-gate-places-a-day-by-its-key', 'file' => 'server/src/Domain/Undo.php', 'dbtest' => 'undo-day-gate',
         'what' => 'a day with no row and no skip when its series was re-placed is placed by its key again, where the gate refuses it',
-        'patch' => [['                throw $this->unplaced($entryId, $unrecorded);', '                $now = $key;']],
+        'patch' => [['                throw $this->unplaced($entryId, $unrecorded, $this->dayOfEntry($entry, $master, $key, $since[\'entries\']));', '                $now = $key;']],
         'checks' => $gatePlaced,
     ],
     // The same gate on a calendar here (Undo::snapshotStands): a snapshot is of the series as it was. Let through

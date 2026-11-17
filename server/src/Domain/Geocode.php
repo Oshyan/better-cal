@@ -42,55 +42,63 @@ final class Geocode
     }
 
     /**
-     * Easier forms of a location to try when the full text finds nothing.
+     * The forms the lookup asks for a location, in order, read once
+     * (LocationText::read; the model is docs/design/location-reading.md).
      * Feeds decorate addresses: "450 Elm St, Portland, OR 97205, USA
      * (The Lounge)", "[Upstairs] 5 Main St", or a name ahead of the address,
-     * often a venue the map data doesn't have: "The Lounge, 450 Elm St,
-     * Portland", "Example Pavilion, Pier 3, Example Town". In order: without
-     * the bracketed parts; then, after a leading name, from the first later
-     * part that starts with a street number; then from the part after the
-     * first comma. Never the original, never empty.
+     * often a venue the map data doesn't have: "The Lounge - 450 Elm St -
+     * Portland", "Example Pavilion, Pier 3, Example Town". In order: the text
+     * up to its rest ("with Alex", a question); without the bracketed parts;
+     * then, after a name, from where the address starts; then from the part
+     * after the name's first part, rooms left out of both. A text that opens
+     * with its address makes neither of the last two. None for a text that is
+     * not a place to look up; never empty, never the same form twice.
      *
      * Each form comes with the part a pin for it must hold (keeps()): null
-     * for a form that keeps the text's start, else the part the form starts
-     * with, since a form without the name is only right where that part is.
+     * for a form that keeps the text's start, else the address up to its
+     * street word, or the part the form starts with, since a form without
+     * the name is only right where that part is.
      *
      * @return list<array{0:string,1:?string}> [form, part to hold]
      */
-    public static function variants(string $q): array
+    public static function forms(string $q): array
     {
-        $q = self::normalize($q);
-        $out = [];
-        $bare = preg_replace('/\s*[\(\[][^\)\]]*[\)\]]/u', ' ', $q) ?? $q;
-        $bare = trim(preg_replace('/\s{2,}/u', ' ', $bare) ?? $bare, " ,;-\t");
-        $bare = preg_replace('/\s+,/u', ',', $bare) ?? $bare;
-        if ($bare !== '' && $bare !== $q) {
-            $out[] = [$bare, null];
+        $r = LocationText::read($q);
+        if ($r['kind'] !== 'place') {
+            return [];
         }
-        $base = $bare !== '' ? $bare : $q;
-        $parts = array_values(array_filter(array_map('trim', explode(',', $base)), static fn(string $p): bool => $p !== ''));
-        $street = static fn(string $p): bool => preg_match('/^\d+[a-z]?(?:-\d+)?\s+\S/iu', $p) === 1;
-        // A text that starts with a street number is already its address.
-        if (count($parts) > 1 && !$street($parts[0])) {
-            for ($i = 1, $n = count($parts); $i < $n; $i++) {
-                if ($street($parts[$i])) {
-                    $out[] = [implode(', ', array_slice($parts, $i)), $parts[$i]];
-                    break;
-                }
+        $out = [[$r['text'], null], [LocationText::withoutBrackets($r['text']), null]];
+        if (!$r['opensWithAddress']) {
+            if ($r['address'] !== null) {
+                $out[] = [$r['address'], $r['hold']];
             }
-            $out[] = [implode(', ', array_slice($parts, 1)), $parts[1]];
+            if (count($r['parts']) > 1) {
+                $out[] = [implode(', ', array_slice($r['parts'], 1)), $r['parts'][1]];
+            }
         }
         $seen = [];
         $result = [];
         foreach ($out as $v) {
             $k = mb_strtolower($v[0]);
-            if ($v[0] === '' || $k === mb_strtolower($q) || isset($seen[$k])) {
+            if ($v[0] === '' || isset($seen[$k])) {
                 continue;
             }
             $seen[$k] = true;
             $result[] = $v;
         }
         return $result;
+    }
+
+    /**
+     * The forms after the text as written (forms()): what the lookup asks
+     * only when the text itself finds nothing.
+     *
+     * @return list<array{0:string,1:?string}>
+     */
+    public static function variants(string $q): array
+    {
+        $own = mb_strtolower(self::normalize($q));
+        return array_values(array_filter(self::forms($q), static fn(array $v): bool => mb_strtolower($v[0]) !== $own));
     }
 
     /**
@@ -473,7 +481,7 @@ final class Geocode
     public function cached(string $q, ?float $biasLat = null, ?float $biasLng = null): bool
     {
         $normalized = self::normalize($q);
-        if ($normalized === '') {
+        if ($normalized === '' || LocationText::read($normalized)['kind'] !== 'place') {
             return true; // nothing to fetch either way
         }
         return $this->db->scalar(
@@ -491,32 +499,53 @@ final class Geocode
         if ($this->off) {
             return ['lat' => null, 'lng' => null, 'display' => null, 'off' => true];
         }
-        $result = $this->lookupExact($normalized, $biasLat, $biasLng);
-        if ($result['lat'] !== null || !empty($result['transport'])) {
-            unset($result['transport']);
-            return $result;
+        // The text is read before anything is asked (LocationText::read):
+        // what is not a place, or is a room alone, asks no service and says
+        // why; typed coordinates are their own answer.
+        $reading = LocationText::read($normalized);
+        if ($reading['kind'] === 'coordinates') {
+            return ['lat' => $reading['lat'], 'lng' => $reading['lng'], 'display' => null, 'kind' => null, 'provider' => null];
         }
-        // Nothing for the full text: ask again before giving up, with its
-        // easier forms (variants()), until one finds a pin the lookup keeps
-        // (keeps()). Each is looked up and cached in its own right, so a form
-        // already tried costs one cache read, and one that is kept becomes
-        // the answer for the full text as well. This also revisits misses
-        // cached before the easier forms existed.
-        foreach (self::variants($normalized) as [$v, $part]) {
+        if ($reading['kind'] !== 'place') {
+            return ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null, 'provider' => null,
+                'noPlace' => $reading['kind'] === 'room' ? 'room' : ($reading['why'] ?? 'note')];
+        }
+        $hash = self::queryHash($normalized, $biasLat, $biasLng);
+        $row = $this->db->one('SELECT * FROM geocode_cache WHERE query_hash = ?', [$hash]);
+        if ($row !== null && $row['lat'] !== null) {
+            $cached = self::resultFromRow($row);
+            $cached['provider'] = isset($row['provider']) ? (string) $row['provider'] : null;
+            return $cached;
+        }
+        // Ask its forms (forms()) in order, until one finds a pin the lookup
+        // keeps (keeps()). The first is the text as written unless it has a
+        // rest, which is never sent. Each form is looked up and cached in its
+        // own right, so a form already tried costs one cache read, and one
+        // that is kept becomes the text's answer as well. This also revisits
+        // misses cached before a form existed.
+        foreach (self::forms($normalized) as [$v, $part]) {
             $alt = $this->lookupExact($v, $biasLat, $biasLng);
             if (!empty($alt['transport'])) {
-                break;
+                unset($alt['transport']);
+                return $alt;
             }
             if (self::keeps($part, $alt)) {
                 $this->db->run(
-                    'UPDATE geocode_cache SET lat = ?, lng = ?, display = ?, kind = ?, provider = ? WHERE query_hash = ?',
-                    [$alt['lat'], $alt['lng'], $alt['display'], $alt['kind'] ?? null, $alt['provider'] ?? null, self::queryHash($normalized, $biasLat, $biasLng)]
+                    'INSERT INTO geocode_cache (query_hash, query, lat, lng, display, kind, provider) VALUES (?, ?, ?, ?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE lat = VALUES(lat), lng = VALUES(lng), display = VALUES(display), kind = VALUES(kind), provider = VALUES(provider)',
+                    [$hash, $normalized, $alt['lat'], $alt['lng'], isset($alt['display']) ? mb_substr((string) $alt['display'], 0, 500) : null, $alt['kind'] ?? null, $alt['provider'] ?? null]
                 );
                 return $alt;
             }
         }
-        unset($result['transport']);
-        return $result;
+        // Every form answered and none was kept: the text's own miss, so the
+        // sweep can tell it from a service that did not answer.
+        $this->db->run(
+            'INSERT INTO geocode_cache (query_hash, query, lat, lng, display, kind, provider) VALUES (?, ?, NULL, NULL, NULL, NULL, NULL)
+             ON DUPLICATE KEY UPDATE query_hash = query_hash',
+            [$hash, $normalized]
+        );
+        return ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null, 'provider' => null];
     }
 
     /**

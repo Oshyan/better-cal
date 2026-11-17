@@ -697,6 +697,21 @@ final class PlaceSearch
         $limit = max(1, min(self::MAX_LIMIT, $limit));
         $this->reason = null;
 
+        // The text is read before any service is asked (LocationText::read):
+        // what is not a place, or is a room alone, asks nothing and says why;
+        // typed coordinates are the one row; a rest ("with Alex") is not
+        // searched for.
+        $reading = LocationText::read($q);
+        if ($reading['kind'] === 'coordinates') {
+            $text = $reading['lat'] . ', ' . $reading['lng'];
+            return [self::row($text, '', $reading['lat'], $reading['lng'], null, null, $biasLat, $biasLng, $text)];
+        }
+        if ($reading['kind'] !== 'place') {
+            $this->reason = LocationText::sentence($reading);
+            return [];
+        }
+        $q = $reading['text'];
+
         $candidates = $this->found($q, $biasLat, $biasLng, $limit, $language);
         if ($candidates === []) {
             $candidates = $this->narrowed($q, $biasLat, $biasLng, $limit, $language);

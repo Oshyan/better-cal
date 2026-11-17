@@ -297,6 +297,15 @@ function HalfDoneLine({ half }) {
   </div>`;
 }
 
+// Under the location when it has no map. A room alone, or text the server
+// read as naming no place (LocationText), is said as such and was never
+// looked up; anything else was looked up and not found.
+export function noPlaceNote(noPlace) {
+  if (noPlace === 'room') return 'A room has no place on the map by itself. Add the venue or its address to map it.';
+  if (noPlace) return 'This doesn’t name a place, so there’s no map.';
+  return 'Couldn’t place this address on a map. A street address, or “place, city”, will fix it.';
+}
+
 export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, bodyRef, copyOpen, setCopyOpen, timeScope, setTimeScope, deletePrompt, attendPrompt, s, e, backTo = null }) {
   const [moreOpen, setMoreOpen] = useState(false);
   useEffect(() => { setMoreOpen(false); }, [occ.instanceId]);
@@ -434,7 +443,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       </div>`}
       ${place && full && mapLat != null && html`<div class="bc-es-map"><${MiniMap} lat=${mapLat} lng=${mapLng} location=${loc} /></div>`}
       ${place && full && geo && geo.status === 'loading' && html`<div class="bc-es-map is-loading" aria-hidden="true"></div>`}
-      ${place && full && geo && geo.status === 'none' && html`<div class="bc-es-note">Couldn\u2019t place this address on a map. A street address, or \u201cplace, city\u201d, will fix it.</div>`}
+      ${place && full && geo && geo.status === 'none' && html`<div class="bc-es-note">${noPlaceNote(geo.noPlace)}</div>`}
 
       ${occ.reminders && occ.reminders.length > 0 && html`<div class=${'bc-es-row' + (occ.full ? ' bc-late' : '')}>
         <${Icon} name="bell" size=${20} /><div class="bc-es-rt">${occ.reminders.map(fmtReminder).join(', ')}</div>

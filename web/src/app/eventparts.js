@@ -205,7 +205,7 @@ function enableOn(map, L) {
 // the full view and the phone's pulled-up sheet; `active` is whether the
 // view that wants it is showing.
 export function useEventGeo(occ, active) {
-  const [geo, setGeo] = useState(null); // {status:'loading'|'ok'|'none', lat?, lng?}
+  const [geo, setGeo] = useState(null); // {status:'loading'|'ok'|'none', lat?, lng?, noPlace?}
   // Lazy geocode when the event has a location but no stored coordinates.
   // Resolved coordinates are persisted onto local events (PATCH), so the
   // lookup happens once per event, not once per open.
@@ -249,7 +249,9 @@ export function useEventGeo(occ, active) {
             patchOccurrence(occ.instanceId, { locationLat: point.lat, locationLng: point.lng }, { edit: false });
           }
         } else {
-          setGeo({ status: 'none' });
+          // noPlace: the server read the text as nothing to look up (a room
+          // alone, a meeting, a note) and asked no service.
+          setGeo({ status: 'none', noPlace: (res && res.noPlace) || null });
         }
       })
       .catch(() => { if (alive) setGeo({ status: 'none' }); });

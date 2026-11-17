@@ -538,6 +538,12 @@ checkEq('fp63 the whole address, the city after its comma too',
     ['Pick up the cake', '123 Example St, Springfield CA', []], $place($p('Pick up the cake at 3pm at 123 Example St, Springfield CA')));
 checkEq('fp64 an address with its time after it',
     ['Pick up the cake', '123 Example St Springfield CA', []], $place($p('Pick up the cake at 123 Example St Springfield CA at 3PM')));
+// The place ends where stored text's place ends (LocationText::placeLength,
+// #328): a later part that asks a question is not the place.
+checkEq('fp65 a question after the place is not the place',
+    'Sample Cafe', $p('Dinner Friday 7pm at Sample Cafe - is it open late?')['location']);
+checkEq('fp66 a dash before words that ask nothing stays in the place, as before',
+    'Sample Cafe - patio', $p('Dinner Friday 7pm at Sample Cafe - patio')['location']);
 checkEq('fp65 an address, its city, then a with-clause',
     ['Dinner with Sam Sample', '45 Sample Ave, Springfield', ['Sam Sample']], $place($p('Dinner Friday 7pm at 45 Sample Ave, Springfield, with Sam Sample')));
 checkEq('fp66 "@" before an address', ['Brunch', '12B Example Rd', []], $place($p('Brunch Sunday 11am @ 12B Example Rd')));
@@ -6985,9 +6991,123 @@ checkEq('geo variants: after a name, from the part after the first comma', [['Ex
 checkEq('geo variants: a leading street number is already the address', [], Geocode::variants('1680 Elm St, Portland'));
 checkEq('geo variants: range numbers count', [['12-14 Rue Oberkampf, Paris', '12-14 Rue Oberkampf']], Geocode::variants('Le Bar, 12-14 Rue Oberkampf, Paris'));
 checkEq('geo variants: a pier or a building after the name', [['Pier 3, Example Town', 'Pier 3']], Geocode::variants('Example Pavilion, Pier 3, Example Town'));
-checkEq('geo variants: the street number first, then the part after the first comma', [['12 Sample St, Example Town', '12 Sample St'], ['Suite 5, 12 Sample St, Example Town', 'Suite 5']],
+checkEq('geo variants: a room is left out of the forms without the name, so the street number is the one form', [['12 Sample St, Example Town', '12 Sample St']],
     Geocode::variants('Example Hall, Suite 5, 12 Sample St, Example Town'));
 checkEq('geo variants: nothing to simplify', [], Geocode::variants('Example Cafe'));
+
+// One reading of a location's text before any service is asked (#328,
+// docs/design/location-reading.md). Each row: text, what the reading is
+// (kind, and why for none), and for a place the forms the lookup asks in
+// order with the part each pin must hold. The issue's shapes with invented
+// text, then near-misses that must still be read as places.
+$readingRows = [
+    // An address written with something other than commas, or nothing.
+    ['Sample Kitchen - 12 Example Street - Springfield, CA 90000', 'place', [['Sample Kitchen - 12 Example Street - Springfield, CA 90000', null], ['12 Example Street, Springfield, CA 90000', '12 Example Street']]],
+    ["Sample Farm \u{2014} 2400 Example Rd, Harbortown", 'place', [["Sample Farm \u{2014} 2400 Example Rd, Harbortown", null], ['2400 Example Rd, Harbortown', '2400 Example Rd']]],
+    ["Sample Farm \u{2013} 2400 Example Rd", 'place', [["Sample Farm \u{2013} 2400 Example Rd", null], ['2400 Example Rd', '2400 Example Rd']]],
+    ['Sample Tower @ Lounge / Floor 3 80 Example Street', 'place', [['Sample Tower @ Lounge / Floor 3 80 Example Street', null], ['80 Example Street', '80 Example Street'], ['Lounge, Floor 3 80 Example Street', 'Lounge']]],
+    ['Sample Club | 52 Example Ave', 'place', [['Sample Club | 52 Example Ave', null], ['52 Example Ave', '52 Example Ave']]],
+    ['Sample Park - 510 Example Rd. Springfield', 'place', [['Sample Park - 510 Example Rd. Springfield', null], ['510 Example Rd. Springfield', '510 Example Rd.']]],
+    ['Sample Hall 75 Example Way Springfield CA 90000', 'place', [['Sample Hall 75 Example Way Springfield CA 90000', null], ['75 Example Way Springfield CA 90000', '75 Example Way']]],
+    // An intersection, and a number range.
+    ['Sample Grove, 4th Avenue and Example Blvd., Springfield', 'place', [['Sample Grove, 4th Avenue and Example Blvd., Springfield', null], ['4th Avenue and Example Blvd., Springfield', '4th Avenue and Example Blvd.']]],
+    ['Sample Garden - Example St & Sample Ave', 'place', [['Sample Garden - Example St & Sample Ave', null], ['Example St & Sample Ave', 'Example St & Sample Ave']]],
+    ['5th and Example Streets', 'place', [['5th and Example Streets', null]]],
+    ['Sample Yard - 100-148 Example Ln, Springfield', 'place', [['Sample Yard - 100-148 Example Ln, Springfield', null], ['100-148 Example Ln, Springfield', '100-148 Example Ln']]],
+    ['100-148 Example Ln, Springfield', 'place', [['100-148 Example Ln, Springfield', null]]],
+    // Coordinates.
+    ['12.3456, -65.4321', 'coordinates', []],
+    // Not a place at all.
+    ["Location available once RSVP'd", 'none:later', []],
+    ['Address TBD', 'none:later', []],
+    ['+1 555-010-0199 PIN: 448812#', 'none:phone', []],
+    ['Dial-in: (555) 010-0199, code 4471 9920', 'none:phone', []],
+    ['Google Meet', 'none:meeting', []],
+    ['Zoom link to follow', 'none:meeting', []],
+    ['Online', 'none:meeting', []],
+    ['Meeting ID: 812 3456 7890 Passcode: x7k2pq', 'none:phone', []],
+    ['example.com/events/fall-social', 'none:link', []],
+    ['https://meet.example.com/abc-defg-hij', 'none:link', []],
+    ['www.example.org', 'none:link', []],
+    ['sometime after lunch', 'none:note', []],
+    ['with Alex, time to be decided', 'none:note', []],
+    // A room inside a venue.
+    ['Room 12B', 'room', []],
+    ['Suite 5', 'room', []],
+    ['Conference Room B', 'room', []],
+    ['2nd floor', 'room', []],
+    // A venue with words after it.
+    ['Sample Cafe with Alex', 'place', [['Sample Cafe', null]]],
+    ['Sample Cafe, w/ Sam', 'place', [['Sample Cafe', null]]],
+    ['the Sample Theater - tickets at the door?', 'place', [['the Sample Theater', null]]],
+    // A title and a town alone: the town form stays held to "a spot, never an area".
+    ['Sunny Sample Cottage by the Lake, Harbortown', 'place', [['Sunny Sample Cottage by the Lake, Harbortown', null], ['Harbortown', 'Harbortown']]],
+    // Near-misses: still places.
+    ['Zoom Way', 'place', [['Zoom Way', null]]],
+    ['123 Zoom Way, Springfield', 'place', [['123 Zoom Way, Springfield', null]]],
+    ['Teams Sports Bar', 'place', [['Teams Sports Bar', null]]],
+    ['The Meet Market', 'place', [['The Meet Market', null]]],
+    ['Sample Online Books', 'place', [['Sample Online Books', null]]],
+    ['1-800 Sample Flowers', 'place', [['1-800 Sample Flowers', null]]],
+    ['Sample 24 Hour Fitness 555 0100', 'place', [['Sample 24 Hour Fitness 555 0100', null]]],
+    ['Sample Bar and Grill', 'place', [['Sample Bar and Grill', null]]],
+    ['Smith & Sons Hardware, 12 Example Ave', 'place', [['Smith & Sons Hardware, 12 Example Ave', null], ['12 Example Ave', '12 Example Ave']]],
+    ['Sample Arts and Crafts Center', 'place', [['Sample Arts and Crafts Center', null]]],
+    ['The Sample Room', 'place', [['The Sample Room', null]]],
+    ['The Venue', 'place', [['The Venue', null]]],
+    ['Sunday Social', 'place', [['Sunday Social', null]]],
+    ['Sample Hall Room 5', 'place', [['Sample Hall Room 5', null]]],
+    ['Sample Hall, Room 406, 75 Example Way, Springfield', 'place', [['Sample Hall, Room 406, 75 Example Way, Springfield', null], ['75 Example Way, Springfield', '75 Example Way']]],
+    ['Sample Lounge, 2nd floor', 'place', [['Sample Lounge, 2nd floor', null]]],
+    ['12 Rua Exemplo, Sampletown', 'place', [['12 Rua Exemplo, Sampletown', null]]],
+    ['Sample-Town Library', 'place', [['Sample-Town Library', null]]],
+    ['Harbor Hall, 100 Main St (map: https://x.example)', 'place', [['Harbor Hall, 100 Main St (map: https://x.example)', null], ['Harbor Hall, 100 Main St', null], ['100 Main St', '100 Main St']]],
+];
+foreach ($readingRows as [$text, $want, $forms]) {
+    $r = \BetterCal\Domain\LocationText::read($text);
+    $got = $r['kind'] . (isset($r['why']) ? ':' . $r['why'] : '');
+    checkEq('location reading: ' . $text, [$want, $forms], [$got, Geocode::forms($text)]);
+}
+checkEq('location reading: typed coordinates are read as numbers', [12.3456, -65.4321], [\BetterCal\Domain\LocationText::read('12.3456, -65.4321')['lat'], \BetterCal\Domain\LocationText::read('12.3456,-65.4321')['lng']]);
+checkEq('location reading: coordinates out of range are not coordinates', 'place', \BetterCal\Domain\LocationText::read('98.1624, -222.5763')['kind']);
+checkEq('location reading: the rest is kept apart, without its separator', ['the Sample Theater', 'tickets at the door?'],
+    [\BetterCal\Domain\LocationText::read('the Sample Theater - tickets at the door?')['text'], \BetterCal\Domain\LocationText::read('the Sample Theater - tickets at the door?')['rest']]);
+checkEq('location reading: the name before an address with no separator', ['Sample Hall', '75 Example Way Springfield CA 90000'],
+    [\BetterCal\Domain\LocationText::read('Sample Hall 75 Example Way Springfield CA 90000')['name'], \BetterCal\Domain\LocationText::read('Sample Hall 75 Example Way Springfield CA 90000')['address']]);
+checkEq('location reading: where a place ends, in bytes, the separator before the rest left out',
+    [strlen('Sample Theater'), strlen('Sample Theater'), strlen('Sample Theater - Alex birthday')],
+    [\BetterCal\Domain\LocationText::placeLength('Sample Theater, with Alex'), \BetterCal\Domain\LocationText::placeLength('Sample Theater - is it open?'), \BetterCal\Domain\LocationText::placeLength('Sample Theater - Alex birthday')]);
+checkEq('location reading: each reading the dropdown answers with no request has a sentence', [true, true, true, true, true, true, false],
+    array_map(static fn(string $t): bool => \BetterCal\Domain\LocationText::sentence(\BetterCal\Domain\LocationText::read($t)) !== null,
+        ['Room 12B', 'example.com', '555-010-0199', 'Zoom', 'TBD', 'sometime after lunch', 'Sample Cafe']));
+// The dropdown reads the same way: nothing is asked for what is not a place
+// or a room alone, coordinates are their own row, and a rest is not searched.
+$readingTransport = new class implements \BetterCal\Infra\GeocoderTransport {
+    /** @var list<string> */
+    public array $asked = [];
+    public function photon(array $paramSets): array
+    {
+        foreach ($paramSets as $p) {
+            $this->asked[] = (string) $p['q'];
+        }
+        return array_map(static fn(): array => ['features' => []], $paramSets);
+    }
+    public function openMeteo(array $params): ?array { return null; }
+};
+$readingSearch = new \BetterCal\Domain\PlaceSearch(new \BetterCal\Domain\PhotonPlaces($readingTransport));
+$noAsk = [];
+foreach (['Zoom link to follow', 'Room 12B', 'example.com/events/fall-social', 'with Alex, time to be decided'] as $t) {
+    $readingTransport->asked = [];
+    $rows = $readingSearch->search($t, null, null, 6);
+    $noAsk[] = [$rows, $readingTransport->asked, $readingSearch->reason() !== null && $readingSearch->reason() !== \BetterCal\Domain\PlaceSearch::NO_MATCH];
+}
+checkEq('place search: nothing is asked for a meeting, a room, a link or a note, and the reason says why', array_fill(0, 4, [[], [], true]), $noAsk);
+$readingTransport->asked = [];
+$coordRows = $readingSearch->search('12.3456, -65.4321', null, null, 6);
+checkEq('place search: typed coordinates are one row there, nothing asked', [1, 12.3456, -65.4321, []], [count($coordRows), $coordRows[0]['lat'] ?? null, $coordRows[0]['lng'] ?? null, $readingTransport->asked]);
+$readingTransport->asked = [];
+$readingSearch->search('Sample Cafe with Alex', null, null, 6);
+check('place search: a with-clause is not searched for', $readingTransport->asked !== [] && array_filter($readingTransport->asked, static fn(string $q): bool => stripos($q, 'alex') !== false) === [], json_encode($readingTransport->asked));
 // What a form that leaves the name out may keep: a spot holding the part it
 // starts with, never a town or an area.
 checkEq('geo form keeps: a spot with the part, not a town, not a near-miss number, anything for a form that keeps the start', [true, false, false, true, false],
@@ -8873,10 +8993,10 @@ checkEq('plugin timed: a time with no offset is the owner\'s local time',
     $tzBias = GeocodeSweep::biasFor(['homeLat' => null, 'homeLng' => null], 'America/Los_Angeles');
     check('sweep bias: falls back to the event zone centroid', $tzBias[0] !== null && $tzBias[1] !== null && $tzBias[1] < -100, json_encode($tzBias));
     checkEq('sweep bias: nothing known means no bias', [null, null], GeocodeSweep::biasFor([], null));
-    check('sweep: a URL is not an address', GeocodeSweep::isUrlLocation('https://luma.com/abc123xy'));
-    check('sweep: a www link is not an address', GeocodeSweep::isUrlLocation('www.zoom.us/j/123'));
-    check('sweep: an address containing a link is still an address', !GeocodeSweep::isUrlLocation('Harbor Hall, 100 Main St (map: https://x.y)'));
-    check('sweep: a plain address is an address', !GeocodeSweep::isUrlLocation('12 Rua Augusta, Lisbon'));
+    // Links are read by LocationText now (the location reading rows above):
+    // the sweep asks Geocode::lookup, which asks nothing for them.
+    check('sweep: a URL is not an address', \BetterCal\Domain\LocationText::read('https://luma.com/abc123xy')['kind'] === 'none');
+    check('sweep: a www link is not an address', \BetterCal\Domain\LocationText::read('www.zoom.us/j/123')['kind'] === 'none');
 }
 
 // Past events wait for their owner to ask (placePastEvents): an imported

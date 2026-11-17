@@ -76,18 +76,6 @@ final class GeocodeSweep
         return $centroid !== null ? [(float) $centroid[0], (float) $centroid[1]] : [null, null];
     }
 
-    /**
-     * A "location" that is really a link (Luma and Partiful put the event
-     * page there, video calls put the meeting URL there). Not an address; not
-     * worth a lookup, not worth an Activity line saying it could not be
-     * placed. Pure.
-     */
-    public static function isUrlLocation(string $location): bool
-    {
-        $s = trim($location);
-        return $s !== '' && preg_match('~^(https?://|www\.)\S+$~i', $s) === 1;
-    }
-
     /** Cheap gate so the worker can skip enqueueing when there is nothing to do. */
     public function hasCandidates(): bool
     {
@@ -178,12 +166,6 @@ final class GeocodeSweep
             if (microtime(true) - $t0 > $budgetSeconds) {
                 break;
             }
-            if (self::isUrlLocation($g['location'])) {
-                [$in, $params] = Db::in($g['ids']);
-                $this->db->run("UPDATE events SET geocoded_at = ? WHERE id IN $in", [Time::nowDb(), ...$params]);
-                $stats['skippedUrls'] = ($stats['skippedUrls'] ?? 0) + count($g['ids']);
-                continue;
-            }
             $settingsByUser[$g['userId']] ??= $this->settings->forUser($g['userId']);
             [$biasLat, $biasLng] = self::biasFor($settingsByUser[$g['userId']], is_string($g['tzid']) ? $g['tzid'] : null);
 
@@ -219,6 +201,14 @@ final class GeocodeSweep
             }
 
             [$in, $params] = Db::in($g['ids']);
+            // Not a place, or a room alone (LocationText::read): nothing was
+            // asked. Marked tried, so the next run moves on, and listed
+            // nowhere: there is nothing to fix in an address that isn't one.
+            if (isset($res['noPlace'])) {
+                $this->db->run("UPDATE events SET geocoded_at = ? WHERE id IN $in", [Time::nowDb(), ...$params]);
+                $stats['notPlaces'] = ($stats['notPlaces'] ?? 0) + count($g['ids']);
+                continue;
+            }
             if (isset($res['lat'], $res['lng'])) {
                 $now = Time::nowDb();
                 $placed = $this->db->run(

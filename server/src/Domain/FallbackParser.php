@@ -1043,8 +1043,9 @@ final class FallbackParser
     /**
      * The place after "at" or "@", read once the dates and times are out of
      * $work (so "at 7pm" is never a place: the time reader took it). It runs
-     * to the end of the text or to a with-clause, and the separator before
-     * "with" is not part of it; a comma inside it stays, so "at Sample
+     * to the end of the text, to a with-clause or to a later part that asks
+     * a question (LocationText::placeLength, the rule stored text is read
+     * by), and the separator before that is not part of it; a comma inside it stays, so "at Sample
      * Theater, with Alex" is "Sample Theater" and "at 123 Example St,
      * Springfield CA" keeps its city (#236). A place that starts with a
      * number is a street address when a name follows the number, capitalized
@@ -1057,10 +1058,16 @@ final class FallbackParser
      */
     private static function place(string $work, \DateTimeImmutable $now): ?array
     {
-        if (preg_match('/\s(?:at|@)\s+(.+?)[\s,;]*(?=$|\bwith\s|\bw\/)/iu', $work, $m, PREG_OFFSET_CAPTURE) !== 1) {
+        if (preg_match('/\s(?:at|@)\s+(.+)$/iu', $work, $m, PREG_OFFSET_CAPTURE) !== 1) {
             return null;
         }
         [$typed, $from] = $m[1];
+        // Where the place ends: LocationText's rule, the one stored text is
+        // read by too.
+        $typed = substr($typed, 0, LocationText::placeLength($typed));
+        if ($typed === '') {
+            return null;
+        }
         $address = preg_match('/^\d/', $typed) === 1;
         if ($address && preg_match('/^\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+(?-i:\p{Lu})/iu', $typed) !== 1) {
             return null;
@@ -1081,7 +1088,7 @@ final class FallbackParser
      * followed ("at", "with"), which the readers weigh ("at Sunday Social"
      * names a place).
      */
-    private static function withoutWhen(string $lead, string $text, \DateTimeImmutable $now): string
+    public static function withoutWhen(string $lead, string $text, \DateTimeImmutable $now): string
     {
         $work = ' ' . $lead . ' ' . $text . ' ';
         for ($n = 0; $n < 8; $n++) {

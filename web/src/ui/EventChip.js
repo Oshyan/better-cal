@@ -13,7 +13,7 @@ import { contrastText, withAlpha, ink, DEFAULT_COLOR } from '../lib/color.js';
 import { parseISO, fmtTime, timeState, eventDuration, dateOfDayKey } from '../lib/dates.js';
 import { occurrenceDaySpan } from './monthmath.js';
 import { Icon, PluginGlyph, EventMark, MarkDisc } from './icons.js';
-import { isPendingLocation } from '../lib/maps.js';
+import { locationKind } from '../lib/maps.js';
 import { filterClasses, hlStyle } from '../lib/filtermarks.js';
 
 // Bail out of custom click handling when modifier keys are pressed so
@@ -281,7 +281,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
   const e = parseISO(occ.end);
   const showMeta = !titleOnly && rect.height > 34 && !occ.isGroup;
   // A block's second line is for a real place; "after RSVP" isn't one.
-  const showLoc = !titleOnly && rect.height > 52 && occ.location && !isPendingLocation(occ.location);
+  const showLoc = !titleOnly && rect.height > 52 && !!locationKind(occ) && locationKind(occ) !== 'later';
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
   const edges = occ.isGroup || trip ? null : onEdgePointerDown;
   return html`<div

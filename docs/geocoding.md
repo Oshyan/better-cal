@@ -92,12 +92,25 @@ Most of these services build on OpenStreetMap and still behave very differently:
 
 That variety is why Better-Cal holds every service to one rule: a result has to contain every word you typed. The last word can be half typed, "St" counts as "Street" (and the same for Ave, Blvd, Rd, Dr, Ln, Ct, Pl, Hwy, Pkwy and N, S, E, W), and a state code or postal code at the end can be missing from the result. A service whose results all miss a word hasn't really answered, so the next service in the list is asked, Photon last; a venue and its town no longer come back as a list of other things in that town, and an address no longer comes back as the same house number on a different street. When a venue plus a trailing town or county still matches nothing, the town or county narrows the search: Better-Cal finds that place, then looks for the venue around it, rather than letting the place's name take over the results. If nothing anywhere has all your words, the dropdown says so instead of guessing.
 
+## Reading the Text First
+
+Before either job asks any service, Better-Cal reads the location's text once (the model is in [location-reading.md](design/location-reading.md)):
+
+- **Not a place:** a web address (with or without `https://`), a phone or conference line, a meeting service's name or meeting id ("Google Meet", "Zoom link to follow"), a phrase saying the place comes later ("Location available once RSVP'd", "Address TBD"), or a note in the wrong field ("sometime after lunch", "with Alex, time to be decided"). Nothing is asked. The dropdown says what it read; the event shows no "Couldn't place" note, and the sweep doesn't list it among addresses it couldn't place.
+- **A room alone** ("Room 12B", "Suite 5", "2nd floor"): nothing is asked, and the event says a room has no place on the map by itself. A room after a venue's name is fine; it's left out of the easier forms below.
+- **Typed coordinates** ("12.3456, -65.4321") are placed there, with no service asked.
+- **Words after the place** ("Sample Cafe with Alex", "Sample Theater - tickets at the door?") are not sent. Quick add ends a place the same way.
+
+Anything else is a place, read as an optional name, an optional address and the rest. The address is found whatever separates it from the name: a comma, a dash of any kind, `@`, `/`, `|`, or nothing at all when a house number is followed by a street name ending in a street word ("Sample Hall 75 Example Way Springfield"). An intersection ("4th Avenue and Example Blvd.", "Example St & Sample Ave") is an address too.
+
+To see what this makes of your own locations, run `php tools/place-count/count.php` from the install's folder. It asks no service, changes nothing, and prints counts by kind of text (how many events are placed, missed or not yet tried, and how many requests the lookup could make before and after this reading), never a location's text.
+
 ## Asking Again Before Giving Up
 
 Both jobs follow one rule: an answer that doesn't settle the search passes it to the next way of asking, and the search gives up only when no way is left. What settles it differs by job, because one shows a list and the other picks a single pin.
 
 - **The dropdown** asks each service in your list, Photon last. An answer settles it when a result has every word you typed and is near you (within 500 km), or is named exactly what you typed (a town or a city is what you asked for wherever it is). A service whose matches are all far away is asked past: the next service is asked too, and the results are merged, near ones first, with the far ones still listed after them. A venue name typed alone, known far away to one service and nearby to another, finds the nearby one.
-- **The background lookup** asks its services with the full text first. When that finds nothing, it tries easier forms of the text: without bracketed parts; then, after a leading name, from the first part that starts with a street number ("The Lounge, 450 Elm St, Example Town" is tried as "450 Elm St, Example Town"); then from the part after the first comma ("Example Pavilion, Pier 3, Example Town" is tried as "Pier 3, Example Town"). A form without the name is kept only when its answer is a spot that holds the part the form starts with (the pier, the building, the house number), never a town or an area: a venue the map data doesn't have is placed by the address after its name, and "Venue, Town" is never pinned at the middle of town, since a wrong pin is worse than none.
+- **The background lookup** asks its services with the full text first (without any words after the place). When that finds nothing, it tries easier forms of the text: without bracketed parts; then, after a name, from where the address starts ("The Lounge - 450 Elm St - Example Town" is tried as "450 Elm St, Example Town"); then from the part after the name ("Example Pavilion, Pier 3, Example Town" is tried as "Pier 3, Example Town"). A form without the name is kept only when its answer is a spot that holds the address up to its street word, or the part the form starts with (the pier, the building, the house number), never a town or an area: a venue the map data doesn't have is placed by the address after its name, and "Venue, Town" is never pinned at the middle of town, since a wrong pin is worse than none.
 
 ## Time Limits
 

@@ -72,4 +72,96 @@ return static function (Db $db): void {
         $r = $geo->lookup('Example Plaza, Exampleton', 12.30, 56.70);
         checkEq('place lookup: the full text\'s own answer stands, as before', [12.30, ['example plaza, exampleton']], [$r['lat'], $photon->asked]);
     });
+
+    // The text is read before anything is asked (#328,
+    // docs/design/location-reading.md).
+    scenario('place lookup: what is not a place, or a room alone, asks nothing and caches nothing', function () use ($geo, $photon, $lat, $lng, $cachedAt): void {
+        $photon->asked = [];
+        $out = [];
+        foreach (['Zoom link to follow', '+1 555-010-0199 PIN: 448812#', "Location available once RSVP'd", 'example.com/events/fall-social', 'Room 12B', 'sometime after lunch'] as $t) {
+            $r = $geo->lookup($t, $lat, $lng);
+            $out[] = [$r['lat'], $r['noPlace'] ?? null, $cachedAt($t), $geo->cached($t, $lat, $lng)];
+        }
+        checkEq('place lookup: each says why, none is cached, each counts as nothing to fetch',
+            [[null, 'meeting', null, true], [null, 'phone', null, true], [null, 'later', null, true], [null, 'link', null, true], [null, 'room', null, true], [null, 'note', null, true]], $out);
+        checkEq('place lookup: no service was asked', [], $photon->asked);
+    });
+
+    scenario('place lookup: typed coordinates are their own answer', function () use ($geo, $photon, $lat, $lng): void {
+        $photon->asked = [];
+        $r = $geo->lookup('12.3456, -65.4321', $lat, $lng);
+        checkEq('place lookup: the coordinates, no provider, nothing asked', [12.3456, -65.4321, null, []], [$r['lat'], $r['lng'], $r['provider'], $photon->asked]);
+    });
+
+    scenario('place lookup: an address after a dash is found, and the text keeps the answer', function () use ($geo, $photon, $house, $town, $lat, $lng, $cachedAt): void {
+        $photon->byQ = ['12 sample street, exampleton' => [$house, $town]];
+        $photon->asked = [];
+        $t = 'Sample Kitchen - 12 Sample Street - Exampleton';
+        $r = $geo->lookup($t, $lat, $lng);
+        checkEq('place lookup: the text, then from the address, pinned at the house',
+            [12.33, ['sample kitchen - 12 sample street - exampleton', '12 sample street, exampleton']], [$r['lat'], $photon->asked]);
+        $row = $cachedAt($t) ?? ['lat' => null];
+        checkEq('place lookup: the text\'s own cache row holds the pin', 12.33, round((float) $row['lat'], 2));
+        $photon->asked = [];
+        $geo->lookup($t, $lat, $lng);
+        checkEq('place lookup: asked again, the cache answers', [], $photon->asked);
+    });
+
+    scenario('place lookup: a with-clause is never sent, and the text gets its own answer', function () use ($geo, $photon, $pier, $lat, $lng, $cachedAt): void {
+        $photon->byQ = ['example boathouse' => [$pier]];
+        $photon->asked = [];
+        $r = $geo->lookup('Example Boathouse with Alex', $lat, $lng);
+        checkEq('place lookup: only the place is asked', [12.31, ['example boathouse']], [$r['lat'], $photon->asked]);
+        check('place lookup: the text as written is cached with that pin', ($cachedAt('Example Boathouse with Alex')['lat'] ?? null) !== null);
+        $photon->asked = [];
+        $r = $geo->lookup('Example Shed with Sam', $lat, $lng);
+        checkEq('place lookup: a place found nowhere is a miss for the text as written', [null, ['example shed'], true], [$r['lat'], $photon->asked, $cachedAt('Example Shed with Sam') !== null]);
+    });
+
+    scenario('place lookup: a service that does not answer leaves the text uncached', function () use ($db, $lat, $lng): void {
+        $down = new class implements GeocoderTransport {
+            public function photon(array $paramSets): array { return array_map(static fn(): ?array => null, $paramSets); }
+            public function openMeteo(array $params): ?array { return null; }
+        };
+        $g = new Geocode($db, $down);
+        $t = 'Sample Mill - 40 Sample Road - Exampleton';
+        $before = $g->cached($t, $lat, $lng);
+        $r = $g->lookup($t, $lat, $lng);
+        checkEq('place lookup: not found, and still nothing cached for the text', [false, null, false], [$before, $r['lat'], $g->cached($t, $lat, $lng)]);
+    });
+
+    // The sweep acts on the same reading: what is not a place is marked tried
+    // and listed nowhere; typed coordinates are placed with no request.
+    scenario('place sweep: not places are marked tried and not listed, coordinates are placed', function () use ($db, $photon, $house, $town): void {
+        $u = freshUser($db);
+        $db->update('users', ['settings_json' => json_encode(['homeLat' => 12.30, 'homeLng' => 56.70])], 'id = ?', [$u]);
+        $d = domains($db);
+        $cal = (int) $d->calendars->create($u, ['name' => 'Sample places'])['id'];
+        $day = (new DateTimeImmutable('+10 days'))->format('Y-m-d');
+        $ids = [];
+        foreach (['meeting' => 'Google Meet', 'room' => 'Room 12B', 'coords' => '12.3456, -65.4321', 'dash' => 'Sample Diner - 12 Sample Street - Exampleton', 'nowhere' => 'Sample Nowhere Shack'] as $k => $loc) {
+            $ids[$k] = (int) $d->events->create($u, eventAt($cal, 'Sample ' . $k, $day, ['location' => $loc]))['eventId'];
+        }
+        $photon->byQ = ['12 sample street, exampleton' => [$house, $town]];
+        $photon->asked = [];
+        $sweep = new BetterCal\Domain\GeocodeSweep($db, new Geocode($db, $photon), new BetterCal\Domain\Settings($db));
+        $stats = $sweep->run(10, 30);
+        $rows = [];
+        foreach ($ids as $k => $id) {
+            $e = $db->one('SELECT location_lat, location_source, location_provider, geocoded_at FROM events WHERE id = ?', [$id]);
+            $rows[$k] = [$e['location_lat'] !== null ? round((float) $e['location_lat'], 2) : null, $e['location_source'], $e['geocoded_at'] !== null];
+        }
+        checkEq('place sweep: each event as its reading says', [
+            'meeting' => [null, null, true], 'room' => [null, null, true], 'coords' => [38.16, 'lookup', true],
+            'dash' => [12.33, 'lookup', true], 'nowhere' => [null, null, true],
+        ], $rows);
+        // The street form was cached by an earlier scenario (same bias cell),
+        // so it costs no request here.
+        checkEq('place sweep: two counted as no place, and only real lookups asked a service', [2, ['sample diner - 12 sample street - exampleton', 'sample nowhere shack']],
+            [$stats['notPlaces'] ?? 0, $photon->asked]);
+        $listed = (string) $db->scalar("SELECT GROUP_CONCAT(summary SEPARATOR ' | ') FROM mutations WHERE user_id = ? AND summary LIKE 'Couldn%'", [$u]);
+        checkEq('place sweep: only the place found nowhere is listed as not placed', [true, false, false], [
+            str_contains($listed, 'Sample Nowhere Shack'), str_contains($listed, 'Google Meet'), str_contains($listed, 'Room 12B'),
+        ]);
+    });
 };

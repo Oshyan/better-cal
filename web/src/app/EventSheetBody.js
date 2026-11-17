@@ -22,7 +22,7 @@ import { DurationSuffix } from '../ui/EventChip.js';
 import { fmtRangeParts, zoneNote, fmtDateFull, fmtTime, parseISO, startMs } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
-import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
+import { gmapsUrl, locationKind } from '../lib/maps.js';
 import { meetingLinkInText, safeWebUrl } from '../lib/urls.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
 import { askConfirm } from './ConfirmDialog.js';
@@ -46,7 +46,6 @@ export function meetingLink(occ) {
   return null;
 }
 
-const isUrl = (s) => /^(https?:\/\/|www\.)\S+$/i.test((s || '').trim());
 // The site a booking email came from ("noreply@order.eventbrite.com" →
 // eventbrite.com); none for mail forwarded from a personal mailbox, which
 // says nothing about the booking.
@@ -186,7 +185,7 @@ function InviteBlock({ occ }) {
   </div>`;
 }
 
-const hostOf = (u) => { try { return new URL(/^www\./i.test(u) ? 'https://' + u : u).hostname.replace(/^www\./, ''); } catch { return u; } };
+const hostOf = (u) => { try { return new URL(/^https?:\/\//i.test(u) ? u : 'https://' + u).hostname.replace(/^www\./, ''); } catch { return u; } };
 
 function copyText(text, what) {
   const done = () => toast(what + ' copied', { duration: 2000 });
@@ -297,6 +296,15 @@ function HalfDoneLine({ half }) {
   </div>`;
 }
 
+// Under the location when it has no map. A room alone, or text the server
+// read as naming no place (LocationText), is said as such and was never
+// looked up; anything else was looked up and not found.
+export function noPlaceNote(noPlace) {
+  if (noPlace === 'room') return 'A room has no place on the map by itself. Add the venue or its address to map it.';
+  if (noPlace) return 'This doesn’t name a place, so there’s no map.';
+  return 'Couldn’t place this address on a map. A street address, or “place, city”, will fix it.';
+}
+
 export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, bodyRef, copyOpen, setCopyOpen, timeScope, setTimeScope, deletePrompt, attendPrompt, s, e, backTo = null }) {
   const [moreOpen, setMoreOpen] = useState(false);
   useEffect(() => { setMoreOpen(false); }, [occ.instanceId]);
@@ -313,7 +321,9 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
   // Pulled up (0.5.3): the map, invitation replies, plugin data and where the
   // event came from join the sheet. The map's address lookup waits until then.
   const geo = useEventGeo(occ, full);
-  const place = loc && !locIsMeeting && !isPendingLocation(loc) && !isUrl(loc);
+  // What the location is: one reading for every surface (locationKind).
+  const kind = locIsMeeting ? null : locationKind(occ);
+  const place = kind === 'place';
   const mapLat = geo && geo.status === 'ok' ? geo.lat : null;
   const mapLng = geo && geo.status === 'ok' ? geo.lng : null;
 
@@ -421,20 +431,24 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
         <button type="button" class="bc-es-sqbtn" aria-label="Copy meeting link" title="Copy meeting link" onClick=${() => copyText(meet.url, 'Meeting link')}><${Icon} name="copy" size=${20} /></button>
       </div>`}
 
-      ${loc && !locIsMeeting && isPendingLocation(loc) && html`<div class="bc-es-row is-pending" title=${loc}>
+      ${kind === 'later' && html`<div class="bc-es-row is-pending" title=${loc}>
         <${Icon} name="lock" size=${20} /><div class="bc-es-rt">Location after RSVP</div>
       </div>`}
-      ${loc && !locIsMeeting && !isPendingLocation(loc) && isUrl(loc) && html`<div class="bc-es-row">
+      ${kind === 'link' && html`<div class="bc-es-row">
         <${Icon} name="link" size=${20} /><div class="bc-es-rt">${hostOf(loc)}</div>
-        <a class="bc-es-rowbtn" href=${/^www\./i.test(loc) ? 'https://' + loc : loc} target="_blank" rel="noopener noreferrer">Open <${Icon} name="arrowUpRight" size=${14} /></a>
+        <a class="bc-es-rowbtn" href=${/^https?:\/\//i.test(loc) ? loc : 'https://' + loc} target="_blank" rel="noopener noreferrer">Open <${Icon} name="arrowUpRight" size=${14} /></a>
       </div>`}
       ${place && html`<div class="bc-es-row">
         <${PinIcon} size=${20} /><div class=${'bc-es-rt bc-es-addr' + (full ? '' : ' is-clamped')} title=${loc}>${loc}</div>
         <a class="bc-es-rowbtn" href=${gmapsUrl(loc, mapLat != null ? mapLat : occ.locationLat, mapLng != null ? mapLng : occ.locationLng)} target="_blank" rel="noopener noreferrer">Directions <${Icon} name="arrowUpRight" size=${14} /></a>
       </div>`}
+      ${kind === 'text' && html`<div class="bc-es-row">
+        <${Icon} name="note" size=${20} /><div class=${'bc-es-rt' + (full ? '' : ' is-clamped')} title=${loc}>${loc}</div>
+      </div>`}
+      ${kind === 'text' && full && occ.noPlace === 'room' && html`<div class="bc-es-note">${noPlaceNote('room')}</div>`}
       ${place && full && mapLat != null && html`<div class="bc-es-map"><${MiniMap} lat=${mapLat} lng=${mapLng} location=${loc} /></div>`}
       ${place && full && geo && geo.status === 'loading' && html`<div class="bc-es-map is-loading" aria-hidden="true"></div>`}
-      ${place && full && geo && geo.status === 'none' && html`<div class="bc-es-note">Couldn\u2019t place this address on a map. A street address, or \u201cplace, city\u201d, will fix it.</div>`}
+      ${place && full && geo && geo.status === 'none' && html`<div class="bc-es-note">${noPlaceNote(geo.noPlace)}</div>`}
 
       ${occ.reminders && occ.reminders.length > 0 && html`<div class=${'bc-es-row' + (occ.full ? ' bc-late' : '')}>
         <${Icon} name="bell" size=${20} /><div class="bc-es-rt">${occ.reminders.map(fmtReminder).join(', ')}</div>

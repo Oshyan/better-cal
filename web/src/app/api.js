@@ -41,10 +41,17 @@ export const NOT_MODIFIED = Symbol('not modified');
 let writing = 0;
 export const writesPending = () => writing + calendarsUnsaved;
 
-export async function api(path, opts = {}) {
+// A write stays counted until its caller has run to its first wait after
+// the answer (its Undo toast shown, say): the release is added to the
+// answer's promise only after the caller's own continuation was.
+export function api(path, opts = {}) {
   if (!opts.method || opts.method === 'GET') return request(path, opts);
   writing++;
-  try { return await request(path, opts); } finally { writing--; }
+  const answer = request(path, opts);
+  const release = () => { writing--; };
+  const afterCaller = () => answer.then(release, release);
+  answer.then(afterCaller, afterCaller);
+  return answer;
 }
 
 async function request(path, { method = 'GET', body, formData, signal, ifNoneMatch = null } = {}) {

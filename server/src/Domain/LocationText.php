@@ -52,9 +52,18 @@ final class LocationText
         'link', 'links', 'call', 'video', 'meeting', 'conference', 'dial', 'dialin', 'bridge', 'id',
         'passcode', 'password', 'pin', 'code', 'join', 'details', 'info', 'location', 'address', 'venue',
         'description', 'email', 'invite', 'invitation', 'below', 'above', 'follow', 'follows', 'coming',
-        'once', 'after', 'upon', 'when', 'until', 'available', 'google', 'microsoft', 'phone', 'tel',
+        'once', 'after', 'before', 'upon', 'when', 'until', 'available', 'google', 'microsoft', 'phone', 'tel',
+        'breakfast', 'brunch', 'lunch', 'dinner',
+    ];
+
+    /**
+     * Words that hedge a time: each is the sign of a note. A date or time
+     * word alone is no sign ("Noon" may be a venue's name); with one of these
+     * and nothing else it is a note ("sometime after lunch").
+     */
+    private const HEDGES = [
         'early', 'late', 'around', 'about', 'approx', 'approximately', 'ish', 'maybe', 'probably',
-        'sometime', 'tentative', 'tentatively', 'mid',
+        'sometime', 'sometimes', 'tentative', 'tentatively', 'mid',
     ];
 
     /**
@@ -258,7 +267,6 @@ final class LocationText
         }, $s);
         $when = FallbackParser::withoutWhen('at', $s, new \DateTimeImmutable());
         if (PlaceSearch::words($when) !== PlaceSearch::words(trim($s, " \t\n\r,.-@"))) {
-            $sign ??= 'note';
             $s = $when;
         }
         foreach (PlaceSearch::words($s) as $w) {
@@ -271,6 +279,10 @@ final class LocationText
             }
             if (in_array($w, self::LATER_WORDS, true)) {
                 $sign ??= 'later';
+                continue;
+            }
+            if (in_array($w, self::HEDGES, true)) {
+                $sign ??= 'note';
                 continue;
             }
             if (in_array($w, self::FILLER, true) || mb_strlen($w) < 2) {

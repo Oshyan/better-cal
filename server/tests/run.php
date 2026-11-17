@@ -7061,7 +7061,7 @@ $readingRows = [
     ['The Venue', 'place', [['The Venue', null]]],
     ['Sunday Social', 'place', [['Sunday Social', null]]],
     ['Sample Hall Room 5', 'place', [['Sample Hall Room 5', null]]],
-    ['Sample Hall, Room 406, 75 Example Way, Springfield', 'place', [['Sample Hall, Room 406, 75 Example Way, Springfield', null], ['75 Example Way, Springfield', '75 Example Way']]],
+    ['Sample Hall, Room 14, 75 Example Way, Springfield', 'place', [['Sample Hall, Room 14, 75 Example Way, Springfield', null], ['75 Example Way, Springfield', '75 Example Way']]],
     ['Sample Lounge, 2nd floor', 'place', [['Sample Lounge, 2nd floor', null]]],
     ['12 Rua Exemplo, Sampletown', 'place', [['12 Rua Exemplo, Sampletown', null]]],
     ['Sample-Town Library', 'place', [['Sample-Town Library', null]]],
@@ -7073,7 +7073,7 @@ foreach ($readingRows as [$text, $want, $forms]) {
     checkEq('location reading: ' . $text, [$want, $forms], [$got, Geocode::forms($text)]);
 }
 checkEq('location reading: typed coordinates are read as numbers', [12.3456, -65.4321], [\BetterCal\Domain\LocationText::read('12.3456, -65.4321')['lat'], \BetterCal\Domain\LocationText::read('12.3456,-65.4321')['lng']]);
-checkEq('location reading: coordinates out of range are not coordinates', 'place', \BetterCal\Domain\LocationText::read('98.1624, -222.5763')['kind']);
+checkEq('location reading: coordinates out of range are not coordinates', 'place', \BetterCal\Domain\LocationText::read('98.3456, -265.4321')['kind']);
 checkEq('location reading: the rest is kept apart, without its separator', ['the Sample Theater', 'tickets at the door?'],
     [\BetterCal\Domain\LocationText::read('the Sample Theater - tickets at the door?')['text'], \BetterCal\Domain\LocationText::read('the Sample Theater - tickets at the door?')['rest']]);
 checkEq('location reading: the name before an address with no separator', ['Sample Hall', '75 Example Way Springfield CA 90000'],

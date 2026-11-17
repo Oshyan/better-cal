@@ -152,7 +152,7 @@ return static function (Db $db): void {
             $rows[$k] = [$e['location_lat'] !== null ? round((float) $e['location_lat'], 2) : null, $e['location_source'], $e['geocoded_at'] !== null];
         }
         checkEq('place sweep: each event as its reading says', [
-            'meeting' => [null, null, true], 'room' => [null, null, true], 'coords' => [38.16, 'lookup', true],
+            'meeting' => [null, null, true], 'room' => [null, null, true], 'coords' => [12.35, 'lookup', true],
             'dash' => [12.33, 'lookup', true], 'nowhere' => [null, null, true],
         ], $rows);
         // The street form was cached by an earlier scenario (same bias cell),

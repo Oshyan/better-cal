@@ -39,6 +39,15 @@ function sourceLabel(source) {
   return row ? row[1] : source;
 }
 
+// The source, then the API key it was made with when there was one, in
+// the same badge: "Agent/API · Sample agent", "CalDAV · Sample phone (revoked)".
+function entrySourceLabel(en) {
+  const label = sourceLabel(en.source);
+  if (!en.key) return label;
+  const name = en.key.name || 'a key';
+  return label + ' · ' + name + (en.key.revoked ? ' (revoked)' : '');
+}
+
 function fmtWhen(iso) {
   const d = new Date(iso);
   const now = new Date();
@@ -169,7 +178,7 @@ export function ActivityPage() {
     ${entries !== null && entries.length > 0 && html`<ul class="bc-activity-list">
       ${entries.map((en) => html`<li key=${en.id} class="bc-activity-row${en.undone ? ' is-undone' : ''}${en.op === 'refuse' ? ' is-refused' : ''}">
         <span class="bc-activity-when" title=${en.at}>${fmtWhen(en.at)}</span>
-        <span class="bc-activity-badge is-${en.source.startsWith('mail:') ? 'mail' : (en.source.startsWith('plugin:') ? 'plugin' : en.source)}">${sourceLabel(en.source)}</span>
+        <span class="bc-activity-badge is-${en.source.startsWith('mail:') ? 'mail' : (en.source.startsWith('plugin:') ? 'plugin' : en.source)}" title=${en.key ? 'Made with the API key ' + (en.key.name || '') + (en.key.revoked ? ', since revoked' : '') : null}>${entrySourceLabel(en)}</span>
         <span class="bc-activity-summary">
           ${en.entity === 'event' && !en.undone && en.op !== 'delete'
             ? html`<button type="button" class="bc-activity-link" data-opens-event="" onClick=${() => jump(en)}>${en.summary}</button>`

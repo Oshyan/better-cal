@@ -197,6 +197,7 @@ function undoJournal(\BetterCal\Infra\Db $db): void
     (require __DIR__ . '/../migrations/056_mutation_touches.php')($db);
     (require __DIR__ . '/../migrations/062_mutation_rows.php')($db);
     (require __DIR__ . '/../migrations/077_journal_format.php')($db);
+    (require __DIR__ . '/../migrations/081_mutations_token.php')($db);
     $db->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER NOT NULL, calendar_id INTEGER NOT NULL, PRIMARY KEY (mutation_id, calendar_id))');
 }
 

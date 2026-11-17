@@ -23,26 +23,45 @@ import { set, state, useStore } from './store.js';
 const line = [];
 let holder = null;
 
+// An answer of yes sets something in motion that a reload must not cut off
+// before it is under way: the question's own dialog leaves the page before
+// the asker's code after the answer runs. So a yes holds the reload
+// (questionPending) from the moment it is given until the asker has run to
+// its first wait: by then a write it sends is counted (api.js), and if it
+// sends none, it has finished or waits on something else. Reactions to a
+// promise run in the order they were added, so the release is added to the
+// promise the asker awaits only after the asker's own continuation was.
+// Cancel holds nothing past the dialog.
+let answering = 0;
+function releaseAfterAsker(answer) {
+  const release = () => { answering = Math.max(0, answering - 1); };
+  answer.then((yes) => { if (yes) answer.then(release); });
+}
+
 function grantNext() {
   if (holder || !line.length) return;
   const { grant, waited } = line.shift();
   const turn = {
     waited: waited || false,
     // Show one question with this turn; resolves with the answer, and gives the turn back.
-    ask(q) {
+    ask(q, { awaited = true } = {}) {
       if (holder !== turn) return Promise.resolve(false);
-      return new Promise((resolve) => {
+      const answer = new Promise((resolve) => {
         let settled = false;
         const entry = { ...q, lines: q.lines || [], body: q.body || '', foot: q.foot || '', danger: !!q.danger };
         entry.resolve = (yes) => {
           if (settled) return;
           settled = true;
+          if (yes) answering++;
           if (state.confirmAsk === entry) set({ confirmAsk: null });
           turn.release();
           resolve(!!yes);
         };
         set({ confirmAsk: entry });
       });
+      // askConfirm hands on its own promise: the release goes there instead.
+      if (awaited) releaseAfterAsker(answer);
+      return answer;
     },
     // Give the turn back without asking (or after): the next asker's turn.
     release() {
@@ -68,15 +87,20 @@ export function confirmTurn() {
   });
 }
 
-/** A question is open, or an asker holds or waits for the turn to ask one (drafts.js, whatWouldBeLost). */
-export const questionPending = () => !!holder || line.length > 0;
+/**
+ * A question is open, an asker holds or waits for the turn to ask one, or a
+ * yes was given and its asker has not yet run to its first wait (drafts.js,
+ * whatWouldBeLost).
+ */
+export const questionPending = () => !!holder || line.length > 0 || answering > 0;
 
 /** Resolves true when the person confirms, false for Cancel, Esc or a click outside. */
 // A question with several values (googlechange.js) adds `lines`, one each,
 // under the body, and `foot`, what each button does, above the buttons.
-export async function askConfirm({ title, body = '', lines = [], foot = '', confirmLabel, danger = false }) {
-  const turn = await confirmTurn();
-  return turn.ask({ title, body, lines, foot, confirmLabel, danger });
+export function askConfirm({ title, body = '', lines = [], foot = '', confirmLabel, danger = false }) {
+  const answer = confirmTurn().then((turn) => turn.ask({ title, body, lines, foot, confirmLabel, danger }, { awaited: false }));
+  releaseAfterAsker(answer);
+  return answer;
 }
 
 export function ConfirmHost() {

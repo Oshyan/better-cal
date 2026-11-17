@@ -190,7 +190,7 @@ export function pageNow() {
   let typing = false;
   try {
     // The toast list is a top layer whatever its toasts say: a toast counts
-    // only when it offers a choice (below).
+    // only when it offers a choice or reports an error (below).
     layers = openLayers({ top: true }).filter((el) => !el.classList.contains('bc-toasts'));
     const body = document.body && document.body.classList;
     moving = !!(body && (body.contains('bc-dragging') || body.contains('bc-rescheduling'))) || !!document.querySelector('.is-dragging');
@@ -200,7 +200,7 @@ export function pageNow() {
     layers: layers.length,
     forms: reloadHolds.size,
     question: questionPending(),
-    choices: (state.toasts || []).filter((t) => t.undoable || t.actionLabel || (t.actions && t.actions.length)).length,
+    toasts: (state.toasts || []).filter((t) => t.error || t.undoable || t.actionLabel || (t.actions && t.actions.length)).length,
     moving: moving || !!state.reschedule,
     typing,
     writes: writesPending(),
@@ -217,8 +217,10 @@ export function pageNow() {
  *            welcome, a confirm or password step-up (ui/outside.js)
  *   forms    a page form with unsaved changes (holdReload)
  *   question a question open or about to be asked (ConfirmDialog.js: the
- *            Google "Cancel or Overwrite" among them)
- *   choices  a toast still offering Undo or another choice
+ *            Google "Cancel or Overwrite" among them), or a yes given whose
+ *            asker has not yet run to its first wait (its write not counted)
+ *   toasts   a toast still offering Undo or another choice, or reporting an
+ *            error or a refusal, until it is dismissed or runs out
  *   moving   a drag or reschedule in progress
  *   typing   a text field with text in it has the focus
  *   writes   a write sent and not yet answered (api.js)

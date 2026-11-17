@@ -25,6 +25,17 @@ final class People
     // inverse statement of away, useful for the same planning glance.
     public const KINDS = ['away', 'busy', 'here'];
 
+    /**
+     * What a merge does with each column of the two people's rows (merge()),
+     * every column but the survivor's identity (id, user_id, name): notes
+     * joined, shown on the calendar when either was, the earlier start.
+     * A column added to `people` is added here, or the merge test fails.
+     */
+    public const MERGE_COLUMNS = ['notes' => 'joined', 'show_on_calendar' => 'either', 'created_at' => 'earlier'];
+
+    /** Every table that refers to a person, by its column: a merge moves each row (merge()); the merge test compares this with the schema. */
+    public const REFERRING = ['event_people' => 'person_id', 'availability' => 'person_id'];
+
     public function __construct(private readonly Db $db)
     {
     }
@@ -496,10 +507,9 @@ final class People
 
     /**
      * Rename and/or set notes. Renaming onto an existing person's name merges
-     * the two: links move to the survivor (duplicates collapse via the
-     * composite primary key), the renamed row is deleted, and the survivor is
-     * returned — "Alex" -> "Alex Example" should unify history, not
-     * error out.
+     * the two (merge()): everything connected to either name is the
+     * survivor's, the renamed row is deleted, and the survivor is returned;
+     * "Alex" -> "Alex Example" should unify history, not error out.
      *
      * @param array{name?: mixed, notes?: mixed} $in
      * @return array{id:int,name:string,notes:?string}
@@ -523,6 +533,7 @@ final class People
         $ids = $merging !== null ? [$id, (int) $merging] : [$id];
         $snapshot = function () use ($ids): array {
             [$in, $params] = Db::in($ids);
+            // Both rows and every table that refers to them (REFERRING).
             return [
                 'people' => $this->db->all("SELECT * FROM people WHERE id IN $in", $params),
                 'event_people' => $this->db->all("SELECT * FROM event_people WHERE person_id IN $in", $params),
@@ -550,15 +561,8 @@ final class People
                 [$userId, $name, $id]
             );
             if ($existing !== null) {
-                $survivorId = (int) $existing['id'];
-                $this->db->run(
-                    'INSERT IGNORE INTO event_people (event_id, person_id)
-                     SELECT event_id, ? FROM event_people WHERE person_id = ?',
-                    [$survivorId, $id]
-                );
-                $this->db->run('UPDATE availability SET person_id = ? WHERE person_id = ?', [$survivorId, $id]);
-                $this->db->run('DELETE FROM people WHERE id = ?', [$id]);
-                $id = $survivorId;
+                $this->merge((int) $existing['id'], $id);
+                $id = (int) $existing['id'];
             } else {
                 $this->db->run('UPDATE people SET name = ? WHERE id = ?', [$name, $id]);
             }
@@ -572,6 +576,50 @@ final class People
             'notes' => $out['notes'] !== null ? (string) $out['notes'] : null,
             'showOnCalendar' => (int) $out['show_on_calendar'] === 1,
         ];
+    }
+
+    /**
+     * Merge $absorbedId into $survivorId: everything connected to either is
+     * the survivor's, nothing dropped (decisions.md, "Merging two people
+     * keeps everything either had"). Each column of the rows by its rule
+     * (MERGE_COLUMNS): notes joined, the survivor's first, one copy when
+     * they are the same; shown on the calendar when either was; the earlier
+     * start. Every row that refers to the absorbed person (REFERRING) moves
+     * to the survivor; a link both already had (the same event) is one link.
+     * Then the absorbed row goes. The caller journals both rows and every
+     * referring row before and after, so its undo puts both back as they were.
+     */
+    private function merge(int $survivorId, int $absorbedId): void
+    {
+        $survivor = $this->db->one('SELECT * FROM people WHERE id = ?', [$survivorId]);
+        $absorbed = $this->db->one('SELECT * FROM people WHERE id = ?', [$absorbedId]);
+        $fields = [];
+        foreach (self::MERGE_COLUMNS as $column => $rule) {
+            [$a, $b] = [$survivor[$column] ?? null, $absorbed[$column] ?? null];
+            $fields[$column] = match ($rule) {
+                'joined' => self::joinedNotes($a, $b),
+                'either' => (int) $a === 1 || (int) $b === 1 ? 1 : 0,
+                'earlier' => $a === null ? $b : ($b === null ? $a : min((string) $a, (string) $b)),
+            };
+        }
+        $this->db->update('people', $fields, 'id = ?', [$survivorId]);
+        // Every table in REFERRING, by name, so the link inventory reads it
+        // (link-ownership.test.php). An event both were on is one link; the
+        // absorbed person's copy goes with its row below.
+        $this->db->run('INSERT IGNORE INTO event_people (event_id, person_id) SELECT event_id, ? FROM event_people WHERE person_id = ?', [$survivorId, $absorbedId]);
+        $this->db->run('UPDATE availability SET person_id = ? WHERE person_id = ?', [$survivorId, $absorbedId]);
+        $this->db->run('DELETE FROM people WHERE id = ?', [$absorbedId]);
+    }
+
+    /** Two people's notes as one: both, the first's first, a blank line between; one copy when they are the same. */
+    public static function joinedNotes(?string $first, ?string $second): ?string
+    {
+        $a = $first !== null && trim($first) !== '' ? $first : null;
+        $b = $second !== null && trim($second) !== '' ? $second : null;
+        if ($a === null || $b === null || trim($a) === trim($b)) {
+            return $a ?? $b;
+        }
+        return rtrim($a) . "\n\n" . ltrim($b);
     }
 
     /** Remove a person and their event links (events themselves untouched). */

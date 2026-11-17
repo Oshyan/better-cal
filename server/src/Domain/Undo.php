@@ -329,6 +329,12 @@ final class Undo
                 [$beforeJson, $afterJson] = [self::encodeTables($keptBefore), self::encodeTables($keptAfter)];
             }
         }
+        // The API key the request signed in with, by id and by its name as it
+        // is now, so the entry still names it once the key is revoked and its
+        // row is gone (migration 082). Null for a session, a password, the server.
+        $tokenId = RequestAuthority::current()?->tokenId();
+        $tokenName = $tokenId === null ? null
+            : $this->db->scalar('SELECT name FROM api_tokens WHERE id = ? AND user_id = ?', [$tokenId, $userId]);
         $mutationId = $this->db->insert('mutations', [
             'user_id' => $userId,
             'entity' => $entity,
@@ -338,6 +344,8 @@ final class Undo
             'after_json' => $afterJson,
             'source' => ActivityContext::get(),
             'run_id' => ActivityContext::runId(),
+            'token_id' => $tokenId,
+            'token_name' => $tokenName === null ? null : (string) $tokenName,
             'summary' => mb_substr($summary ?? self::defaultSummary($entity, $op, $beforeTables, $afterTables, Settings::homeTzid($this->db, $userId)), 0, 300),
             'details_json' => $details === null ? null : json_encode($details, self::JSON_FLAGS),
             'format' => self::JOURNAL_FORMAT,

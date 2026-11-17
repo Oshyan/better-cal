@@ -406,8 +406,8 @@ final class Events
 
     /**
      * A new row's identity and bookkeeping, which on a Google calendar the
-     * sync writes when it stores Google's answer (Feeds::sync): never
-     * carried over from the request's row.
+     * sync writes when it stores Google's answer (Feeds::sync, created_via
+     * as this write's source): never carried over from the request's row.
      */
     private const GOOGLE_ROW_IDENTITY = ['user_id', 'calendar_id', 'uid', 'source', 'created_via', 'created_at', 'updated_at'];
 
@@ -771,7 +771,8 @@ final class Events
                         'google_event_id' => (string) ($resp['id'] ?? $instanceId),
                         'google_etag' => is_string($resp['etag'] ?? null) && $resp['etag'] !== '' ? $resp['etag'] : null,
                         'source' => 'feed',
-                        'created_via' => 'feed',
+                        // Made by this edit, as a row the sync stores from an answer is (Feeds::sync, madeVia).
+                        'created_via' => ActivityContext::get(),
                         // Owning nothing yet: what this edit changed is added below.
                         'override_fields' => OwnFieldsList::encode([]),
                     ]);

@@ -3394,6 +3394,8 @@ body.bc-rescheduling { user-select: none; }
 .bc-activity-badge {
   flex: none; font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
   border: 1px solid var(--border-strong); color: var(--fg-muted); white-space: nowrap;
+  /* A key's name rides in the badge; a long one ends in an ellipsis, whole in its title. */
+  max-width: 16em; overflow: hidden; text-overflow: ellipsis;
 }
 .bc-activity-badge.is-web, .bc-activity-badge.is-quickadd { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); }
 .bc-activity-badge.is-feed, .bc-activity-badge.is-google { color: var(--src-feed); border-color: color-mix(in srgb, var(--src-feed) 55%, transparent); }

@@ -74,8 +74,9 @@ final class Activity
         // arrive as strings, which MySQL rejects in a LIMIT clause.
         $fetch = $limit + 1; // one extra row = "there is another page"
         $rows = $this->db->all(
-            'SELECT id, entity, entity_id, op, source, summary, details_json, undone, created_at, format,
-                    (before_json IS NOT NULL OR after_json IS NOT NULL) AS has_snapshot
+            'SELECT id, entity, entity_id, op, source, summary, details_json, undone, created_at, format, token_id, token_name,
+                    (before_json IS NOT NULL OR after_json IS NOT NULL) AS has_snapshot,
+                    (token_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM api_tokens t WHERE t.id = mutations.token_id AND t.user_id = mutations.user_id)) AS token_revoked
              FROM mutations WHERE ' . implode(' AND ', $where) . "
              ORDER BY id DESC LIMIT $fetch",
             $params
@@ -106,7 +107,14 @@ final class Activity
                 'details' => $details,
                 'undone' => (int) $r['undone'] === 1,
                 'undoable' => $undoable,
-            ] + ($why !== null ? ['notUndoable' => $why] : []);
+            ] + ($why !== null ? ['notUndoable' => $why] : [])
+              // The API key it was made with, named as it was then; revoked
+              // once the key's row is gone (key ids are never reused).
+              + ($r['token_id'] !== null ? ['key' => [
+                  'id' => (int) $r['token_id'],
+                  'name' => $r['token_name'] !== null ? (string) $r['token_name'] : null,
+                  'revoked' => (int) $r['token_revoked'] === 1,
+              ]] : []);
         }, $rows);
 
         return [

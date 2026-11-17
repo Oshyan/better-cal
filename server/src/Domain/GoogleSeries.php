@@ -3256,7 +3256,8 @@ final class GoogleSeries
             $had[(int) $r['id']] = true;
         }
         $snapshot = GoogleSync::applyChanges(GoogleSync::rowsToParsed($others), GoogleSync::toParsedList($items), true);
-        $this->feeds->sync($calendar, $snapshot, journal: $journal);
+        // The read stored before a change is Google's, as a poll's is; the rows a write's own read-back makes are the write's (Feeds::sync, madeVia).
+        $this->feeds->sync($calendar, $snapshot, journal: $journal, madeVia: $journal ? null : ActivityContext::get());
         if ($pendingId !== null && $uids !== []) {
             [$in, $params] = Db::in(array_keys($uids));
             $made = [];

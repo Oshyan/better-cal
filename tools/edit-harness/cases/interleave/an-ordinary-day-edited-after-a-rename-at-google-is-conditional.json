@@ -1,5 +1,5 @@
 {
-    "about": "A rename at Google not yet read here, then a day's title changed here: the PATCH carries If-Match, so it is refused with google_conflict and writes nothing (x-conditional, x-conflict).",
+    "about": "A rename at Google not yet read here, then a day's title changed here. With the conflict choice on, as shipped, the day shows the series' new title, so the change asks about the title, from series, nothing sent and the read stored (x-choice; google-conflict-choice.md, Slice 2, case 4). With it off the PATCH carries If-Match and is refused with google_conflict, writing nothing: an-ordinary-day-edited-after-a-rename-at-google-with-the-conflict-choice-off-is-refused (x-conditional, x-conflict).",
     "series": {
         "family": "weekly_bare",
         "rrule": "FREQ=WEEKLY",

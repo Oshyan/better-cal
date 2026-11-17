@@ -1,0 +1,28 @@
+{
+    "about": "An all-day weekly series renamed at Google, not yet read, then one day dragged to the next date here: goes through, the title kept and named (Slice 2, case 3; x-choice).",
+    "series": {
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-03-01",
+        "length": 1,
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend"
+    },
+    "steps": [
+        {
+            "do": "r-rename",
+            "pick": 0.1
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.5,
+            "what": "time",
+            "onRemote": false,
+            "byRow": false
+        }
+    ]
+}

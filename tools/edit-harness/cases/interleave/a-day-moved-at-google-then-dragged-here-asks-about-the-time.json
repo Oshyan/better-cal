@@ -1,0 +1,29 @@
+{
+    "about": "One day given its own title, notes and a time two hours later at Google, not yet read, then the same day dragged here: asked about the time, from day (Slice 2, case 5; x-choice).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "r-exc+",
+            "pick": 0.1,
+            "moved": true
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.5,
+            "what": "time",
+            "onRemote": true,
+            "byRow": false
+        }
+    ]
+}

@@ -38,6 +38,7 @@ final class Probe
         '9' => ['Two live checks from the audit of closed issues', 'Manual: they run through the app, not the API.'],
         '10' => ['What an undo of a change to all events would meet', 'Each from a weekly 10:00 America/Los_Angeles series of ten with its own renamed and deleted days: whether a series stays still with no writes (10.1 takes ten minutes, it waits), a bound taken back and its days sent again, a split taken back, a deleted series made live again, a day under a deleted series, and a value only Google holds on one day (colorId). Each list is the singleEvents=false, showDeleted=true list by iCalUID, every field of every item printed.'],
         '11' => ['A list by iCalUID right after a write', 'Whether the list by an event\'s iCalUID (singleEvents=false, showDeleted=true) carries a write at once, as a first read of a single event that replaces a GET by id must: 30 single events inserted, each listed at once; one single event PATCHed 30 times in a row, each conditional on the etag the list before it gave; the same 30 for one day of a repeating event that has its own record; 10 single events deleted, each listed at once. Each: listed or not, the etag (and title) equal to the write\'s answer or not, the milliseconds between the write\'s answer and the list\'s, and for a mismatch how long until a re-list agrees (up to five, a second apart). Counts, no verdict. No attendees.'],
+        '12' => ['Probes still owed', 'The live questions left open by docs/design/google-conflict-choice.md section 8 and issues 272 and 275, each from a state it makes itself and read through the list by iCalUID (singleEvents=false) before and after: P7, a series\' link changed by a master write over a renamed day; P8, a rule changed so a renamed and a deleted day are no longer days of it; P3 by the API, a single event PATCHed to gain a rule; issue 272, the last remaining day of a series of three deleted on its own, and the writes that might bring it back; and from issue 275, a zoneless day record written with no times, a deleted series confirmed by a write with no rule, the guest list written alone over a day with its own notes (one invented guest at a reserved domain), a cancel and a delete sent to a dropped record, a renamed and a deleted day past the 730th occurrence after a rule change, and a day deleted by an EXDATE written to by its instance id.'],
     ];
 
     private string $runId;
@@ -2948,6 +2949,350 @@ final class Probe
             }
         }
         return $out === [] ? 'no field differs' : implode('; ', $out);
+    }
+
+    // ---- 12. Probes still owed --------------------------------------------------------
+
+    private const OWED_LINK_ONE = ['title' => 'Probe link one', 'url' => 'https://example.com/probe-link-one'];
+    private const OWED_LINK_TWO = ['title' => 'Probe link two', 'url' => 'https://example.com/probe-link-two'];
+    /** An invented guest at a reserved domain; every write still sends sendUpdates=none. */
+    private const OWED_GUEST = 'probe.guest@example.com';
+
+    private function group12(): void
+    {
+        $this->probeCase('12', '12.1', 'P7: a series\' link (source) changed by a write to the master: does a renamed day\'s record hold the old link or the new', function (CaseRun $c): void {
+            $etag = self::etagNamer();
+            [$m, $uid] = $this->owedSeries($c, 'Probe owed link', ['RRULE:FREQ=WEEKLY;COUNT=4'], ['source' => self::OWED_LINK_ONE]);
+            $day = $this->undoId($m, 2);
+            $this->setupWrite($c, 'rename occurrence 2', 'PATCH', $day, ['summary' => 'Probe owed link (one changed)']);
+            $ids = ['master' => $m, 'occurrence 2' => $day];
+            $words = [];
+            $list = $this->undoList($c, $uid, 'the list before');
+            $words[] = 'the list before: ' . $this->listWords($list, $ids, $etag);
+            $ifMatch = self::etagIn($list, $m);
+            $x = $this->send($c, 'write', 'the master\'s link changed', 'PATCH', '/events/' . rawurlencode($m), [], ['source' => self::OWED_LINK_TWO], self::ifMatch($ifMatch));
+            $words[] = 'PATCH the master {"source": link two} alone (If-Match ' . $etag($ifMatch) . '): ' . self::answer($x, $etag);
+            $words[] = 'the list after: ' . $this->listWords($this->undoList($c, $uid, 'the list after'), $ids, $etag);
+            $words[] = 'GET occurrence 2: ' . $this->getItem($c, $day, $etag);
+            $c->sent = 'setup: a weekly series of four with source link one, occurrence 2 renamed; ' . self::describeSent($c->writes());
+            $c->finding = implode('; ', $words);
+        });
+
+        $this->probeCase('12', '12.2', 'P8: a rule changed (INTERVAL=2) so that a renamed day and a deleted day are no longer days of the event: does the list by iCalUID still hold their records, and in what form', function (CaseRun $c): void {
+            $etag = self::etagNamer();
+            [$m, $uid] = $this->undoBase($c, [4 => 'renamed', 6 => 'deleted']);
+            $ids = ['master' => $m, 'occurrence 4' => $this->undoId($m, 4), 'occurrence 6' => $this->undoId($m, 6)];
+            $words = [];
+            $list = $this->undoList($c, $uid, 'the list before');
+            $words[] = 'the list before: ' . $this->listWords($list, $ids, $etag);
+            $ifMatch = self::etagIn($list, $m);
+            $x = $this->send($c, 'write', 'every other week', 'PATCH', '/events/' . rawurlencode($m), [], ['recurrence' => ['RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=5']], self::ifMatch($ifMatch));
+            $words[] = 'PATCH the master recurrence WEEKLY;INTERVAL=2;COUNT=5, occurrences 1, 3, 5, 7 and 9 of the old rule (If-Match ' . $etag($ifMatch) . '): ' . self::answer($x, $etag);
+            $words[] = 'the list after, showDeleted=true: ' . $this->listWords($this->undoList($c, $uid, 'the list after'), $ids, $etag);
+            $words[] = 'the list after, showDeleted=false: ' . $this->listWords($this->undoList($c, $uid, 'the list after, no showDeleted', false), $ids, $etag);
+            $words[] = 'GET occurrence 4: ' . $this->getItem($c, $ids['occurrence 4'], $etag);
+            $words[] = 'GET occurrence 6: ' . $this->getItem($c, $ids['occurrence 6'], $etag);
+            $c->sent = 'setup: a weekly series of ten, 10:00 Los Angeles, occurrence 4 renamed, occurrence 6 deleted; ' . self::describeSent($c->writes());
+            $c->finding = implode('; ', $words);
+        });
+
+        $this->probeCase('12', '12.3', 'P3 by the API: a single event PATCHed to gain recurrence: is its id unchanged, and does the list by its iCalUID show recurrence', function (CaseRun $c): void {
+            $etag = self::etagNamer();
+            $x = $this->insert($c, 'setup', 'insert the single event', self::timed('Probe owed single', self::LA, '2027-03-01 10:00', 60));
+            $id = (string) ($x['response']['id'] ?? throw new \RuntimeException('the event was refused: HTTP ' . $x['status']));
+            $uid = (string) ($x['response']['iCalUID'] ?? '');
+            $words = [];
+            $list = $this->undoList($c, $uid, 'the list before');
+            $words[] = 'the list before: ' . $this->listWords($list, ['the event' => $id], $etag);
+            $ifMatch = self::etagIn($list, $id);
+            $x = $this->send($c, 'write', 'made repeating', 'PATCH', '/events/' . rawurlencode($id), [], ['recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4']], self::ifMatch($ifMatch));
+            $r = is_array($x['response']) ? $x['response'] : [];
+            $words[] = 'PATCH {"recurrence":["RRULE:FREQ=WEEKLY;COUNT=4"]} (If-Match ' . $etag($ifMatch) . '): ' . self::answer($x, $etag)
+                . ', the answer\'s id ' . (($r['id'] ?? null) === $id ? 'unchanged' : self::short(isset($r['id']) ? str_replace($id, '{id}', (string) $r['id']) : null))
+                . ', its iCalUID ' . (($r['iCalUID'] ?? null) === $uid ? 'unchanged' : 'changed or absent')
+                . ', its recurrence ' . self::short($r['recurrence'] ?? null);
+            $after = $this->undoList($c, $uid, 'the list after');
+            $words[] = 'the list by the same iCalUID after: ' . count($after) . ' items; ' . $this->listWords($after, ['the event' => $id], $etag);
+            $words[] = 'GET by the old id: ' . $this->getItem($c, $id, $etag);
+            $inst = $this->pages($c, 'read', 'instances of the event', '/events/' . rawurlencode($id) . '/instances', ['showDeleted' => 'true']);
+            $words[] = 'events.instances: HTTP ' . $inst['status'] . ', ' . count($inst['items']) . ' items' . ($inst['items'] !== [] ? ', ids ' . implode(' ', array_map(static fn(array $e): string => str_replace($id, '{id}', (string) ($e['id'] ?? '?')), $inst['items'])) : '');
+            $c->sent = 'setup: a single timed event, 10:00 Los Angeles; ' . self::describeSent($c->writes());
+            $c->finding = implode('; ', $words);
+        });
+
+        $this->probeCase('12', '12.4', 'issue 272: a series of three, two days deleted one by one, then the third deleted on its own (its instance id): what Google holds, and whether a write brings it back', function (CaseRun $c): void {
+            $etag = self::etagNamer();
+            [$m, $uid] = $this->owedSeries($c, 'Probe owed three', ['RRULE:FREQ=WEEKLY;COUNT=3']);
+            $ids = ['master' => $m, 'occurrence 1' => $this->undoId($m, 1), 'occurrence 2' => $this->undoId($m, 2), 'occurrence 3' => $this->undoId($m, 3)];
+            $this->setupWrite($c, 'delete occurrence 1', 'DELETE', $ids['occurrence 1']);
+            $this->setupWrite($c, 'delete occurrence 2', 'DELETE', $ids['occurrence 2']);
+            $words = [];
+            $words[] = 'the list before: ' . $this->listWords($this->undoList($c, $uid, 'the list before'), $ids, $etag);
+            $x = $this->send($c, 'write', 'delete occurrence 3', 'DELETE', '/events/' . rawurlencode($ids['occurrence 3']));
+            $words[] = 'DELETE occurrence 3 by its instance id: ' . self::answer($x, $etag);
+            $words[] = 'the list after: ' . $this->listWords($this->undoList($c, $uid, 'the list after the delete'), $ids, $etag);
+            $words[] = 'GET the master: ' . $this->getItem($c, $m, $etag);
+            $inst = $this->pages($c, 'read', 'instances after the delete', '/events/' . rawurlencode($m) . '/instances', ['showDeleted' => 'false']);
+            $words[] = 'events.instances without showDeleted: HTTP ' . $inst['status'] . ', ' . count($inst['items']) . ' items';
+            // Brought back: the day first, as an undo of a day's delete is sent; then the master, as 3.62 sent it.
+            $x = $this->send($c, 'write', 'occurrence 3 confirmed again', 'PATCH', '/events/' . rawurlencode($ids['occurrence 3']), [], ['status' => 'confirmed']);
+            $words[] = 'PATCH occurrence 3 {"status":"confirmed"}: ' . self::answer($x, $etag);
+            $list = $this->undoList($c, $uid, 'the list after the day\'s PATCH');
+            $words[] = 'the list after it: ' . $this->listWords($list, $ids, $etag);
+            $master = self::itemIn($list, $m);
+            if ($master !== null && ($master['status'] ?? '') === 'cancelled') {
+                $ifMatch = self::etagIn($list, $m);
+                $x = $this->send($c, 'write', 'the master confirmed again', 'PATCH', '/events/' . rawurlencode($m), [], ['status' => 'confirmed', 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=3']], self::ifMatch($ifMatch));
+                $words[] = 'the master was cancelled, so PATCH the master {"status":"confirmed", recurrence COUNT=3} (If-Match ' . $etag($ifMatch) . '): ' . self::answer($x, $etag);
+                $words[] = 'the list after it: ' . $this->listWords($this->undoList($c, $uid, 'the list after the master\'s PATCH'), $ids, $etag);
+            } else {
+                $words[] = 'the master was not cancelled after the day\'s PATCH, so no master write was sent';
+            }
+            $inst = $this->pages($c, 'read', 'instances at the end', '/events/' . rawurlencode($m) . '/instances', ['showDeleted' => 'false']);
+            $words[] = 'events.instances at the end, without showDeleted: HTTP ' . $inst['status'] . ', ' . count($inst['items']) . ' items';
+            $c->sent = 'setup: a weekly series of three, 10:00 Los Angeles, occurrences 1 and 2 deleted by their instance ids; ' . self::describeSent($c->writes());
+            $c->finding = implode('; ', $words);
+        });
+
+        $this->probeCase('12', '12.5', 'issue 275 (a), replay round 6: a day\'s record whose times name no zone (a UTC daily series, its start moved a day), written with no times: the zones in the answer and on the lists after', function (CaseRun $c): void {
+            $etag = self::etagNamer();
+            $utc = static fn(string $local): array => ['dateTime' => (new \DateTimeImmutable($local, new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:sP'), 'timeZone' => 'UTC'];
+            $body = ['summary' => 'Probe owed zone', 'description' => 'Probe series notes', 'start' => $utc('2027-01-01 09:00'), 'end' => $utc('2027-01-01 10:00'), 'recurrence' => ['RRULE:FREQ=DAILY']];
+            $x = $this->insert($c, 'setup', 'insert the series', $body);
+            $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+            $uid = (string) ($x['response']['iCalUID'] ?? '');
+            $renamed = self::timedId($m, '2027-01-03', '09:00', 'UTC');
+            $deleted = self::timedId($m, '2027-01-02', '09:00', 'UTC');
+            $this->setupWrite($c, 'rename day 3', 'PATCH', $renamed, ['summary' => 'Probe owed zone (one changed)']);
+            $this->setupWrite($c, 'delete day 2', 'DELETE', $deleted);
+            $this->setupWrite($c, 'the start moved a day', 'PATCH', $m, ['start' => $utc('2027-01-02 09:00'), 'end' => $utc('2027-01-02 10:00'), 'recurrence' => ['RRULE:FREQ=DAILY']]);
+            $ids = ['master' => $m, 'day 3 (renamed)' => $renamed, 'day 2 (deleted)' => $deleted];
+            $words = ['the calendar\'s zone ' . $this->calendarZone];
+            $words[] = 'the list before: ' . $this->listWords($this->undoList($c, $uid, 'the list before'), $ids, $etag);
+            foreach ([['renamed again', ['summary' => 'Probe owed zone (changed again)']], ['cancelled', ['status' => 'cancelled']]] as [$what, $patch]) {
+                $x = $this->send($c, 'write', "day 3 $what", 'PATCH', '/events/' . rawurlencode($renamed), [], $patch);
+                $words[] = 'PATCH day 3 ' . json_encode($patch) . ': ' . self::answer($x, $etag) . (is_array($x['response']) && $x['status'] < 300 ? ', the answer: ' . self::itemWords($x['response'], $etag) : '');
+                $words[] = 'the list after it: ' . $this->listWords($this->undoList($c, $uid, "the list after day 3 $what"), $ids, $etag);
+                $words[] = 'a second list: ' . $this->listWords($this->undoList($c, $uid, "a second list after day 3 $what"), $ids, $etag);
+            }
+            $c->sent = 'setup: a daily series in UTC from 2027-01-01 09:00 (no end), day 3 renamed, day 2 deleted, the start moved a day (PATCH start, end, recurrence); ' . self::describeSent($c->writes());
+            $c->finding = implode('; ', $words);
+        });
+
+        $this->probeCase('12', '12.6', 'issue 275 (b): a write to a deleted (cancelled) series that sets it confirmed, with one field changed and no rule in the body', function (CaseRun $c): void {
+            $etag = self::etagNamer();
+            [$m, $uid] = $this->undoBase($c, [2 => 'renamed', 3 => 'deleted']);
+            $ids = ['master' => $m, 'occurrence 2' => $this->undoId($m, 2), 'occurrence 3' => $this->undoId($m, 3), 'occurrence 4' => $this->undoId($m, 4)];
+            $this->setupWrite($c, 'delete the series', 'DELETE', $m);
+            $words = [];
+            $list = $this->undoList($c, $uid, 'the list before');
+            $words[] = 'the list before: ' . $this->listWords($list, $ids, $etag);
+            $ifMatch = $this->etagOf($c, $m);
+            $x = $this->send($c, 'write', 'confirmed with a new title', 'PATCH', '/events/' . rawurlencode($m), [], ['summary' => 'Probe undo, finished', 'status' => 'confirmed'], self::ifMatch($ifMatch));
+            $words[] = 'PATCH the master {"summary":"Probe undo, finished","status":"confirmed"} (If-Match the GET\'s, ' . $etag($ifMatch) . '): ' . self::answer($x, $etag);
+            $words[] = 'the list after: ' . $this->listWords($this->undoList($c, $uid, 'the list after'), $ids, $etag);
+            $words[] = 'GET occurrence 4 (ordinary): ' . $this->getItem($c, $ids['occurrence 4'], $etag);
+            $inst = $this->pages($c, 'read', 'instances after', '/events/' . rawurlencode($m) . '/instances', ['showDeleted' => 'false']);
+            $words[] = 'events.instances without showDeleted: HTTP ' . $inst['status'] . ', ' . count($inst['items']) . ' items';
+            $c->sent = 'setup: a weekly series of ten, occurrence 2 renamed, occurrence 3 deleted, then the master DELETEd; ' . self::describeSent($c->writes());
+            $c->finding = implode('; ', $words);
+        });
+
+        $this->probeCase('12', '12.7', 'issue 275 (c): a write of the guest list alone over a day with its own notes', function (CaseRun $c): void {
+            $etag = self::etagNamer();
+            [$m, $uid] = $this->owedSeries($c, 'Probe owed guests', ['RRULE:FREQ=WEEKLY;COUNT=4'], ['attendees' => [['email' => self::OWED_GUEST]]]);
+            $day = $this->undoId($m, 2);
+            $this->setupWrite($c, 'occurrence 2 given its own notes', 'PATCH', $day, ['description' => 'Probe day notes ' . self::MARKER_TEXT]);
+            $ids = ['master' => $m, 'occurrence 2' => $day];
+            $words = [];
+            $list = $this->undoList($c, $uid, 'the list before');
+            $words[] = 'the list before: ' . $this->listWords($list, $ids, $etag);
+            $ifMatch = self::etagIn($list, $m);
+            $x = $this->send($c, 'write', 'the guest list alone', 'PATCH', '/events/' . rawurlencode($m), [], ['attendees' => [['email' => self::OWED_GUEST, 'responseStatus' => 'accepted']]], self::ifMatch($ifMatch));
+            $words[] = 'PATCH the master {"attendees":[the guest, responseStatus accepted]} alone (If-Match ' . $etag($ifMatch) . '): ' . self::answer($x, $etag);
+            $words[] = 'the list after: ' . $this->listWords($this->undoList($c, $uid, 'the list after'), $ids, $etag);
+            $c->sent = 'setup: a weekly series of four with one invented guest (sendUpdates=none), occurrence 2 given its own notes; ' . self::describeSent($c->writes());
+            $c->finding = implode('; ', $words);
+        });
+
+        $this->probeCase('12', '12.8', 'issue 275 (d): status cancelled, then a DELETE, sent to a renamed day\'s record that is no longer a day of the event (rule changed to INTERVAL=2): 400 or 404', function (CaseRun $c): void {
+            $etag = self::etagNamer();
+            [$m, $uid] = $this->undoBase($c, [4 => 'renamed']);
+            $day = $this->undoId($m, 4);
+            $this->setupWrite($c, 'every other week', 'PATCH', $m, ['recurrence' => ['RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=5']]);
+            $ids = ['master' => $m, 'occurrence 4' => $day];
+            $words = [];
+            $list = $this->undoList($c, $uid, 'the list before');
+            $words[] = 'the list before: ' . $this->listWords($list, $ids, $etag);
+            $x = $this->send($c, 'write', 'cancel the dropped record', 'PATCH', '/events/' . rawurlencode($day), [], ['status' => 'cancelled']);
+            $words[] = 'PATCH occurrence 4 {"status":"cancelled"}: ' . self::answer($x, $etag);
+            $words[] = 'the list after it: ' . $this->listWords($this->undoList($c, $uid, 'the list after the PATCH'), $ids, $etag);
+            $x = $this->send($c, 'write', 'delete the dropped record', 'DELETE', '/events/' . rawurlencode($day));
+            $words[] = 'DELETE occurrence 4: ' . self::answer($x, $etag);
+            $words[] = 'the list after it: ' . $this->listWords($this->undoList($c, $uid, 'the list after the DELETE'), $ids, $etag);
+            $c->sent = 'setup: a weekly series of ten, occurrence 4 renamed, then the rule changed to WEEKLY;INTERVAL=2;COUNT=5 (occurrence 4 no longer a day); ' . self::describeSent($c->writes());
+            $c->finding = implode('; ', $words);
+        });
+
+        $this->probeCase('12', '12.9', 'issue 275 (e): a renamed and a deleted day past the 730th listed occurrence of a daily event with no end, after its rule changes to INTERVAL=2 (both still days of it): are their records kept', function (CaseRun $c): void {
+            $etag = self::etagNamer();
+            [$m, $uid] = $this->owedSeries($c, 'Probe owed far', ['RRULE:FREQ=DAILY']);
+            $start = new \DateTimeImmutable('2027-03-01');
+            $far = [800 => 'renamed', 802 => 'deleted'];
+            $ids = ['master' => $m];
+            $words = [];
+            // Whether a day this far out takes a write by its instance id is itself an answer, so a refusal is reported, not fatal.
+            foreach ($far as $offset => $kind) {
+                $date = $start->modify("+$offset days")->format('Y-m-d');
+                $id = self::timedId($m, $date, '10:00', self::LA);
+                $ids['occurrence ' . ($offset + 1) . " ($date, $kind)"] = $id;
+                $x = $kind === 'renamed'
+                    ? $this->send($c, 'setup', 'rename occurrence ' . ($offset + 1), 'PATCH', '/events/' . rawurlencode($id), [], ['summary' => 'Probe owed far (one changed)'])
+                    : $this->send($c, 'setup', 'delete occurrence ' . ($offset + 1), 'DELETE', '/events/' . rawurlencode($id));
+                $words[] = 'setup, ' . ($kind === 'renamed' ? 'PATCH' : 'DELETE') . ' occurrence ' . ($offset + 1) . ' by its instance id: ' . self::answer($x, $etag);
+            }
+            $list = $this->undoList($c, $uid, 'the list before');
+            $words[] = 'the list before: ' . $this->listWords($list, $ids, $etag);
+            $ifMatch = self::etagIn($list, $m);
+            $x = $this->send($c, 'write', 'every other day', 'PATCH', '/events/' . rawurlencode($m), [], ['recurrence' => ['RRULE:FREQ=DAILY;INTERVAL=2']], self::ifMatch($ifMatch));
+            $words[] = 'PATCH the master recurrence DAILY;INTERVAL=2 (If-Match ' . $etag($ifMatch) . '): ' . self::answer($x, $etag);
+            $words[] = 'the list after: ' . $this->listWords($this->undoList($c, $uid, 'the list after'), $ids, $etag);
+            foreach ($ids as $label => $id) {
+                if ($id !== $m) {
+                    $words[] = "GET $label: " . $this->getItem($c, $id, $etag);
+                }
+            }
+            $from = $start->modify('+799 days')->format('Y-m-d');
+            $to = $start->modify('+804 days')->format('Y-m-d');
+            $inst = $this->pages($c, 'read', 'instances near the far days', '/events/' . rawurlencode($m) . '/instances', ['showDeleted' => 'true', 'timeMin' => $from . 'T00:00:00Z', 'timeMax' => $to . 'T00:00:00Z']);
+            $near = array_values(array_filter($inst['items'], static fn(array $e): bool => in_array((string) ($e['id'] ?? ''), $ids, true)));
+            $words[] = "events.instances from $from to $to with showDeleted: HTTP " . $inst['status'] . ', ' . count($inst['items']) . ' items; of the two days: ' . ($near === [] ? 'neither' : implode(' | ', array_map(fn(array $e): string => str_replace($m, '{master}', (string) $e['id']) . ' ' . self::itemWords($e, $etag), $near)));
+            $c->sent = 'setup: a daily series, 10:00 Los Angeles from 2027-03-01, no end; occurrence 801 renamed and occurrence 803 deleted by their instance ids; ' . self::describeSent($c->writes());
+            $c->finding = implode('; ', $words);
+        });
+
+        $this->probeCase('12', '12.10', 'issue 275 (f): a day deleted by an EXDATE on the event itself, written to by its instance id to bring it back', function (CaseRun $c): void {
+            $etag = self::etagNamer();
+            [$m, $uid] = $this->owedSeries($c, 'Probe owed exdate', ['RRULE:FREQ=WEEKLY;COUNT=10', 'EXDATE;TZID=America/Los_Angeles:20270315T100000']);
+            $day = $this->undoId($m, 3);
+            $ids = ['master' => $m, 'occurrence 3' => $day];
+            $words = [];
+            $words[] = 'the list before: ' . $this->listWords($this->undoList($c, $uid, 'the list before'), $ids, $etag);
+            $words[] = 'GET occurrence 3 before: ' . $this->getItem($c, $day, $etag);
+            $x = $this->send($c, 'write', 'occurrence 3 confirmed', 'PATCH', '/events/' . rawurlencode($day), [], ['status' => 'confirmed']);
+            $words[] = 'PATCH occurrence 3 {"status":"confirmed"}: ' . self::answer($x, $etag);
+            if ($x['status'] >= 300) {
+                $body = ['status' => 'confirmed', 'summary' => 'Probe owed exdate (back)'] + self::clockAt(self::LA, '2027-03-15 10:00', 60);
+                $x = $this->send($c, 'write', 'occurrence 3 confirmed with its times', 'PATCH', '/events/' . rawurlencode($day), [], $body);
+                $words[] = 'that refused, PATCH occurrence 3 {"status":"confirmed", a title, start and end at its own time}: ' . self::answer($x, $etag);
+            }
+            $words[] = 'the list after: ' . $this->listWords($this->undoList($c, $uid, 'the list after'), $ids, $etag);
+            $words[] = 'GET occurrence 3 after: ' . $this->getItem($c, $day, $etag);
+            $inst = $this->pages($c, 'read', 'instances after', '/events/' . rawurlencode($m) . '/instances', ['showDeleted' => 'false']);
+            $words[] = 'events.instances without showDeleted: HTTP ' . $inst['status'] . ', ' . count($inst['items']) . ' items, occurrence 3 ' . (self::itemIn($inst['items'], $day) !== null ? 'among them' : 'not among them');
+            $c->sent = 'setup: a weekly series of ten, 10:00 Los Angeles, with EXDATE for occurrence 3 (2027-03-15 10:00) in its recurrence; ' . self::describeSent($c->writes());
+            $c->finding = implode('; ', $words);
+        });
+    }
+
+    /** Group 12's series: weekly or daily from 2027-03-01 10:00 Los Angeles, with fields of its own. @return array{0:string, 1:string} the master id and its iCalUID */
+    private function owedSeries(CaseRun $c, string $title, array $rule, array $extra = []): array
+    {
+        $x = $this->insert($c, 'setup', 'insert the series', $extra + self::timed($title, self::LA, '2027-03-01 10:00', 60, $rule));
+        $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the series was refused: HTTP ' . $x['status']));
+        return [$m, (string) ($x['response']['iCalUID'] ?? '')];
+    }
+
+    /** A setup write to one event id; the case stops if it is refused. */
+    private function setupWrite(CaseRun $c, string $label, string $method, string $id, ?array $body = null): void
+    {
+        $r = $this->send($c, 'setup', $label, $method, '/events/' . rawurlencode($id), [], $body);
+        if ($r['status'] >= 300) {
+            throw new \RuntimeException("$label failed: HTTP {$r['status']}");
+        }
+    }
+
+    /** @return list<string> */
+    private static function ifMatch(?string $etag): array
+    {
+        return $etag !== null ? ['If-Match: ' . $etag] : [];
+    }
+
+    private function etagOf(CaseRun $c, string $id): ?string
+    {
+        $g = $c->step('read', "get $id for its etag", $this->api->call('GET', '/events/' . rawurlencode($id)));
+        return is_array($g['response']) && is_string($g['response']['etag'] ?? null) ? $g['response']['etag'] : null;
+    }
+
+    /** The instance id of a timed day at a local clock time (the UTC basic form Google uses). */
+    private static function timedId(string $m, string $date, string $clock, string $tz): string
+    {
+        return $m . '_' . (new \DateTimeImmutable("$date $clock", new \DateTimeZone($tz)))->setTimezone(new \DateTimeZone('UTC'))->format('Ymd\THis\Z');
+    }
+
+    private static function itemIn(array $list, string $id): ?array
+    {
+        foreach ($list as $e) {
+            if ((string) ($e['id'] ?? '') === $id) {
+                return $e;
+            }
+        }
+        return null;
+    }
+
+    /** A GET of one id, in item words. */
+    private function getItem(CaseRun $c, string $id, \Closure $etag): string
+    {
+        $g = $c->step('read', 'get ' . $id, $this->api->call('GET', '/events/' . rawurlencode($id)));
+        return !is_array($g['response']) || $g['status'] !== 200 ? 'GET ' . self::status($g) : 'GET 200, ' . self::itemWords($g['response'], $etag);
+    }
+
+    /** Each named id's item in a list, in words, and how many items the list held. */
+    private function listWords(array $list, array $ids, \Closure $etag): string
+    {
+        $parts = [count($list) . ' items'];
+        foreach ($ids as $label => $id) {
+            $parts[] = "$label: " . self::itemWords(self::itemIn($list, $id), $etag);
+        }
+        $known = array_values($ids);
+        $others = array_filter($list, static fn(array $e): bool => !in_array((string) ($e['id'] ?? ''), $known, true));
+        if ($others !== []) {
+            $parts[] = 'others: ' . implode(' | ', array_map(static fn(array $e): string => (string) ($e['id'] ?? '?') . ' ' . (string) ($e['status'] ?? '?'), $others));
+        }
+        return implode('; ', $parts);
+    }
+
+    /** One resource in words: status, title, notes, times with their zones, rule, link, guests' answers, etag. */
+    private static function itemWords(?array $e, \Closure $etag): string
+    {
+        if ($e === null) {
+            return 'not listed';
+        }
+        $when = static function (?array $w): string {
+            if ($w === null) {
+                return 'none';
+            }
+            return isset($w['date']) ? (string) $w['date'] : (string) ($w['dateTime'] ?? '?') . ' ' . (isset($w['timeZone']) ? (string) $w['timeZone'] : '(no zone)');
+        };
+        $parts = [
+            'status ' . (string) ($e['status'] ?? 'none'),
+            'summary ' . self::short($e['summary'] ?? null),
+            'description ' . (array_key_exists('description', $e) ? self::short(trim(str_replace(self::MARKER_TEXT, '', (string) $e['description']))) : 'absent'),
+            'start ' . $when($e['start'] ?? null),
+            'end ' . $when($e['end'] ?? null),
+        ];
+        if (isset($e['originalStartTime'])) {
+            $parts[] = 'originalStartTime ' . $when($e['originalStartTime']);
+        }
+        if (array_key_exists('recurrence', $e)) {
+            $parts[] = 'recurrence ' . self::short($e['recurrence']);
+        }
+        $parts[] = 'source ' . (array_key_exists('source', $e) ? self::short($e['source']) : 'absent');
+        if (array_key_exists('attendees', $e)) {
+            $parts[] = 'attendees ' . self::short(array_map(static fn(array $a): string => (string) ($a['responseStatus'] ?? 'none'), (array) $e['attendees']));
+        }
+        $parts[] = 'etag ' . $etag(isset($e['etag']) ? (string) $e['etag'] : null);
+        return implode(', ', $parts);
     }
 }
 

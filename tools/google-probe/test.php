@@ -169,6 +169,28 @@ check('group 11: on the stand-in every write is listed and agrees at once (30, 3
 check('group 11: every event it made is deleted', liveMarked($fake) === [], implode(', ', liveMarked($fake)));
 check('group 11: no write carries attendees', array_filter(writes($fake), static fn(array $r) => isset($r['body']['attendees'])) === []);
 
+// ---- Group 12 alone: the probes still owed -------------------------------------
+// The stand-in models none of what these cases ask, so only the plumbing is checked: each case runs and writes
+// a finding, every write sends sendUpdates=none, the only guest is the invented one, and everything made is deleted.
+$fake = new FakeGoogle(CAL);
+[$report, $error] = probeRun($fake, $tmp . '/g12', ['only' => ['12']], $sleep);
+$json = json_decode((string) file_get_contents($report->jsonPath), true);
+$g12 = array_column($json['cases'] ?? [], null, 'id');
+check('group 12: runs alone, its ten cases with no error', $error === null && array_keys($g12) === ['12.1', '12.2', '12.3', '12.4', '12.5', '12.6', '12.7', '12.8', '12.9', '12.10']
+    && array_filter($g12, static fn(array $c) => ($c['error'] ?? null) !== null) === [], $error?->getMessage() ?? json_encode(array_map(static fn(array $c) => $c['error'] ?? null, $g12)));
+check('group 12: only group 12 ran', array_filter($json['cases'] ?? [], static fn(array $c) => $c['group'] !== '12') === []);
+check('group 12: every case has a finding and lists what it sent', array_filter($g12, static fn(array $c) => trim($c['finding']) === '' || trim($c['sent']) === '') === []);
+check('group 12: every finding reads a list before and after', array_filter($g12, static fn(array $c) => !str_contains($c['finding'], 'the list before') || !str_contains($c['finding'], 'after')) === [], json_encode(array_keys($g12)));
+check('group 12: every write sends sendUpdates=none', array_filter(writes($fake), static fn(array $r) => ($r['query']['sendUpdates'] ?? null) !== 'none') === []);
+$guests = [];
+foreach (writes($fake) as $r) {
+    foreach ((array) ($r['body']['attendees'] ?? []) as $a) {
+        $guests[(string) ($a['email'] ?? '')] = true;
+    }
+}
+check('group 12: the only guest written is the invented one at a reserved domain', array_keys($guests) === ['probe.guest@example.com'], json_encode(array_keys($guests)));
+check('group 12: every event it made is deleted', liveMarked($fake) === [], implode(', ', liveMarked($fake)));
+
 // ---- The mail case, with --guest -------------------------------------------
 $fake = new FakeGoogle(CAL);
 [$report, $error] = probeRun($fake, $tmp . '/mail', ['only' => ['8']], $sleep, GUEST);

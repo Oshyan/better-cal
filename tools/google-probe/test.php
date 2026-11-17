@@ -176,11 +176,12 @@ $fake = new FakeGoogle(CAL);
 [$report, $error] = probeRun($fake, $tmp . '/g12', ['only' => ['12']], $sleep);
 $json = json_decode((string) file_get_contents($report->jsonPath), true);
 $g12 = array_column($json['cases'] ?? [], null, 'id');
-check('group 12: runs alone, its ten cases with no error', $error === null && array_keys($g12) === ['12.1', '12.2', '12.3', '12.4', '12.5', '12.6', '12.7', '12.8', '12.9', '12.10']
+check('group 12: runs alone, its eleven cases with no error', $error === null && array_keys($g12) === ['12.1', '12.2', '12.3', '12.4', '12.5', '12.6', '12.7', '12.8', '12.9', '12.10', '12.11']
     && array_filter($g12, static fn(array $c) => ($c['error'] ?? null) !== null) === [], $error?->getMessage() ?? json_encode(array_map(static fn(array $c) => $c['error'] ?? null, $g12)));
 check('group 12: only group 12 ran', array_filter($json['cases'] ?? [], static fn(array $c) => $c['group'] !== '12') === []);
 check('group 12: every case has a finding and lists what it sent', array_filter($g12, static fn(array $c) => trim($c['finding']) === '' || trim($c['sent']) === '') === []);
-check('group 12: every finding reads a list before and after', array_filter($g12, static fn(array $c) => !str_contains($c['finding'], 'the list before') || !str_contains($c['finding'], 'after')) === [], json_encode(array_keys($g12)));
+check('group 12: every finding reads a list after its writes', array_filter($g12, static fn(array $c) => !str_contains($c['finding'], 'the list') || !str_contains($c['finding'], 'after')) === [], json_encode(array_keys($g12)));
+check('group 12: 12.11 imports and inserts under iCalUIDs of its own, at a reserved domain', array_filter(writes($fake), static fn(array $r) => isset($r['body']['iCalUID']) && !str_ends_with((string) $r['body']['iCalUID'], '@probe.invalid')) === [] && count(array_filter(writes($fake), static fn(array $r) => str_ends_with($r['path'], '/events/import'))) >= 7);
 check('group 12: every write sends sendUpdates=none', array_filter(writes($fake), static fn(array $r) => ($r['query']['sendUpdates'] ?? null) !== 'none') === []);
 $guests = [];
 foreach (writes($fake) as $r) {

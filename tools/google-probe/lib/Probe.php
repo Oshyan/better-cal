@@ -38,7 +38,7 @@ final class Probe
         '9' => ['Two live checks from the audit of closed issues', 'Manual: they run through the app, not the API.'],
         '10' => ['What an undo of a change to all events would meet', 'Each from a weekly 10:00 America/Los_Angeles series of ten with its own renamed and deleted days: whether a series stays still with no writes (10.1 takes ten minutes, it waits), a bound taken back and its days sent again, a split taken back, a deleted series made live again, a day under a deleted series, and a value only Google holds on one day (colorId). Each list is the singleEvents=false, showDeleted=true list by iCalUID, every field of every item printed.'],
         '11' => ['A list by iCalUID right after a write', 'Whether the list by an event\'s iCalUID (singleEvents=false, showDeleted=true) carries a write at once, as a first read of a single event that replaces a GET by id must: 30 single events inserted, each listed at once; one single event PATCHed 30 times in a row, each conditional on the etag the list before it gave; the same 30 for one day of a repeating event that has its own record; 10 single events deleted, each listed at once. Each: listed or not, the etag (and title) equal to the write\'s answer or not, the milliseconds between the write\'s answer and the list\'s, and for a mismatch how long until a re-list agrees (up to five, a second apart). Counts, no verdict. No attendees.'],
-        '12' => ['Probes still owed', 'The live questions left open by docs/design/google-conflict-choice.md section 8 and issues 272 and 275, each from a state it makes itself and read through the list by iCalUID (singleEvents=false) before and after: P7, a series\' link changed by a master write over a renamed day; P8, a rule changed so a renamed and a deleted day are no longer days of it; P3 by the API, a single event PATCHed to gain a rule; issue 272, the last remaining day of a series of three deleted on its own, and the writes that might bring it back; and from issue 275, a zoneless day record written with no times, a deleted series confirmed by a write with no rule, the guest list written alone over a day with its own notes (one invented guest at a reserved domain), a cancel and a delete sent to a dropped record, a renamed and a deleted day past the 730th occurrence after a rule change, and a day deleted by an EXDATE written to by its instance id.'],
+        '12' => ['Probes still owed', 'The live questions left open by docs/design/google-conflict-choice.md section 8 and issues 272 and 275, each from a state it makes itself and read through the list by iCalUID (singleEvents=false) before and after: P7, a series\' link changed by a master write over a renamed day; P8, a rule changed so a renamed and a deleted day are no longer days of it; P3 by the API, a single event PATCHed to gain a rule; issue 272, the last remaining day of a series of three deleted on its own, and the writes that might bring it back; and from issue 275, a zoneless day record written with no times, a deleted series confirmed by a write with no rule, the guest list written alone over a day with its own notes (one invented guest at a reserved domain), a cancel and a delete sent to a dropped record, a renamed and a deleted day past the 730th occurrence after a rule change, and a day deleted by an EXDATE written to by its instance id; and 12.11, whether a list by one iCalUID ever holds two events (events.import twice, over a deleted event, and events.insert with an iCalUID already held).'],
     ];
 
     private string $runId;
@@ -3193,6 +3193,91 @@ final class Probe
             $c->sent = 'setup: a weekly series of ten, 10:00 Los Angeles, with EXDATE for occurrence 3 (2027-03-15 10:00) in its recurrence; ' . self::describeSent($c->writes());
             $c->finding = implode('; ', $words);
         });
+
+        $this->probeCase('12', '12.11', 'two events with one identity: the same iCalUID imported twice (same and other content; a single event and a repeating one), imported over a deleted event, and inserted with an iCalUID already held: how many items a list by that iCalUID holds, and which', function (CaseRun $c): void {
+            $etag = self::etagNamer();
+            $words = [];
+            $names = [];
+            // Each list by the iCalUID with deleted shown: how many, and each item by the name of the write that first answered its id.
+            $listed = function (string $uid, string $when) use ($c, $etag, &$names): string {
+                $items = $this->undoList($c, $uid, "the list by the iCalUID $when");
+                $parts = [count($items) . ' items'];
+                foreach ($items as $e) {
+                    $id = (string) ($e['id'] ?? '?');
+                    $parts[] = ($names[$id] ?? 'an id no write answered') . ': ' . self::itemWords($e, $etag);
+                }
+                return 'the list by the iCalUID with deleted shown: ' . implode('; ', $parts);
+            };
+            $wrote = function (string $label, array $x) use ($etag, &$names): string {
+                $id = is_array($x['response']) && isset($x['response']['id']) ? (string) $x['response']['id'] : null;
+                $known = $id !== null && isset($names[$id]);
+                if ($id !== null && !$known) {
+                    $names[$id] = 'the event ' . $label . ' made';
+                }
+                return self::answer($x, $etag) . ($id === null ? '' : ($known ? ', the id of ' . $names[$id] : ', a new id'));
+            };
+            $single = 'probe' . bin2hex(random_bytes(8)) . '@probe.invalid';
+            $series = 'probe' . bin2hex(random_bytes(8)) . '@probe.invalid';
+            $one = ['iCalUID' => $single] + self::timed('Probe owed identity', self::LA, '2027-03-01 10:00', 60);
+            $other = ['iCalUID' => $single] + self::timed('Probe owed identity (other)', self::LA, '2027-03-02 12:00', 30);
+            foreach ([['the first import', $one], ['a second import, the same content', $one], ['a third import, other content', $other]] as [$label, $body]) {
+                $x = $this->importEvent($c, $label, $body);
+                $words[] = "single, $label: " . $wrote($label, $x);
+                $words[] = 'then: ' . $listed($single, "after $label");
+            }
+            $x = $this->insertWithUid($c, 'an insert with the single event\'s iCalUID', ['iCalUID' => $single] + self::timed('Probe owed identity (inserted)', self::LA, '2027-03-03 09:00', 60));
+            $words[] = 'single, events.insert with that iCalUID: ' . $wrote('the insert', $x);
+            $words[] = 'then: ' . $listed($single, 'after the insert');
+            $first = array_search('the event the first import made', $names, true);
+            if (is_string($first)) {
+                $x = $this->send($c, 'write', 'delete the imported single event', 'DELETE', '/events/' . rawurlencode($first));
+                $words[] = 'single, DELETE the first import\'s event: ' . self::answer($x, $etag);
+                $x = $this->importEvent($c, 'an import over the deleted event', $one);
+                $words[] = 'single, an import of the same iCalUID after that delete: ' . $wrote('the import after the delete', $x);
+                $words[] = 'then: ' . $listed($single, 'after the import over the deleted event');
+            }
+            $rule = ['RRULE:FREQ=WEEKLY;COUNT=4'];
+            $sOne = ['iCalUID' => $series] + self::timed('Probe owed identity weekly', self::LA, '2027-03-01 10:00', 60, $rule);
+            $sOther = ['iCalUID' => $series] + self::timed('Probe owed identity weekly (other)', self::LA, '2027-03-02 12:00', 60, ['RRULE:FREQ=WEEKLY;COUNT=3']);
+            foreach ([['the first series import', $sOne], ['a second series import, the same content', $sOne], ['a third series import, other content and rule', $sOther]] as [$label, $body]) {
+                $x = $this->importEvent($c, $label, $body);
+                $words[] = "repeating, $label: " . $wrote($label, $x);
+                $words[] = 'then: ' . $listed($series, "after $label");
+            }
+            $x = $this->insertWithUid($c, 'an insert with the series\' iCalUID', ['iCalUID' => $series] + self::timed('Probe owed identity weekly (inserted)', self::LA, '2027-03-03 09:00', 60, $rule));
+            $words[] = 'repeating, events.insert with that iCalUID: ' . $wrote('the series insert', $x);
+            $words[] = 'then: ' . $listed($series, 'after the series insert');
+            $c->sent = 'events.import of a single event three times under one invented iCalUID (the same body twice, then another title and time), events.insert with that iCalUID, DELETE of the first import\'s event and an import again; the same imports and insert for a weekly series of four under another iCalUID (the third with COUNT=3); a list by the iCalUID with showDeleted after each: ' . self::describeSent($c->writes());
+            $c->finding = implode('; ', $words);
+        });
+    }
+
+    /** events.import with the probe's marker; a new id joins the case's events and is deleted after it. */
+    private function importEvent(CaseRun $c, string $label, array $body): array
+    {
+        $body['description'] = trim((string) ($body['description'] ?? 'Probe notes') . ' ' . self::MARKER_TEXT);
+        $body['extendedProperties']['private'][self::MARKER_KEY] = $this->runId;
+        return $this->madeBy($c, $this->send($c, 'write', $label, 'POST', '/events/import', [], $body));
+    }
+
+    /** events.insert carrying an iCalUID of the probe's own, marked; a new id is deleted after the case. */
+    private function insertWithUid(CaseRun $c, string $label, array $body): array
+    {
+        $body['description'] = trim((string) ($body['description'] ?? 'Probe notes') . ' ' . self::MARKER_TEXT);
+        $body['extendedProperties']['private'][self::MARKER_KEY] = $this->runId;
+        return $this->madeBy($c, $this->send($c, 'write', $label, 'POST', '/events', [], $body));
+    }
+
+    private function madeBy(CaseRun $c, array $x): array
+    {
+        if ($x['status'] >= 200 && $x['status'] < 300 && isset($x['response']['id'])) {
+            $id = (string) $x['response']['id'];
+            if (!in_array($id, $c->created, true)) {
+                $this->created[$id] = true;
+                $c->created[] = $id;
+            }
+        }
+        return $x;
     }
 
     /** Group 12's series: weekly or daily from 2027-03-01 10:00 Los Angeles, with fields of its own. @return array{0:string, 1:string} the master id and its iCalUID */

@@ -1,14 +1,15 @@
 <?php
 // A scenario of the app's own Google writes that the edit harness doesn't
 // make (a single event created, changed and deleted; a whole repeating
-// event deleted, plain and over an edited and a deleted day), run through the product's Events against a GoogleStand
+// event deleted, plain and over an edited and a deleted day; a calendar of one's own moved to Google, its series
+// holding a day of the other form), run through the product's Events (and GoogleMove) against a GoogleStand
 // on a database of its own, a poll after each write. record.php runs it,
 // one scenario per process, with GOOGLE_TRACE naming the trace file. Only
 // the stand-in is contacted. See README.md, "Replaying the App's Requests".
 //
 //   BC_TEST_DB=127.0.0.1:33308 GOOGLE_TRACE=<file.json> php tools/google-probe/record-app.php --scenario <name> [--zone America/Los_Angeles]
 //
-// Scenarios: single-timed, single-all-day, series-deleted-plain, series-deleted-whole.
+// Scenarios: single-timed, single-all-day, series-deleted-plain, series-deleted-whole, move-other-form.
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
     http_response_code(404);
@@ -32,7 +33,7 @@ use BetterCal\EditHarness\GoogleStand;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\Migrator;
 
-const SCENARIOS = ['single-timed', 'single-all-day', 'series-deleted-plain', 'series-deleted-whole'];
+const SCENARIOS = ['single-timed', 'single-all-day', 'series-deleted-plain', 'series-deleted-whole', 'move-other-form'];
 $opts = getopt('', ['scenario:', 'zone:']);
 $scenario = (string) ($opts['scenario'] ?? '');
 if (!in_array($scenario, SCENARIOS, true)) {
@@ -108,6 +109,35 @@ try {
             $write(static fn() => $events->patch($u, $id, ['title' => 'Sample weekly, one day', 'scope' => 'this', 'instanceStart' => '2027-05-10T18:00:00+00:00']));
             $write(static fn() => $events->deleteEvent($u, $id, 'this', '2027-05-17T18:00:00+00:00'));
             $write(static fn() => $events->deleteEvent($u, $id, 'all', null));
+            break;
+        case 'move-other-form':
+            // Move to Google (GoogleMove::run, with a Google calendar the person picked) of a calendar of one's own holding
+            // a timed weekly series with one day made all-day and an all-day weekly series with one day at a clock time:
+            // two imports, then each day as one PATCH over the occurrence the import made. Made in the account's own
+            // calendar with the local Events (no Google write); the stand-in's own calendar row is removed here so one
+            // calendar here is bound to it. The move's own first poll is given no Google configuration and stops before any
+            // request; the poll after it goes through the stand-in.
+            $d = domains($db);
+            $local = (int) $db->scalar("SELECT id FROM calendars WHERE user_id = ? AND kind = 'local' ORDER BY id LIMIT 1", [$u]);
+            $la = 'America/Los_Angeles';
+            $timed = (int) $d->events->create($u, ['calendarId' => $local, 'title' => 'Sample timed weekly', 'start' => '2027-03-01T10:00:00-08:00', 'end' => '2027-03-01T11:00:00-08:00',
+                'allDay' => false, 'tzid' => $la, 'rrule' => 'FREQ=WEEKLY;COUNT=4'])['eventId'];
+            $d->events->patch($u, $timed, ['scope' => 'this', 'instanceStart' => '2027-03-08T10:00:00-08:00', 'allDay' => true, 'start' => '2027-03-08', 'end' => '2027-03-09']);
+            $allDay = (int) $d->events->create($u, ['calendarId' => $local, 'title' => 'Sample all-day weekly', 'start' => '2027-03-02', 'end' => '2027-03-03',
+                'allDay' => true, 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=4'])['eventId'];
+            $d->events->patch($u, $allDay, ['scope' => 'this', 'instanceStart' => '2027-03-09', 'allDay' => false, 'start' => '2027-03-09T15:00:00-08:00', 'end' => '2027-03-09T16:00:00-08:00', 'tzid' => $la]);
+            $db->run('DELETE FROM calendars WHERE id = ?', [$cal]);
+            $moveId = $db->insert('calendar_moves', ['user_id' => $u, 'calendar_id' => $local, 'google_account_id' => (int) $db->scalar('SELECT id FROM google_accounts WHERE user_id = ?', [$u]),
+                'google_calendar_id' => GoogleStand::CALENDAR, 'create_new' => 0, 'remote_marker' => bin2hex(random_bytes(16)), 'remote_reconciled_at' => gmdate('Y-m-d H:i:s'),
+                'total' => (int) $db->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$local])]);
+            $offline = ['session_secret' => (string) getenv('BETTERCAL_SESSION_SECRET'), 'google' => []];
+            $move = new BetterCal\Domain\GoogleMove($db, new BetterCal\Domain\GoogleAuth($db, $offline), $stand->writer, new BetterCal\Domain\Feeds($db, null, $offline), $d->undo, new BetterCal\Infra\JobQueue($db));
+            $move->run((int) $moveId, 120);
+            $status = $db->one('SELECT status, error FROM calendar_moves WHERE id = ?', [$moveId]);
+            if (($status['status'] ?? '') !== 'done') {
+                throw new RuntimeException('the move did not finish: ' . (string) ($status['error'] ?? $status['status'] ?? 'no row'));
+            }
+            $stand->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$local]));
             break;
     }
 } catch (\Throwable $e) {

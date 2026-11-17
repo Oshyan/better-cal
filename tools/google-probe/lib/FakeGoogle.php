@@ -355,6 +355,9 @@ final class FakeGoogle
         if ($rest === '/events') {
             return $method === 'POST' ? $this->insert($payload ?? []) : $this->list($query);
         }
+        if ($rest === '/events/import') {
+            return $method === 'POST' ? $this->import($payload ?? []) : self::error(404, 'Not Found');
+        }
         if (preg_match('#^/events/([^/]+)/instances$#', $rest, $m) === 1) {
             return $this->instancesList(rawurldecode($m[1]), $query);
         }
@@ -427,6 +430,41 @@ final class FakeGoogle
         $this->lagLeft[$id] = $this->lagGets;
         $this->bump($id);
         return self::ok($this->events[$id]);
+    }
+
+    /**
+     * events.import (GoogleWriter::import, the move to Google): an event under the iCalUID the client gives, with an id
+     * Google chooses. A second import of an iCalUID a live event holds updates that event and answers its id (the access
+     * probe's listread stage, L3 and L4, 2026-11-14). Not seen live, so refused here rather than guessed: an import with
+     * no iCalUID, or one whose iCalUID only a deleted event holds (probe 12.11 asks).
+     */
+    private function import(array $body): array
+    {
+        $uid = (string) ($body['iCalUID'] ?? '');
+        if ($uid === '') {
+            return self::error(400, 'Missing iCalUID.');
+        }
+        unset($body['id']);
+        $live = null;
+        $deleted = false;
+        foreach ($this->events as $id => $e) {
+            if (($e['iCalUID'] ?? '') === $uid && empty($e['recurringEventId']) && !isset($e['originalStartTime'])) {
+                if (($e['status'] ?? '') === 'cancelled') {
+                    $deleted = true;
+                } else {
+                    $live = (string) $id;
+                }
+            }
+        }
+        if ($live !== null) {
+            $this->events[$live] = array_replace($this->events[$live], $body, ['updated' => gmdate('Y-m-d\TH:i:s.000\Z')]);
+            $this->bump($live);
+            return self::ok($this->events[$live]);
+        }
+        if ($deleted) {
+            return self::error(501, 'The stand-in does not model an import whose iCalUID only a deleted event holds.');
+        }
+        return $this->insert($body);
     }
 
     private function get(string $id): array

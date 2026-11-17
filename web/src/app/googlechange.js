@@ -351,7 +351,7 @@ export async function sendUndo(id, { force = false } = {}) {
       const fields = askedFields(e);
       if (!fields) throw e;
       refreshWindow();
-      if (!await askConfirm(googleChangedAsk({ fields, day: askedDay(e), undo: true }))) return CANCELLED;
+      if (!await askConfirm(googleChangedAsk({ name: e.data.error.name, fields, day: askedDay(e), undo: true }))) return CANCELLED;
       body = { ...body, over: nowOf(fields) };
     }
   }

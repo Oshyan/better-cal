@@ -90,10 +90,10 @@ if (!function_exists('check') || !class_exists('ThreeWayReference')) {
     check("Undo table: every field and time form is in it ($n rows)", $n === 10 * 2 + 8 + 10 * 6 + 8 * 6 + 3);
 
     // The first sentence a plugin run's undo lists, and the day's refusal said as an undo's.
-    checkEq('Undo words: the first sentence of one field', "After this change, the title was changed again: it's 'Team sync' now.",
-        GoogleConflict::question('', [['field' => 'title', 'was' => 'Weekly sync', 'now' => 'Team sync', 'yours' => 'Standup']], false, null, null, true)['first']);
-    checkEq('Undo words: the first sentence of several fields', 'After this change, the title and the location were changed again.',
-        GoogleConflict::question('', [['field' => 'title', 'was' => 'a', 'now' => 'b', 'yours' => 'c'], ['field' => 'location', 'was' => 'a', 'now' => 'b', 'yours' => 'c']], false, null, null, true)['first']);
+    checkEq('Undo words: the first sentence of one field', "After this change to 'Weekly sync', the title was changed again: it's 'Team sync' now.",
+        GoogleConflict::question('Weekly sync', [['field' => 'title', 'was' => 'Weekly sync', 'now' => 'Team sync', 'yours' => 'Standup']], false, null, null, true)['first']);
+    checkEq('Undo words: the first sentence of several fields', "After this change to 'Weekly sync', the title and the location were changed again.",
+        GoogleConflict::question('Weekly sync', [['field' => 'title', 'was' => 'a', 'now' => 'b', 'yours' => 'c'], ['field' => 'location', 'was' => 'a', 'now' => 'b', 'yours' => 'c']], false, null, null, true)['first']);
     checkEq('Undo words: a day that is no longer a day',
         "That day is no longer one of the days of 'Team sync': the repeating event was changed in Google Calendar. Nothing was undone, and the calendar shows it as Google Calendar has it now.",
         GoogleConflict::dayGone('Team sync', true));

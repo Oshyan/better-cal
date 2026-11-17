@@ -2322,7 +2322,7 @@ final class Undo
      *
      * @return array{entity:string,op:string}
      */
-    public function undoById(int $userId, int $mutationId, bool $force = false, ?RequestAuthority $authority = null, array $over = []): array
+    public function undoById(int $userId, int $mutationId, bool $force = false, ?RequestAuthority $authority = null, array $over = [], ?string $viewer = null): array
     {
         // An entry that is undone says so, whatever recorded it: that is the
         // true answer to "undo this", and the flag is one column in every
@@ -2361,7 +2361,7 @@ final class Undo
             if (!$force && ($why = $this->staleFor($mutation, $compared)) !== null) {
                 throw HttpError::badRequest($why, 'stale_undo');
             }
-            return (new GoogleUndo($this->db, $this, $this->google))->undo($mutation, $authority, $force, $compared, $over);
+            return (new GoogleUndo($this->db, $this, $this->google))->undo($mutation, $authority, $force, $compared, $over, $viewer); // $viewer: the device's zone (X-Device-Tz), the clock a same-clock-time event's question and `over` are on
         }
         if ((string) $mutation['entity'] === 'plugin_edit') {
             // Sends to the plugin's source first: not inside a transaction.
@@ -2420,7 +2420,7 @@ final class Undo
                 // listed with the question's first sentence and stays to undo.
                 if ($e instanceof HttpError && $e->errorCode === 'google_changed' && is_array($e->extra['fields'] ?? null)) {
                     $refused[] = ['id' => (int) $row['id'], 'code' => $e->errorCode,
-                        'message' => GoogleConflict::question('', $e->extra['fields'], false, null, is_array($e->extra['day'] ?? null) ? $e->extra['day'] : null, true)['first']];
+                        'message' => GoogleConflict::question((string) ($e->extra['name'] ?? ''), $e->extra['fields'], false, null, is_array($e->extra['day'] ?? null) ? $e->extra['day'] : null, true)['first']];
                     continue;
                 }
                 $skipped++; // log-only entries and already-undone rows

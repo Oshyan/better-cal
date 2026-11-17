@@ -965,7 +965,7 @@ final class Events
             $fields = array_map(static fn(string $f): array => ['field' => $f, 'was' => $was[$f], 'now' => $now[$f], 'yours' => $yours === null ? null : $yours[$f]] + ($from === null ? [] : $from($f)), $asked);
             $shown = $day === null ? null : $was['time'];
             $this->googleDeferred = new HttpError('google_changed', GoogleConflict::message((string) $was['title'], $fields, $columns === null, null, $shown, $undo), 409,
-                ($shown === null ? [] : ['day' => $shown]) + ['fields' => $fields, 'kept' => $kept]);
+                ($shown === null ? [] : ['day' => $shown]) + ($undo ? ['name' => (string) $was['title']] : []) + ['fields' => $fields, 'kept' => $kept]); // name: the title an undo's sentences name the event by, which its caller was not shown
             return null;
         }
         $this->googleKept = $kept;

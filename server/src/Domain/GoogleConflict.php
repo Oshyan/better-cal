@@ -191,7 +191,7 @@ final class GoogleConflict
             . self::quoted($name !== '' ? $name : 'Untitled event') . ' was last shown to you, ';
         $whole = static fn(array $a): string => $day !== null && ($a['from'] ?? null) === 'series' ? ', for the whole repeating event' : '';
         if ($undo) {
-            $after = 'After this change' . ($dayDates === null ? '' : ' to ' . $dayDates[0]->format('D, M j' . ($withYear ? ', Y' : ''))) . ', ';
+            $after = 'After this change to ' . ($dayDates === null ? '' : $dayDates[0]->format('D, M j' . ($withYear ? ', Y' : '')) . ' of ') . self::quoted($name !== '' ? $name : 'Untitled event') . ', ';
             $forDay = $day === null ? '' : ' for this day';
             $plural = static fn(string $f): bool => (self::NOUNS[$f][1] ?? false) === true;
             // What Undo does with one field: puts back its value from before, or removes one the change added.

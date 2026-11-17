@@ -45,7 +45,7 @@ No mechanism waits for a list that lags a write: a list by iCalendar UID carried
 
 ## What Is Refused, and What Is Said
 
-Refused before anything is sent, as before: a series that changed at Google since the last poll ("This event changed at Google since you last saw it. Refresh and try again."), and a switch between timed and all-day that Google would hide days with ("Google Calendar has a fault here: ..."). The second needs a prediction and keeps it: it is a check before sending, not an explanation after.
+Refused before anything is sent, as before: a series that changed at Google since the last poll ("This event changed in Google Calendar since you last saw it. Refresh and try again."), and a switch between timed and all-day that Google would hide days with ("Google Calendar has a fault here: ..."). The second needs a prediction and keeps it: it is a check before sending, not an explanation after.
 
 No sentence is made from a step that was sent, skipped or refused. These went: every "... was changed in Google Calendar while this change was being sent; Google's ... was kept", "... is not a day of this event in Google Calendar now, so this change's own version of it was not sent there", "Google Calendar would not take this change for ...", and "... is still on the calendar: this change deleted it, but Google Calendar kept it" for a day where nothing shows.
 

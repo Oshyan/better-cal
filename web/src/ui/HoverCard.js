@@ -15,7 +15,7 @@ import { CalDot } from './icons.js';
 import { html, render } from '../../vendor/index.js';
 import { state } from '../app/store.js';
 import { parseISO, dateOfDayKey, fmtRange, eventDuration, zoneNote } from '../lib/dates.js';
-import { isPendingLocation } from '../lib/maps.js';
+import { locationKind } from '../lib/maps.js';
 import { formattingReasons } from '../lib/eventwhy.js';
 
 export const HOVER_DELAY_MS = 700;
@@ -31,7 +31,8 @@ function Card({ occ, cal, at, nowMs, why = true }) {
   const e = occ.end ? (occ.allDay ? day(occ.end) : parseISO(occ.end)) : s;
   // The reasons explain how an event chip is drawn; a context token isn't.
   const reasons = why ? formattingReasons(occ, nowMs) : [];
-  const place = occ.location && !isPendingLocation(occ.location) ? occ.location : null;
+  const kind = locationKind(occ);
+  const place = kind && kind !== 'later' ? occ.location : null; // words only, no pin
   // An event set in another zone says so, as its panel does (#184).
   const zone = zoneNote(occ);
   const duration = eventDuration(occ); // multi-day: the exact total, as the old tooltip gave it

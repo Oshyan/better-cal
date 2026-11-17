@@ -3038,6 +3038,9 @@ final class Events
             'title' => (string) $row['title'],
             'description' => $row['description'] !== null ? (string) $row['description'] : null,
             'location' => $row['location'] !== null ? (string) $row['location'] : null,
+            // Why the location names no place (LocationText::noPlace), or
+            // null: every surface decides its pin row and Directions by it.
+            'noPlace' => LocationText::noPlace($row['location'] !== null ? (string) $row['location'] : null),
             'locationLat' => isset($row['location_lat']) ? (float) $row['location_lat'] : null,
             'locationLng' => isset($row['location_lng']) ? (float) $row['location_lng'] : null,
             // When the sweep last tried to place this address. Set with no

@@ -26,7 +26,7 @@ import {
   parseISO, dateOfDayKey, addDaysDate, toISOWithOffset, occDayKey, fmtTime, timeState,
 } from '../lib/dates.js';
 import { dayRangeDraft, dayRangeLabel } from '../lib/quickcreate.js';
-import { gmapsUrl, validCoordinates } from '../lib/maps.js';
+import { gmapsUrl, validCoordinates, locationKind } from '../lib/maps.js';
 
 // "Jun 3 · 9:00 AM" / "Jun 3 · all day" for member and picker rows.
 function fmtWhen(occ) {
@@ -218,9 +218,12 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
       <${Icon} name="clock" size=${20} />
       <div class="bc-es-rt"><span class="bc-date-duration">${dayRangeLabel(span.startKey, span.endKey)} <${DurationSuffix} occ=${occ} expanded /></span></div>
     </div>
-    ${occ.location && html`<div class="bc-es-row">
+    ${locationKind(occ) === 'place' && html`<div class="bc-es-row">
       <${PinIcon} size=${20} /><div class="bc-es-rt">${occ.location}</div>
       <a class="bc-es-rowbtn" href=${gmapsUrl(occ.location, occ.locationLat, occ.locationLng)} target="_blank" rel="noopener noreferrer">Directions <${Icon} name="arrowUpRight" size=${14} /></a>
+    </div>`}
+    ${locationKind(occ) && locationKind(occ) !== 'place' && html`<div class="bc-es-row">
+      <${Icon} name="note" size=${20} /><div class="bc-es-rt">${occ.location}</div>
     </div>`}
 
     <div class="bc-tr-section">

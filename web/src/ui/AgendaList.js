@@ -27,7 +27,7 @@ import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress } from './outside.js';
 import { ThumbIcon, TripBadge, PinIcon, Icon } from './icons.js';
 import { EmptyState } from '../app/PageShell.js';
-import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
+import { gmapsUrl, locationKind } from '../lib/maps.js';
 import {
   buildAgendaGroups, railRanges, washRects, spanPixelRanges, dayOfSpanLabel,
   AGENDA_ROW_H as ROW_H, AGENDA_HEAD_H as HEAD_H,
@@ -87,11 +87,20 @@ function fmtDayShort(occ) {
 // of a string you have to copy out by hand.
 // compact: a link shows only its site ("zoom.us"): a meeting path is noise
 // in a narrow column, and the full link is on the event card.
-function AgendaLocation({ location, lat, lng, compact = false }) {
-  if (isPendingLocation(location)) {
+// What the location is comes from the one reading every surface uses
+// (locationKind): text that names no place is shown as words, no pin.
+function AgendaLocation({ occ, compact = false }) {
+  const location = occ.location;
+  const kind = locationKind(occ);
+  if (kind === 'later') {
     return html`<span class="bc-agenda-loc is-pending" title=${location}><${Icon} name="lock" size=${11} />${compact ? 'RSVP' : 'After RSVP'}</span>`;
   }
-  const url = /^https?:\/\//i.test(location.trim()) ? location.trim() : null;
+  if (kind === 'text') {
+    return html`<span class="bc-agenda-loc" title=${location}>${location}</span>`;
+  }
+  const url = kind === 'link' ? (/^https?:\/\//i.test(location.trim()) ? location.trim() : 'https://' + location.trim()) : null;
+  const lat = occ.locationLat;
+  const lng = occ.locationLng;
   const stop = (e) => e.stopPropagation();
   if (url) {
     let label = url;
@@ -581,7 +590,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
                     onOpen=${onOpenEvent}
                   />
                   ${trip && html`<${TripBadge} />`}
-                  ${occ.location && html`<${AgendaLocation} location=${occ.location} lat=${occ.locationLat} lng=${occ.locationLng} compact=${true} />`}
+                  ${occ.location && html`<${AgendaLocation} occ=${occ} compact=${true} />`}
                   ${triage && html`<button
                     type="button" class="bc-agenda-grip" aria-label="Triage and feedback"
                     title="Swipe left, or tap, for Maybe, Planned, Hide and feedback"
@@ -614,7 +623,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             />
             ${trip && html`<${TripBadge} />`}
             ${!end && occ.source === 'feed' && onSetAttendance && html`<${TriageCluster} occ=${occ} onSetAttendance=${onSetAttendance} onFeedback=${onFeedback} />`}
-            ${occ.location && html`<${AgendaLocation} location=${occ.location} lat=${occ.locationLat} lng=${occ.locationLng} />`}
+            ${occ.location && html`<${AgendaLocation} occ=${occ} />`}
           </div>`;
           })}
           ${visible && g.overflow > 0 && ((fold) => html`<button

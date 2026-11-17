@@ -29,8 +29,8 @@ A location is an optional name, an optional address and an optional rest, over p
 |---|---|---|---|
 | `place` | Asks its forms in order until one gives a pin it keeps (below) | Searches the text up to its rest | As before |
 | `coordinates` | Answers the coordinates, no service asked; the sweep stores them as a lookup with no provider | One row at the coordinates, no service asked | Map at the coordinates |
-| `room` | Asks nothing; the sweep marks the event tried, as for a link, and lists it nowhere | Asks nothing; says a room has no place by itself | Says a room has no place by itself, instead of "Couldn't place" |
-| `none` | Asks nothing; the sweep marks the event tried and lists it nowhere | Asks nothing; says why | Says the text names no place, instead of "Couldn't place" |
+| `room` | Asks nothing; the sweep marks the event tried, as for a link, and lists it nowhere | Asks nothing; says a room has no place by itself | The text as words, no pin, no Directions; the full view says a room has no place by itself |
+| `none` | Asks nothing; the sweep marks the event tried and lists it nowhere | Asks nothing; says why | The text as words, with no pin and no Directions on any surface; a later phrase or a link keeps its own row |
 
 **The forms** (`Geocode::forms`), each tried only when the one before finds nothing the lookup keeps, a repeat of an earlier form never asked twice:
 
@@ -50,3 +50,5 @@ Nothing new. An event whose text is not a place, or is a room, is stamped `geoco
 - **A town alone after a title** ("Sunny Sample Cottage by the Lake, Harbortown") stays unplaced, by the rule that a form without the name keeps a spot and never an area. Whether such an event may be placed at the town, marked approximate, is the owner's question (#328).
 - **A venue's name alone** is still asked as written; that is what a places database could answer (#150, #326).
 - **A private home** ("Sam's place in Springfield") is read as a name and asked as written.
+
+Every surface that shows a location (the event panel, compact and full, the phone sheet, a trip's panel, agenda rows, the hover card, month and week chips) asks one client function, `locationKind` in `web/src/lib/maps.js`, which reads the server's `noPlace` on the occurrence. None decides on its own.

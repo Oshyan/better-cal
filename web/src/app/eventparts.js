@@ -10,7 +10,7 @@ import { api } from './api.js';
 import { PinIcon } from '../ui/icons.js';
 import { repeatSentence } from '../lib/repeat.js';
 import { splitUrlTail } from '../lib/richtext.js';
-import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation, validCoordinates } from '../lib/maps.js';
+import { mapMosaic, stadiaStyle, mapTilerStyle, locationKind, validCoordinates } from '../lib/maps.js';
 
 // --- recurrence in words ----------------------------------------------------
 
@@ -218,7 +218,7 @@ export function useEventGeo(occ, active) {
       setGeo({ status: 'ok', ...stored });
       return undefined;
     }
-    if (!location || !location.trim() || isPendingLocation(location)) { setGeo(null); return undefined; }
+    if (locationKind(occ) !== 'place') { setGeo(null); return undefined; }
     let alive = true;
     setGeo({ status: 'loading' });
     // Same bias precedence as the place picker (home location, else event

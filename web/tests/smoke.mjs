@@ -30,7 +30,7 @@ import {
   dayKeysOfRow, isWeekendEpochDay, dominantMonthOfRow, dominantMonthOfRows,
 } from '../src/ui/monthmath.js';
 import { contrastText, withAlpha, parseHex, inkColor, luminance } from '../src/lib/color.js';
-import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation, gmapsUrl, validCoordinates } from '../src/lib/maps.js';
+import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation, locationKind, gmapsUrl, validCoordinates } from '../src/lib/maps.js';
 import { safeWebUrl, meetingLinkInText } from '../src/lib/urls.js';
 import { placeAnswer } from '../src/lib/placeanswer.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
@@ -1927,6 +1927,30 @@ console.log('--- chronological ordering across timezone offsets ---');
   }
   for (const t of ['100 Main St, Springfield', 'Location Bar & Grill, Denver', 'The RSVP Lounge', 'https://zoom.us/j/1', '', null]) {
     eq('a real place is not pending: ' + String(t), isPendingLocation(t), false);
+  }
+}
+
+// --- What a location is, one reading for every surface (#328) ---
+// The server's reading arrives as occ.noPlace; every surface that shows a
+// pin row or a Directions link asks locationKind and nothing else.
+{
+  eq('location kind: a place', locationKind({ location: 'Sample Cafe, 12 Example St' }), 'place');
+  eq('location kind: no location', locationKind({ location: '  ' }), null);
+  for (const why of ['meeting', 'phone', 'note', 'room']) {
+    eq('location kind: ' + why + ' is words, no pin', locationKind({ location: 'Sample text', noPlace: why }), 'text');
+  }
+  eq('location kind: the server says a link', locationKind({ location: 'example.com/events/fall', noPlace: 'link' }), 'link');
+  eq('location kind: the server says later', locationKind({ location: 'Address TBD', noPlace: 'later' }), 'later');
+  eq('location kind: a draft with a pending phrase', locationKind({ location: "Location available once RSVP'd" }), 'later');
+  eq('location kind: a draft with a link', locationKind({ location: 'https://example.com/e/1' }), 'link');
+  const { readFileSync: readKindSource } = await import('node:fs');
+  // No surface decides on its own: the ones that draw a pin row or a
+  // Directions link take locationKind, none reads noPlace or the pending
+  // phrases directly.
+  for (const f of ['../src/app/EventSheetBody.js', '../src/app/Trips.js', '../src/ui/AgendaList.js', '../src/ui/HoverCard.js', '../src/ui/EventChip.js', '../src/app/eventparts.js']) {
+    const src = readKindSource(new URL(f, import.meta.url), 'utf8');
+    eq('location kind: ' + f + ' asks locationKind', src.includes('locationKind('), true);
+    eq('location kind: ' + f + ' has no check of its own', /isPendingLocation\(|const isUrl\b/.test(src), false);
   }
 }
 

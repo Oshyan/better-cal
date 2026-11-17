@@ -299,6 +299,30 @@ final class LocationText
     }
 
     /**
+     * Why a location has no place ('link', 'phone', 'meeting', 'later',
+     * 'note', 'room'), or null when it is a place (or empty). What every
+     * surface that shows a pin or a Directions link decides by, sent on each
+     * occurrence as `noPlace`. Remembered per text for the request, since a
+     * window repeats a few texts on many rows.
+     */
+    public static function noPlace(?string $location): ?string
+    {
+        static $seen = [];
+        $t = trim((string) $location);
+        if ($t === '') {
+            return null;
+        }
+        if (!array_key_exists($t, $seen)) {
+            if (count($seen) > 2000) {
+                $seen = [];
+            }
+            $r = self::read($t);
+            $seen[$t] = $r['kind'] === 'room' ? 'room' : ($r['kind'] === 'none' ? $r['why'] : null);
+        }
+        return $seen[$t];
+    }
+
+    /**
      * The sentence the place dropdown shows when the reading sends nothing.
      *
      * @param array{kind:string,why?:string} $reading

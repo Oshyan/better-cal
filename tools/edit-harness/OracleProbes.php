@@ -705,6 +705,60 @@ final class OracleProbes
                     }
                     return [$out, $s0, $this->reshape($s1)];
                 }],
+            // x-choice for the undo of one edit (google-conflict-choice.md, Slice 3a, (j)): one probe per statement.
+            ['check' => 'x-choice', 'what' => 'the undo of a rename over a second rename at Google goes through without a question', 'case' => 'an-event-in-no-series-renamed-here-then-renamed-at-google-then-the-rename-undone-asks', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => true, 'error' => null, 'answer' => ['kept' => []]] + $out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "the undo's question leaves out its entry", 'case' => 'an-event-in-no-series-renamed-here-then-renamed-at-google-then-the-rename-undone-asks', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    unset($out['extra']['entry']);
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "the undo's question gives what the entry left as what the undo puts back (yours)", 'case' => 'an-event-in-no-series-renamed-here-then-renamed-at-google-then-the-rename-undone-asks', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        $out['extra']['fields'][$i]['yours'] = $f['was'] ?? null;
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => "after the undo's question the event here keeps its title, not what was read from Google", 'case' => 'an-event-in-no-series-renamed-here-then-renamed-at-google-then-the-rename-undone-asks', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $id = $this->singles[(string) $this->single];
+                    $s1['rows'][$id]['title'] = $s0['rows'][$id]['title'];
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-choice', 'what' => "the undo's answer leaves out the place changed at Google (kept)", 'case' => 'an-event-in-no-series-renamed-here-then-its-place-changed-at-google-then-the-rename-undone-keeps-the-place', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $out['answer']['kept'] = [];
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'the undo of a rename puts the place Google changed back at Google', 'case' => 'an-event-in-no-series-renamed-here-then-its-place-changed-at-google-then-the-rename-undone-keeps-the-place', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $s1['g']['digest'][(string) $this->single]['location'] = trim((string) $s0['rows'][$this->singles[(string) $this->single]]['location']);
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'the undo of a rename that went through leaves the rename here', 'case' => 'an-event-in-no-series-renamed-here-then-its-place-changed-at-google-then-the-rename-undone-keeps-the-place', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $id = $this->singles[(string) $this->single];
+                    $s1['rows'][$id]['title'] = $s0['rows'][$id]['title'];
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-choice', 'what' => "the undo's question about a day renamed with the whole event says the change was made to the day (from day)", 'case' => 'a-day-renamed-here-then-the-series-renamed-at-google-then-the-day-rename-undone-asks-from-series', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ((array) ($out['extra']['fields'] ?? []) as $i => $f) {
+                        $out['extra']['fields'][$i]['from'] = 'day';
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            ['check' => 'x-choice', 'what' => 'the undo of the first of two renames made here is refused as stale', 'case' => 'a-day-renamed-here-twice-then-the-first-rename-undone-asks', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'stale_undo', 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s0];
+                }],
+            ['check' => 'x-choice', 'what' => "the undo of a day's rename over another day's change at Google is refused whole", 'case' => 'a-day-renamed-here-then-another-day-renamed-at-google-then-the-rename-undone-goes-through', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'google_conflict', 'message' => 'Sample probe refusal', 'extra' => []] + $out, $s0, $s0];
+                }],
         ];
     }
 

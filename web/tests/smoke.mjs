@@ -7236,6 +7236,8 @@ await import('./filter-form.mjs');
 await import('./opens-event.mjs');
 // The original of an event being moved fades, whatever its kind.
 await import('./drag-source.mjs');
+// A new version reloads the page when nothing would be lost (#323): it swaps the page's globals, so it runs last.
+await import('./reload-rule.mjs');
 
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

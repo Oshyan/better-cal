@@ -11,8 +11,9 @@
 //   app's files to the network: the app works online, just without offline
 //   start, rather than pinning a cache no deploy can ever replace. API
 //   caching, share target and push still work.
-// - a new version, once active, tells open pages so they can offer a reload;
-//   until they do they keep running what they loaded, which is always a
+// - a new version, once active, tells open pages: each reloads into it when
+//   nothing would be lost and offers a reload otherwise (drafts.js); until
+//   it reloads, a page keeps running what it loaded, which is always a
 //   consistent set.
 // - API GETs: network-first with a 5s timeout falling back to cache. That
 //   cache is private data and is purged on sign-out and on any 401 (see

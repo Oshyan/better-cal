@@ -68,6 +68,9 @@ export function confirmTurn() {
   });
 }
 
+/** A question is open, or an asker holds or waits for the turn to ask one (drafts.js, whatWouldBeLost). */
+export const questionPending = () => !!holder || line.length > 0;
+
 /** Resolves true when the person confirms, false for Cancel, Esc or a click outside. */
 // A question with several values (googlechange.js) adds `lines`, one each,
 // under the body, and `foot`, what each button does, above the buttons.

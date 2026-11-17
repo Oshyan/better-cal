@@ -26,6 +26,10 @@
 
 import { state, set, toast } from './store.js';
 import { saveResume, UPDATE_FLAG } from './resume.js';
+import { pageVersion } from './appversion.js';
+import { writesPending } from './api.js';
+import { questionPending } from './ConfirmDialog.js';
+import { openLayers } from '../ui/outside.js';
 
 const EDITOR_KEY = 'bc-editor-draft';
 const QUICKADD_KEY = 'bc-quickadd-draft';
@@ -149,55 +153,164 @@ export function restoreDraftsAfterBoot() {
 
 // --- reloading into a new version -----------------------------------------
 
-// A new version is active behind this page. The banner (updates.js) offers
-// the reload; one left alone applies when the app goes out of sight, so
-// coming back finds the new version. Drafts survive a reload, and so does
-// where you were (resume.js). An idle-time reload used to land under people
-// who were only reading.
-let armed = false;
+// A new version is active behind this page (main.js, the worker's
+// 'sw-updated'). The rule (#323): when nothing would be lost, the page
+// reloads itself as soon as the new version is ready, in sight or not. When
+// something would be lost, the banner (updates.js) offers the reload, and
+// the page takes it by itself at the first moment nothing would be lost any
+// more: a layer closes, a toast's Undo runs out, a form is saved, a field
+// is left, the app is hidden or shown, a page changes. Each of those is an
+// event; nothing here waits on a timer. Drafts survive a reload, and so
+// does where you were (resume.js), but an open editor still holds it: the
+// person is in the middle of it.
+//
+// Never a loop: the version a page reloaded for is written down in this
+// tab's session, and a page reloads by itself at most once for a version.
+// If it comes back still on the old one, or is told of that version again,
+// it offers instead.
 
-// Forms with unsaved changes (a plugin's settings, a key half pasted) hold
-// the background reload: it would discard them, and settings, unlike event
-// drafts, aren't saved across one. The reload waits for the next time the
-// app goes out of sight with nothing held. The banner's Reload still works.
+// Forms on a page with unsaved changes (a plugin's settings, a key half
+// pasted) hold the reload: settings, unlike event drafts, aren't saved
+// across one.
 const reloadHolds = new Set();
 
 export function holdReload(key, on) {
   if (on) reloadHolds.add(key); else reloadHolds.delete(key);
+  reloadIfReady();
 }
+
+const isTextField = (el) => !!el && (el.isContentEditable
+  ? !!(el.textContent || '').trim()
+  : (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !/^(button|checkbox|radio|range|color|file|submit|reset|image|hidden)$/.test(el.type || ''))) && !!el.value);
+
+/** What would be lost to a reload now: the page's own state, read where it lives. */
+export function pageNow() {
+  let layers = [];
+  let moving = false;
+  let typing = false;
+  try {
+    // The toast list is a top layer whatever its toasts say: a toast counts
+    // only when it offers a choice (below).
+    layers = openLayers({ top: true }).filter((el) => !el.classList.contains('bc-toasts'));
+    const body = document.body && document.body.classList;
+    moving = !!(body && (body.contains('bc-dragging') || body.contains('bc-rescheduling'))) || !!document.querySelector('.is-dragging');
+    typing = isTextField(document.activeElement);
+  } catch { /* no document: nothing open in it */ }
+  return {
+    layers: layers.length,
+    forms: reloadHolds.size,
+    question: questionPending(),
+    choices: (state.toasts || []).filter((t) => t.undoable || t.actionLabel || (t.actions && t.actions.length)).length,
+    moving: moving || !!state.reschedule,
+    typing,
+    writes: writesPending(),
+    starting: !state.booted,
+  };
+}
+
+/**
+ * The one rule for "nothing would be lost": the reasons a reload now would
+ * lose something, empty when it would lose nothing. Every input is a count
+ * or a flag in `now` (pageNow):
+ *   layers   a layer open above the page: the editor, quick add, search, the
+ *            palette, a drawer, a dialog, a menu, the day sheet, the
+ *            welcome, a confirm or password step-up (ui/outside.js)
+ *   forms    a page form with unsaved changes (holdReload)
+ *   question a question open or about to be asked (ConfirmDialog.js: the
+ *            Google "Cancel or Overwrite" among them)
+ *   choices  a toast still offering Undo or another choice
+ *   moving   a drag or reschedule in progress
+ *   typing   a text field with text in it has the focus
+ *   writes   a write sent and not yet answered (api.js)
+ *   starting the app has not finished starting: a link or a share it was
+ *            opened with is not yet where it goes
+ */
+export function whatWouldBeLost(now = pageNow()) {
+  return Object.keys(now).filter((k) => !!now[k]);
+}
+
+// The version this tab last reloaded for, by itself or from the banner.
+const RELOADED_FOR = 'bc-reloaded-for';
+const reloadedFor = () => { try { return sessionStorage.getItem(RELOADED_FOR); } catch { return null; } };
+
+/**
+ * What to do about `version` being active: 'none' when this page already
+ * runs it, 'offer' when the page has reloaded for it once already or a
+ * reload would lose something, 'reload' otherwise.
+ */
+export function decideReload({ version, page = pageVersion, tried = reloadedFor(), lost = whatWouldBeLost() }) {
+  if (version && page && version === page) return 'none';
+  if (tried != null && tried === String(version || '')) return 'offer';
+  return lost.length ? 'offer' : 'reload';
+}
+
+let readyVersion = null; // the version active behind this page, once one is
+let offered = false;
+let leaving = false; // the reload has begun: what happens until the page unloads asks nothing
+let watching = false;
 
 // A fresh navigation rather than location.reload(), so the document is asked
 // for again, not reused; the new document's versioned script addresses
 // (server/src/Http/AppShell.php) then load the new version. iPhone Safari had
 // kept running the old scripts after a reload. main.js takes the marker off
-// the address again.
+// the address again. The banner's Reload and the reload by itself both come
+// here: where you were is written down first (resume.js), as on any reload.
 export const UPDATED_PARAM = 'updated';
 
 export function reloadForUpdate() {
   saveResume();
   try { localStorage.setItem(UPDATE_FLAG, '1'); } catch { /* the start log just says reload */ }
+  try { sessionStorage.setItem(RELOADED_FOR, String(readyVersion || '')); } catch { /* no guard here: the banner's Reload only */ }
   location.replace('/?' + UPDATED_PARAM + '=' + Date.now().toString(36));
 }
 
 /**
- * A page change (App.js) is a safe moment to take a new version that's
- * already waiting: you land on the page you asked for, in the new version,
- * instead of finishing it with the old code. Not while a form is unsaved.
+ * Apply the rule now, if a new version is ready: reload, or offer it once.
+ * Called by every event that can change the answer (watch below), and by a
+ * page change (App.js).
  */
 export function reloadIfReady() {
-  if (armed && reloadHolds.size === 0) reloadForUpdate();
+  if (!readyVersion || leaving) return;
+  const d = decideReload({ version: readyVersion });
+  if (d === 'reload') { leaving = true; reloadForUpdate(); return; }
+  if (d === 'offer' && !offered) {
+    offered = true;
+    set({ appUpdateReady: true });
+  }
 }
 
-export function armBackgroundReload() {
-  if (armed) return;
-  armed = true;
-  // Out of sight already (the half-hourly check found it in a background
-  // tab): apply it now, so coming back finds the new version.
-  if (document.visibilityState === 'hidden' && reloadHolds.size === 0) {
-    reloadForUpdate();
-    return;
-  }
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && reloadHolds.size === 0) reloadForUpdate();
-  });
+// The events after which a reload may lose nothing any more: the page
+// changed (a layer closed, a toast left, a drag ended), a field was left,
+// the app was hidden or came back into view.
+function watch() {
+  if (watching) return;
+  watching = true;
+  try {
+    if (typeof MutationObserver === 'function') new MutationObserver(reloadIfReady).observe(document.body, { childList: true, subtree: true });
+    // Focus leaving for another field is not a field left: mid-move, the
+    // page reads as having none focused.
+    document.addEventListener('focusout', (e) => { if (!e.relatedTarget) reloadIfReady(); });
+    document.addEventListener('visibilitychange', reloadIfReady);
+  } catch { /* no document: the banner's Reload is the way */ }
+}
+
+/** main.js: `version` is active behind this page. */
+export function newVersionActive(version) {
+  readyVersion = version || readyVersion || 'unknown';
+  offered = false;
+  watch();
+  reloadIfReady();
+}
+
+/**
+ * main.js, at boot: this page is the reload for a new version (the address
+ * carried the marker). If it still runs another version, the new one did not
+ * take: offer it, never reload again.
+ */
+export function checkReloadTook() {
+  const tried = reloadedFor();
+  if (!tried || !pageVersion || tried === pageVersion) return;
+  readyVersion = tried;
+  offered = true;
+  set({ appUpdateReady: true });
 }

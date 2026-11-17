@@ -5,7 +5,7 @@ import { App } from './App.js';
 import { set, toast } from './store.js';
 import { fetchMe } from './api.js';
 import { loadSession, startSession } from './session.js';
-import { armBackgroundReload, UPDATED_PARAM } from './drafts.js';
+import { newVersionActive, checkReloadTook, UPDATED_PARAM } from './drafts.js';
 import { setUpdateChecker } from './appversion.js';
 import { restoreResume, recordStart } from './resume.js';
 import { takeHandoff, runHandoff } from './handoff.js';
@@ -27,8 +27,13 @@ followScreen();
 
 // Arriving from the update banner's reload (drafts.js reloadForUpdate): take
 // its marker back off the address.
+// A page that reloaded for a new version and still runs another offers it
+// instead of reloading again (drafts.js checkReloadTook).
 try {
-  if (new URLSearchParams(location.search).has(UPDATED_PARAM)) history.replaceState(history.state, '', '/' + location.hash);
+  if (new URLSearchParams(location.search).has(UPDATED_PARAM)) {
+    history.replaceState(history.state, '', '/' + location.hash);
+    checkReloadTook();
+  }
 } catch { /* leave the address as it is */ }
 
 async function boot() {
@@ -135,9 +140,10 @@ if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
 
 if ('serviceWorker' in navigator) {
   // A new version installed and activated behind this page (its cache is
-  // the new one; this page still runs what it loaded). Say so with a Reload
-  // banner (updates.js), and apply it anyway when the app goes out of sight
-  // (drafts.js). A page that loaded without a worker (the first visit) gets
+  // the new one; this page still runs what it loaded). The page reloads
+  // into it by itself when nothing would be lost, and otherwise offers it
+  // with a Reload banner (updates.js) until nothing would be (drafts.js,
+  // newVersionActive). A page that loaded without a worker (the first visit) gets
   // one notice for that first install, which is not an update. A hard reload
   // also loads without one, but a worker is already active then: its next
   // notice is a real update.
@@ -150,8 +156,7 @@ if ('serviceWorker' in navigator) {
     if (e.data && e.data.type === 'open-event') { receiveEventLink(e.data.url); return; }
     if (!e.data || e.data.type !== 'sw-updated') return;
     if (firstInstall) { firstInstall = false; return; }
-    set({ appUpdateReady: true });
-    armBackgroundReload();
+    newVersionActive(e.data.version);
   });
   window.addEventListener('load', () => {
     // /sw.js only: the app fills in its version as it serves it. The same

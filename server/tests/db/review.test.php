@@ -247,7 +247,7 @@ return static function (Db $db): void {
         $choir = (int) $rh->accept($h, $rh->holdNewInvitation($h, 'choir-h@example.test', ['title' => 'Sample choir'] + $fourWeeks, ['sequence' => 1] + $invite, 'host@example.test'))['eventId'];
         $item = static fn(int $id): array => $db->one('SELECT kind, status, summary FROM review_items WHERE id = ?', [$id]) ?? [];
         checkEq('review: a held day the series never had closes as the series is added, saying the series has no such day; one it has becomes a change to it', [
-            ['invite_new', 'superseded', 'Sample Host cancelled the Sat 16 Jan 2027 occurrence, but the series you added has no such day, so there is nothing to skip.'],
+            ['invite_new', 'superseded', 'Sample Host cancelled the Sat 16 Jan 2027 occurrence, but the repeating event you added has no such day, so there is nothing to skip.'],
             ['invite_change', 'open'],
         ], [array_values($item($neverDay)), array_slice(array_values($item($wasDay)), 0, 2)]);
         planned($dh->events, $h, $choir, ['scope' => 'all', 'instanceStart' => '2026-12-12T01:00:00+00:00', 'start' => '2026-12-13T01:00:00+00:00', 'end' => '2026-12-13T03:00:00+00:00']);

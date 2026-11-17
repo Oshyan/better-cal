@@ -71,7 +71,10 @@ return static function (Db $db): void {
     $iso = static fn(int $d, array $z, int $addHours = 0): string => sprintf('2027-01-%02dT%02d:%s:00%s', $d, (int) substr($z[1], 0, 2) + $addHours, substr($z[1], 3, 2), $z[2]);
     // The words of the refusal where a change that re-placed the series holds no record of the day.
     // $change: the Activity entry's summary (for a redo, the summary of the change the undo took back).
-    $unplaced = static fn(string $what, bool $redo, string $change): string => "Can't " . ($redo ? 'redo' : 'undo') . " \"$change\". This repeating event $what after that, and Better-Cal can no longer tell which of its days the change was on. Make the change again on the day you meant.";
+    // $day: the date the change was on (6 January in the series as it was, written out by hand); null where the record
+    // holds no row of the series as the key was written under (the change made at Google, read by a poll): it says less.
+    $unplaced = static fn(string $what, bool $redo, string $change, ?string $day): string => "Can't " . ($redo ? 'redo' : 'undo') . " \"$change\". This repeating event $what after that, and Better-Cal can no longer tell "
+        . ($day === null ? 'which of its days the change was on' : "where its day of $day is now") . '. Make the change again on the day you meant.';
     $summary = static fn(int $entry): string => (string) $db->scalar('SELECT summary FROM mutations WHERE id = ?', [$entry]);
     $whatOf = ['form' => 'changed between timed and all-day', 'zone' => 'changed its time zone'];
     $stale = 'Newer changes exist for this item; undoing would overwrite them';
@@ -249,7 +252,7 @@ return static function (Db $db): void {
             $result = $error === null ? 'done' : match (true) {
                 $error->errorCode === 'stale_undo' && $error->getMessage() === $stale => 'stale',
                 // The change that re-placed the series with no record of the day says what it did: the case's own change.
-                $error->errorCode === 'not_undoable' && ($error->extra['reason'] ?? null) === 'day_unplaced' && $error->getMessage() === $unplaced($whatOf[$c['change'] ?? ''] ?? '', $redo, $summary($redo ? (int) $undone : (int) $target)) => 'unplaced',
+                $error->errorCode === 'not_undoable' && ($error->extra['reason'] ?? null) === 'day_unplaced' && $error->getMessage() === $unplaced($whatOf[$c['change'] ?? ''] ?? '', $redo, $summary($redo ? (int) $undone : (int) $target), $c['day'] ?? (($c['by'] ?? '') === 'app' ? 'Wed 6 Jan 2027' : null)) => 'unplaced',
                 default => $error->errorCode . ': ' . $error->getMessage(),
             };
             checkEq("$name: " . ['done' => 'it goes through', 'stale' => 'it is refused as stale, a newer change of the same thing standing',
@@ -390,7 +393,7 @@ return static function (Db $db): void {
         // hour here (the row is carried and its move recorded), the tag goes back to the series (the row goes), then
         // Google makes the series all-day. The first change is followed; the second holds nothing for the day.
         ['name' => 'notes undone on a tagged day, the clock moved here, the tag given back, made all-day at Google, then the notes redone', 'z' => $ny20, 'allDay' => false,
-            'before' => ['tag', 'notes', 'undo', 'clock', 'tag-back'], 'change' => 'form', 'by' => 'poll', 'expect' => $refused()],
+            'before' => ['tag', 'notes', 'undo', 'clock', 'tag-back'], 'change' => 'form', 'by' => 'poll', 'day' => 'Wed 6 Jan 2027', 'expect' => $refused()],
         // Two changes of form in a row leave the series as it was, and still nothing recorded where the day went through them.
         ['name' => 'notes given and undone, made all-day here and timed again here, then redone', 'z' => $ny20, 'allDay' => false,
             'before' => ['notes', 'undo'], 'change' => 'form', 'by' => 'app', 'between' => ['form:app'], 'expect' => $refused()],

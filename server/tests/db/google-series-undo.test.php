@@ -732,7 +732,7 @@ return static function (Db $db): void {
         try {
             $s->undo->undoById($s->u, (int) $undo['id']);
         } catch (HttpError $e) {
-            $caught = [$e->errorCode, str_contains($e->getMessage(), 'no longer part of the series')];
+            $caught = [$e->errorCode, str_contains($e->getMessage(), 'took Mon 8 Mar 2027 out of this repeating event.')];
         }
         // not_undoable since the gate (1.5.5), was stale_undo: force cannot pass this refusal, and the app offers "Undo anyway" for stale_undo.
         checkEq('refused, saying the day left its series; nothing sent', [['not_undoable', true], []],
@@ -1075,7 +1075,7 @@ return static function (Db $db): void {
         checkEq('the row is the new series\' occurrence at Google; a later title on it reaches that instance; the tag\'s undo names the series the day left', [
             true, $dayId, 'Sample day title', true,
         ], [$newSeries !== '' && $newSeries !== 'smpl2weekly', $moved['google_event_id'] ?? null, $s->fake->events[$dayId]['summary'] ?? null,
-            str_contains((string) $undo, 'no longer part of the series this change was made in')]);
+            str_contains((string) $undo, 'took Mon 12 Apr 2027 out of this repeating event.')]);
     });
 
     scenario('google series undo: a forced undo bringing a day\'s row back onto a day deleted since leaves the skip, no row, and names the row (P2-2)', function () use ($setup, $masterId, $last, $iso, $held, $dayRow): void {

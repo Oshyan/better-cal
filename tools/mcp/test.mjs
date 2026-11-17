@@ -408,6 +408,10 @@ async function main() {
   const errored = await rpc('tools/call', { name: 'undo', arguments: {} });
   checkEq('api error sets isError', true, errored.result?.isError);
   check('api error message surfaced', String(errored.result?.content?.[0]?.text ?? '').includes('invalid_request'));
+  received.length = 0;
+  await rpc('tools/call', { name: 'undo', arguments: {} });
+  await rpc('tools/call', { name: 'undo', arguments: { past: 7 } });
+  checkEq('undo sends past only when given: the refused entry to pass over', [{}, { past: 7 }], received.map((r) => r.body));
 
   // ---- unknown tool -> JSON-RPC error -------------------------------------
   const unknown = await rpc('tools/call', { name: 'nope', arguments: {} });

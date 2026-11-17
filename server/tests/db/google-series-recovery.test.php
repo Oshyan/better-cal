@@ -638,7 +638,7 @@ return static function (Db $db): void {
         $half = $listed($s);
         checkEq('Finish fails with google_finish_local naming the day; Review still lists the change with those words; the day had its row before; Google holds the shortened series and the rows here hold exactly that (the day Google lacks has no row); no transaction left open',
             [[409, 'google_finish_local', true], false, 1, true, true, 'RRULE:FREQ=WEEKLY;COUNT=4', $held($s, 'smpl3weekly'), null, false],
-            [[$error[0] ?? null, $error[1] ?? null, str_contains((string) ($error[2] ?? ''), 'changed here after this change stopped')], $out['ok'], count($half),
+            [[$error[0] ?? null, $error[1] ?? null, str_contains((string) ($error[2] ?? ''), 'changed here while this change was waiting to be finished')], $out['ok'], count($half),
                 str_contains((string) ($half[0]['error'] ?? ''), 'its part here'), $day !== null, $held($s, 'smpl3weekly')['rule'], $stored($s, 'smpl3weekly'),
                 $rowAt($s, '2027-04-19 17:00:00'), $db->pdo()->inTransaction()]);
     });
@@ -788,7 +788,7 @@ return static function (Db $db): void {
     // since, so Finish sets each day as the change has it and says what it replaced, with what Google held and what it set
     // (decisions.md, "Finish sets the plan's days where it can't tell its own change from another"). Until 1.5.6 a change
     // made elsewhere on a day the rename did not change was kept, on a prediction of what the write itself does to the days.
-    $lead = 'This change had stopped part way, and Google Calendar no longer held the event as it was left.';
+    $lead = 'This change was waiting to be finished, and Google Calendar no longer held the event as it was left.';
     $on = static fn(string $ymd): string => (new DateTimeImmutable($ymd))->format(substr($ymd, 0, 4) === gmdate('Y') ? 'D j M' : 'D j M Y');
     scenario('google recovery sweep F2: Finish of a rename whose answer was lost sets each day as the change has it, and says what it replaced of a change made elsewhere', function () use ($setup, $lostRename, $elsewhereAtGoogle, $recover, $day, $rowAt, $pending, $db, $lead, $on): void {
         $s = $setup();

@@ -342,13 +342,13 @@ for (const file of files) {
   if (typeof words === 'function') {
     const day = () => 'Thu 12 Mar';
     const ok = words({ stoppedAt: '2027-03-12T10:00:00Z', unrecoverable: null, open: false }, day);
-    check(ok.includes('stopped part way on Thu 12 Mar') && ok.includes("isn't updating from Google") && ok.includes('finished or put back'),
-      'the half-done line says what stopped, that the event is not updating, and the way out: ' + ok);
+    check(ok.includes('has been waiting to be finished since Thu 12 Mar') && ok.includes("isn't updating from Google") && ok.includes('finished or put back'),
+      'the half-done line says what is waiting, that the event is not updating, and the way out: ' + ok);
     const stuck = words({ stoppedAt: '2027-03-12T10:00:00Z', unrecoverable: 'Sample reason the item gives.', open: true }, day);
     check(stuck.endsWith('Sample reason the item gives.'), "when neither Finish nor Put back can run, the line ends with the item's own sentence");
     check(words(null, day) === null, 'no half-done change, no line');
-    const joined = words({ stoppedAt: '2027-03-12T10:00:00Z', unrecoverable: "This change stopped part way, and Google no longer shows 'Sample' to this account, so it can't be finished or put back.", open: true }, day);
-    check(joined.split('stopped part way').length === 2 && joined.includes('on Thu 12 Mar, and Google no longer shows'), 'the line says "stopped part way" once when the item\'s sentence is joined to it: ' + joined);
+    const joined = words({ stoppedAt: '2027-03-12T10:00:00Z', unrecoverable: "This change is waiting to be finished, and Google no longer shows 'Sample' to this account, so it can't be finished or put back.", open: true }, day);
+    check(joined.split('waiting to be finished').length === 2 && joined.includes('since Thu 12 Mar, and Google no longer shows'), 'the line says "waiting to be finished" once when the item\'s sentence is joined to it: ' + joined);
     check(!/pending|master|sync/i.test(ok), 'the half-done line has no jargon');
   }
   check(sheet.includes('${occ.halfDone && html`<${HalfDoneLine} half=${occ.halfDone} />`}'),

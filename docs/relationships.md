@@ -34,7 +34,7 @@ Open an event (popover or full detail). The **For me** dropdown lists what it ca
 - On an **Opportunities** calendar: Available, Maybe, Planned or Hidden.
 - On a **Context** calendar: nothing to choose.
 
-On a repeating event it asks which occurrences, as every other change to a series does: this one, this and following, or the whole series.
+On a repeating event it asks which occurrences, as every other change to a repeating event does: this one, this and following, or all events.
 
 In the agenda view, each row from a subscribed calendar has three small buttons (Maybe, Planned, Hide); on a phone, swipe the row left or tap its grip.
 

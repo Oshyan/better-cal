@@ -276,7 +276,7 @@ final class GoogleMove
                     ? $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $row['recurrence_parent_id']])
                     : $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [$calendarId, (string) $row['uid']]);
                 if ($master === null || empty($master['google_event_id'])) {
-                    throw new \RuntimeException('A changed occurrence of "' . (string) $row['title'] . '" has no series to belong to');
+                    throw new \RuntimeException('A changed occurrence of "' . (string) $row['title'] . '" has no repeating event to belong to');
                 }
                 $instanceId = GoogleWriter::instanceId((string) $master['google_event_id'], (string) $row['recurrence_instance_utc'], (int) $master['all_day'] === 1);
                 // Over the occurrence the import made, which holds its master's form (GoogleWriter::overForm).

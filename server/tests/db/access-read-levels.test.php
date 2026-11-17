@@ -193,7 +193,7 @@ return static function (Db $db): void {
                     // one small list, then refused with the half-done change's sentence.
                     checkEq("still read-only, $what: refused after exactly one small list", [true, ['GET small']], [$e !== null, PA::sent($t->s->fake, $from)]);
                     check("still read-only, $what: the model's sentence for a half-done change", str_contains((string) $e?->getMessage(),
-                        "This change stopped part way, and your permissions for 'Sample Google calendar' in Google Calendar are now read-only, so it can't be finished or put back. It stays here, and the event takes no other change, until full editing is restored there or you remove the calendar."), (string) $e?->getMessage());
+                        "This change is waiting to be finished, and your permissions for 'Sample Google calendar' in Google Calendar are now read-only, so it can't be finished or put back. It stays here, and the event takes no other change, until full editing is restored there or you remove the calendar."), (string) $e?->getMessage());
                 } else {
                     checkEq("still read-only, $what: refused as read-only after exactly one small list", ['google_read_only', ['GET small']], [PA::code($e), PA::sent($t->s->fake, $from)]);
                     // Rule D(2) of the read: stored view only before the refusal, so it says what the calendar is, no "no longer".

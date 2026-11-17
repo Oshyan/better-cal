@@ -238,7 +238,7 @@ final class MailAdmission
         if ($active >= Limits::get('MAIL_ACTIVE_EVENTS')) {
             return self::denied(
                 'event_active',
-                'New events from email paused because the active-email-event capacity was reached. Remove unneeded emailed events or wait for events or finite repeating series to end.',
+                'New events from email paused because the active-email-event capacity was reached. Remove unneeded emailed events or wait for events, including repeating events with an end, to finish.',
                 null,
             );
         }

@@ -103,7 +103,7 @@ return static function (Db $db): void {
                 }
                 $year = gmdate('Y') === '2027' ? '' : ' 2027';
                 checkEq("$name: it completes, nothing is left half done, and Review says what Finish replaced on the renamed day", [null, [], [[
-                    'This change had stopped part way, and Google Calendar no longer held the event as it was left.',
+                    'This change was waiting to be finished, and Google Calendar no longer held the event as it was left.',
                     "On Mon 11 Jan$year Google Calendar held the title 'Renamed series'; Finish set the title 'Own title', as this change has it.",
                 ]]], [$error, H::halfDone($t), $reviewLines($t)]);
                 checkEq("$name: the calendar is as the change asked, with the place Google holds, the renamed day keeping its own title, here and at Google",
@@ -231,7 +231,7 @@ return static function (Db $db): void {
             checkEq('the calendar is as the change asked, the renamed day keeping its own title, here and at Google', $days('10:00', 'Renamed series'), H::settled($t, 'an older row, then Finish', $la, '2027-01-01', '2027-02-15'));
             $year = gmdate('Y') === '2027' ? '' : ' 2027';
             checkEq('and Review says what Finish replaced, with the values and no cause', [[
-                'This change had stopped part way, and Google Calendar no longer held the event as it was left.',
+                'This change was waiting to be finished, and Google Calendar no longer held the event as it was left.',
                 "On Mon 11 Jan$year Google Calendar held the title 'Renamed series'; Finish set the title 'Own title', as this change has it.",
             ]], $reviewLines($t));
         } finally {

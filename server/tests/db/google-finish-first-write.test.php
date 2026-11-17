@@ -64,7 +64,7 @@ return static function (Db $db): void {
         'Fri 8 Jan deleted at Google' => ['DELETE', '2027-01-08', null,
             [$notesSet, $day('2027-01-08') . ' was deleted in Google Calendar; Finish put it back as this change has it (11:00 to 12:00).'], 'deleted'],
         'Fri 8 Jan renamed at Google' => ['PATCH', '2027-01-08', ['summary' => 'Renamed at Google'],
-            [$notesSet, 'On ' . $day('2027-01-08') . " Google Calendar held the title 'Renamed at Google'; Finish set the title 'Sample series', as this change has it."], 'renamed'],
+            [$notesSet, 'On ' . $day('2027-01-08') . " Google Calendar held the title 'Renamed at Google'; Finish set the title 'Sample series', as this change has it."], "renamed 'Renamed at Google'"],
         'Wed 6 Jan (the day with its own notes) given other notes at Google' => ['PATCH', '2027-01-06', ['description' => 'Notes from Google'],
             ['On ' . $day('2027-01-06') . " Google Calendar held the notes 'Notes from Google'; Finish set the notes 'Notes A', as this change has it."], 'given other notes'],
     ];
@@ -157,7 +157,7 @@ return static function (Db $db): void {
                             ['While this change was waiting to be finished, ' . $day($date) . " was $done in Google Calendar. That was lost when the event's time changed. Make it again there if you still want it."], $out['differences'] ?? null);
                     } else {
                         checkEq("$name: Finish says what it replaced, each day with what Google held and what it set, and no cause",
-                            array_merge(['This change had stopped part way, and Google Calendar no longer held the event as it was left.'], $replaced), $out['differences'] ?? null);
+                            array_merge(['This change was waiting to be finished, and Google Calendar no longer held the event as it was left.'], $replaced), $out['differences'] ?? null);
                     }
                     check("$name: by date, the series is at 11:00 and " . ($knob === 'netAt' ? 'exactly as planned, no other day touched' : 'every day as the change has it'), $now === $expect,
                         "\n   missing: " . implode("\n            ", array_diff($expect, $now)) . "\n   extra:   " . implode("\n            ", array_diff($now, $expect))

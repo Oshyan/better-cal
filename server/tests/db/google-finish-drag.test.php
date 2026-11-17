@@ -87,6 +87,6 @@ return static function (Db $db): void {
         'F3 (master write taken, its answer lost)', 'loseAt',
         // The day deleted at Google is Fri 8 Jan of the series as changed, the day the notes move to: Finish puts it back with them, and says so.
         [$line('06'), $line('07'), $line('08', 'Notes A'), $line('09'), $line('10'), $line('11'), $line('12'), $line('13')],
-        ['This change had stopped part way, and Google Calendar no longer held the event as it was left.',
+        ['This change was waiting to be finished, and Google Calendar no longer held the event as it was left.',
             $day('2027-01-08') . ' was deleted in Google Calendar; Finish put it back as this change has it (10:00 to 11:00).']));
 };

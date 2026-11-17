@@ -866,16 +866,16 @@ final class GoogleUndo
     public static function finishRefused(bool $redo): string
     {
         return $redo
-            ? "The undo this redoes was recorded by an earlier version of Better-Cal and can't be redone after the upgrade, so Finish can't complete this redo. Put back returns the series to how it was before the redo began, unless it changed in Google Calendar since."
-            : "The change this undoes was recorded by an earlier version of Better-Cal and can't be undone after the upgrade, so Finish can't complete this undo. Put back returns the series to how it was before the undo began, unless it changed in Google Calendar since.";
+            ? "The undo this redoes was recorded by an earlier version of Better-Cal and can't be redone after the upgrade, so Finish can't complete this redo. Put back returns the repeating event to how it was before the redo began, unless it changed in Google Calendar since."
+            : "The change this undoes was recorded by an earlier version of Better-Cal and can't be undone after the upgrade, so Finish can't complete this undo. Put back returns the repeating event to how it was before the undo began, unless it changed in Google Calendar since.";
     }
 
     /** Put back's last words when it refuses (Google changed since) and Finish is refused too: nothing promised that would refuse. */
     public static function neitherWay(bool $redo): string
     {
         return $redo
-            ? "Nothing was put back, and Finish can't complete this redo: the undo it redoes was recorded by an earlier version of Better-Cal. The series takes no other change here while this is listed in Review."
-            : "Nothing was put back, and Finish can't complete this undo: the change it undoes was recorded by an earlier version of Better-Cal. The series takes no other change here while this is listed in Review.";
+            ? "Nothing was put back, and Finish can't complete this redo: the undo it redoes was recorded by an earlier version of Better-Cal. The repeating event takes no other change here while this is listed in Review."
+            : "Nothing was put back, and Finish can't complete this undo: the change it undoes was recorded by an earlier version of Better-Cal. The repeating event takes no other change here while this is listed in Review.";
     }
 
     /**
@@ -1012,7 +1012,7 @@ final class GoogleUndo
                 $planned = Model::setPlan($master, $rows, $set, ['google' => true], $back);
                 if ($planned['writes'] === null) {
                     throw HttpError::badRequest(($planned['code'] ?? '') === 'unreadable' || !isset(Model::REASONS[$planned['code'] ?? ''])
-                        ? "This series repeats in a way Better-Cal can't walk, so this change can't be undone here. Change it back by hand."
+                        ? "This event repeats in a way Better-Cal can't walk, so this change can't be undone here. Change it back by hand."
                         : "This change can't be undone as a whole: " . Model::REASONS[$planned['code']], 'not_undoable');
                 }
                 $writes = $planned['writes'];

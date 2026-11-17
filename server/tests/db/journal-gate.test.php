@@ -60,8 +60,8 @@ return static function (Db $db): void {
 
     // The words, from the decisions entry (Journal entries carry their format), not from the code.
     $older = "Recorded by an earlier version of Better-Cal; it can't be undone after the upgrade.";
-    $finishUndo = "The change this undoes was recorded by an earlier version of Better-Cal and can't be undone after the upgrade, so Finish can't complete this undo. Put back returns the series to how it was before the undo began, unless it changed in Google Calendar since.";
-    $finishRedo = "The undo this redoes was recorded by an earlier version of Better-Cal and can't be redone after the upgrade, so Finish can't complete this redo. Put back returns the series to how it was before the redo began, unless it changed in Google Calendar since.";
+    $finishUndo = "The change this undoes was recorded by an earlier version of Better-Cal and can't be undone after the upgrade, so Finish can't complete this undo. Put back returns the repeating event to how it was before the undo began, unless it changed in Google Calendar since.";
+    $finishRedo = "The undo this redoes was recorded by an earlier version of Better-Cal and can't be redone after the upgrade, so Finish can't complete this redo. Put back returns the repeating event to how it was before the redo began, unless it changed in Google Calendar since.";
 
     $expand = static function (array $master): array {
         $allDay = isset($master['start']['date']);
@@ -429,7 +429,7 @@ return static function (Db $db): void {
         };
         $putBack = $caught(fn() => $s->events->googlePutBack($s->u, $f['pending']));
         checkEq('Put back refuses: Google changed since; its words never point to Finish', [409, 'google_changed_since',
-            "'Sample renamed' changed in Google Calendar since. Nothing was put back, and Finish can't complete this undo: the change it undoes was recorded by an earlier version of Better-Cal. The series takes no other change here while this is listed in Review."],
+            "'Sample renamed' changed in Google Calendar since. Nothing was put back, and Finish can't complete this undo: the change it undoes was recorded by an earlier version of Better-Cal. The repeating event takes no other change here while this is listed in Review."],
             $putBack);
         $row = $pendingRow($s);
         $s->t->calls = [];
@@ -632,7 +632,7 @@ return static function (Db $db): void {
     });
 
     scenario('journal gate: a calendar that no longer writes to Google for this account (disconnected, paused, a role that can\'t write) is listed with no action and the reason, and keeping it as a copy goes through and closes the change', function () use ($db, $setup, $halfChange, $reviewItem, $caught, $pendingRow, $closed, $closedLine, $disconnected, $paused): void {
-        foreach (['disconnected' => $disconnected, 'paused' => $paused, 'reader' => "This change stopped part way, and your permissions for 'Sample crew' in Google Calendar are now read-only, so it can't be finished or put back. It stays here, and the event takes no other change, until full editing is restored there or you remove the calendar."] as $how => $words) {
+        foreach (['disconnected' => $disconnected, 'paused' => $paused, 'reader' => "This change is waiting to be finished, and your permissions for 'Sample crew' in Google Calendar are now read-only, so it can't be finished or put back. It stays here, and the event takes no other change, until full editing is restored there or you remove the calendar."] as $how => $words) {
             $s = $setup();
             $p = $halfChange($s);
             $title = (string) $pendingRow($s)['title'];

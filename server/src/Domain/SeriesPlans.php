@@ -141,7 +141,7 @@ trait SeriesPlans
         }
         $scope = (string) ($in['scope'] ?? '');
         if (empty($event['rrule']) || !empty($event['recurrence_parent_id']) || !in_array($scope, ['all', 'following'], true)) {
-            throw HttpError::badRequest('preview is for changes to all events, or this and following, of a repeating series', 'preview_unavailable');
+            throw HttpError::badRequest('preview is for changes to all events, or this and following, of a repeating event', 'preview_unavailable');
         }
         // A preview asks Google exactly where its commit would refuse for access (patchLocked: a change to what Google
         // holds, googleKeys), and nowhere else: what is held here alone (tags, people, reminders) is refused by neither.
@@ -167,7 +167,7 @@ trait SeriesPlans
     {
         [$event, $instanceStart] = $this->seriesFrom($userId, $this->get($userId, $id), $scope, $instanceStart);
         if ($scope !== 'following' || empty($event['rrule']) || !empty($event['recurrence_parent_id'])) {
-            throw HttpError::badRequest('preview is for deleting this and following events of a repeating series', 'preview_unavailable');
+            throw HttpError::badRequest('preview is for deleting this and following events of a repeating event', 'preview_unavailable');
         }
         return $this->previewSplit($userId, $event, ['instanceStart' => $instanceStart, 'plan' => ['choices' => $choices]], Split::DELETE);
     }
@@ -178,7 +178,7 @@ trait SeriesPlans
         unset($attendance);
         [$event, $instanceStart] = $this->seriesFrom($userId, $this->get($userId, $id), $scope, $instanceStart);
         if ($scope !== 'following' || empty($event['rrule']) || !empty($event['recurrence_parent_id'])) {
-            throw HttpError::badRequest('preview is for an answer from a day on in a repeating series', 'preview_unavailable');
+            throw HttpError::badRequest('preview is for an answer from a day on in a repeating event', 'preview_unavailable');
         }
         return $this->previewSplit($userId, $event, ['instanceStart' => $instanceStart, 'plan' => ['choices' => $choices]], Split::ANSWER);
     }
@@ -592,7 +592,7 @@ trait SeriesPlans
     {
         $plan = $result['plan'];
         if ($result['refused']) {
-            throw new HttpError('series_refused', $plan['refusals'][0]['words'] ?? 'This change can\'t be made to the series.', 422, ['plan' => $plan]);
+            throw new HttpError('series_refused', $plan['refusals'][0]['words'] ?? 'This change can\'t be made to this repeating event.', 422, ['plan' => $plan]);
         }
         foreach ($plan['groups'] as $group) {
             foreach ($group['options'] as $o) {
@@ -603,12 +603,12 @@ trait SeriesPlans
         }
         if (!is_array($sent)) {
             if (!$plan['direct'] && !$this->preselected) {
-                throw new HttpError('series_plan_required', 'This change to the series needs its plan confirmed: preview it, then send plan {hash, choices}.', 409, ['plan' => $plan]);
+                throw new HttpError('series_plan_required', 'This change to the repeating event needs its plan confirmed: preview it, then send plan {hash, choices}.', 409, ['plan' => $plan]);
             }
             return $result;
         }
         if ((string) ($sent['hash'] ?? '') !== $plan['hash']) {
-            throw new HttpError('series_plan_changed', 'The series changed since this plan was made. Review the new plan and try again.', 409, ['plan' => $plan]);
+            throw new HttpError('series_plan_changed', 'This repeating event changed since this plan was made. Review the new plan and try again.', 409, ['plan' => $plan]);
         }
         if ($result['missing'] !== []) {
             throw new HttpError('series_plan_required', 'Name an option for every group of the plan: ' . implode(', ', $result['missing']) . '.', 409, ['plan' => $plan]);
@@ -1084,7 +1084,7 @@ trait SeriesPlans
             $in = (array) $plan['input'];
             $master = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
             if ($master === null) {
-                throw HttpError::notFound('The series this change was for is no longer here');
+                throw HttpError::notFound('The repeating event this change was for is no longer here');
             }
             $words = [];
             $was = (array) ($plan['was'] ?? []);
@@ -1432,8 +1432,8 @@ trait SeriesPlans
             // The action the undo kept with its pending row, never one cut from a line.
             $what = $summary;
             $this->undo->record($userId, 'event', (int) ($row['event_id'] ?? 0), 'update', null, null,
-                GoogleUndo::line(($redo ? 'Put back in Google Calendar: a redo that stopped part way is taken back, so this stays undone: ' . $what
-                    : 'Put back in Google Calendar: an undo that stopped part way is taken back, so this stands: ' . GoogleUndo::undoSummary($what)), (string) $calendar['name']));
+                GoogleUndo::line(($redo ? 'Put back in Google Calendar: a redo that was waiting to be finished is taken back, so this stays undone: ' . $what
+                    : 'Put back in Google Calendar: an undo that was waiting to be finished is taken back, so this stands: ' . GoogleUndo::undoSummary($what)), (string) $calendar['name']));
         }
         return ['ok' => true, 'differences' => $differences, 'left' => $out['left'] ?? []];
     }

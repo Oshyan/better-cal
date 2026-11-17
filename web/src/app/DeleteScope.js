@@ -21,7 +21,7 @@ export function ScopeChoice({ occ, verb, danger, onPick, onCancel, compact, note
     <button type="button" class="bc-btn" onClick=${() => onPick('this')}>This occurrence</button>
     ${scopes.includes('following') ? html`<button type="button" class="bc-btn" onClick=${() => onPick('following')}>This and following</button>`
       : why && html`<span class="bc-drawer-note">${why}</span>`}
-    <button type="button" class=${'bc-btn' + (danger ? ' bc-btn-danger' : '')} onClick=${() => onPick('all')}>All in series</button>
+    <button type="button" class=${'bc-btn' + (danger ? ' bc-btn-danger' : '')} onClick=${() => onPick('all')}>All events</button>
     <button type="button" class="bc-link-btn" onClick=${onCancel}>Cancel</button>
   </div>`;
 }

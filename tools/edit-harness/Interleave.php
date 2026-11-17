@@ -99,7 +99,7 @@ final class Interleave
     /** The instance id a w-race step renamed a day of, for an undo step given "race": "day" (fixed cases) to rename it again. */
     private ?array $lastRace = null;
     /** The sentence Finish's answer opens its list of replaced days with, as the docs give it (google-calendar.md, "What Writes Send"). */
-    private const REPLACED_LEAD = 'This change had stopped part way, and Google Calendar no longer held the event as it was left.';
+    private const REPLACED_LEAD = 'This change was waiting to be finished, and Google Calendar no longer held the event as it was left.';
     /** The race run during the step being checked, as $raced (its title there is x-readback's to judge), or null. */
     private ?array $racedNow = null;
     /** What a p-overlap step wrote here while the poll fetched: [row key, tag], or null. */

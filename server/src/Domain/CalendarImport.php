@@ -64,7 +64,7 @@ final class CalendarImport
         $problem = Ics::budgetProblem($ics, $maxBytes, $maxEvents);
         if ($problem !== null) {
             if (str_contains($problem, 'skipped occurrences')) {
-                $how = 'Split unusually exception-heavy repeating series into smaller parts, or adjust BETTERCAL_LIMIT_EXDATE_VALUES_PER_EVENT and BETTERCAL_LIMIT_EXDATE_VALUES_PER_INPUT within their hard ceilings.';
+                $how = 'Split repeating events with unusually many changed or skipped days into smaller parts, or adjust BETTERCAL_LIMIT_EXDATE_VALUES_PER_EVENT and BETTERCAL_LIMIT_EXDATE_VALUES_PER_INPUT within their hard ceilings.';
             } elseif (str_contains($problem, 'comma-separated values')) {
                 $how = 'Split the file, or raise BETTERCAL_LIMIT_ICS_LIST_VALUES_PER_INPUT on the server within its hard ceiling.';
             } else {

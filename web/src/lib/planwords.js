@@ -499,7 +499,7 @@ const OUTCOMES = {
   stays: (p) => 'stays ' + (atOn(p) || 'where it is'),
   separate: (p) => 'becomes an event of its own' + spaced(atOn(p)),
   deleted: () => 'is deleted',
-  rejoins: () => 'goes back to the series; nothing of its own is left',
+  rejoins: () => 'goes back to the repeating event; nothing of its own is left',
 };
 // Outcomes that say all that happens to a day: a deleted day has nothing
 // left to change, and a day going back to the series takes everything.
@@ -616,7 +616,7 @@ export function skipLines(d, opts = {}) {
   const was = name + ' on ' + fmtDay(d.shows, opts) + ' was removed earlier';
   if (d.outcome === 'moves') return { line1: was + ', so no event is added on ' + fmtDay(d.to, { ...opts, prev: d.shows }) + '.', line2: '' };
   if (d.outcome === 'stays') return { line1: was + ', and stays removed.', line2: '' };
-  if (d.outcome === 'dropped') return { line1: was + (d.why !== 'outside' ? '; the new pattern has no day there.' : d.side === 'start' ? '; it is before the new start, so it is no longer needed.' : '; it falls outside the new series.'), line2: '' };
+  if (d.outcome === 'dropped') return { line1: was + (d.why !== 'outside' ? '; the new pattern has no day there.' : d.side === 'start' ? '; it is before the new start, so it is no longer needed.' : '; it falls outside the changed repeating event.'), line2: '' };
   return { line1: 'Nothing will show on ' + fmtDay(d.to, opts) + '.', line2: '' };
 }
 
@@ -694,12 +694,12 @@ export function choiceWords(g, ctx = {}) {
     const day = fmtDay(g.at, { weekday: false, ...opts });
     return {
       lead: '',
-      reason: 'You set ' + plural(g.count, 'event', 'events') + '. Count them in the whole series, or from ' + day + ' on?',
+      reason: 'You set ' + plural(g.count, 'event', 'events') + '. Count them in the whole repeating event, or from ' + day + ' on?',
       options: label((x) => {
         const b = x.bound || {};
         const last = b.last ? ', ending ' + fmtDay(b.last, { weekday: false, ...opts }) : '';
         return x.id === 'whole'
-          ? g.count + ' in the whole series: ' + plural(b.events != null ? b.events : 0, 'event', 'events') + ' from ' + day + last
+          ? g.count + ' in the whole repeating event: ' + plural(b.events != null ? b.events : 0, 'event', 'events') + ' from ' + day + last
           : plural(g.count, 'event', 'events') + ' from ' + day + last;
       }),
     };
@@ -708,8 +708,8 @@ export function choiceWords(g, ctx = {}) {
     const count = g.count;
     const from = (ctx.bound && ctx.bound.from) || {};
     const reason = g.counted
-      ? 'The series is set to ' + plural(count, 'event', 'events') + (g.splits ? ', and the day you moved would fall after the ' + ordinalWord(count) + '.' : ', and this change moves where they end.')
-      : 'The series ends ' + fmtDay(from.last, { weekday: false, ...opts }) + ', and this change gives it a different number of events.';
+      ? 'This repeating event is set to ' + plural(count, 'event', 'events') + (g.splits ? ', and the day you moved would fall after the ' + ordinalWord(count) + '.' : ', and this change moves where they end.')
+      : 'This repeating event ends ' + fmtDay(from.last, { weekday: false, ...opts }) + ', and this change gives it a different number of events.';
     return {
       lead: '',
       reason: reason + ' Keep the end date, or keep the count?',
@@ -733,7 +733,7 @@ export function choiceWords(g, ctx = {}) {
     const listed = (head, parts) => head + (parts.filter(Boolean).length ? ': ' + parts.filter(Boolean).join(', ') : '');
     return {
       lead: '',
-      reason: 'The series moves to ' + zoneName(toTz) + ' time. Keep the clock time, or the same moment?',
+      reason: 'This repeating event moves to ' + zoneName(toTz) + ' time. Keep the clock time, or the same moment?',
       options: label((x) => (x.id === 'clock'
         ? listed('Keep the clock time', [inZone(x, toTz)])
         : listed('Keep the same moment', [inZone(x, fromTz), inZone(x, toTz)]))),
@@ -784,7 +784,7 @@ function dayNamed(rrule) {
 const ADOPTION = {
   day: (g, o, label) => ({
     lead: '',
-    reason: 'This day was moved earlier to a date of its own. Should its new day become the series’ day, or every event move the same way?',
+    reason: 'This day was moved earlier to a date of its own. Should its new day become every event’s day, or every event move the same way?',
     options: label((x) => (x.id === 'adopt'
       ? dayNamed(x.rrule) + ' becomes its day: ' + lowerRule(x.rrule)
       : 'Every event moves ' + daysWords(g.shift || 0) + ': ' + lowerRule(x.rrule))),
@@ -795,7 +795,7 @@ const ADOPTION = {
     const adopt = o('adopt');
     return {
       lead: '',
-      reason: 'This day has a time of its own. Should its new time become the series’ time, or every event move by the same amount?',
+      reason: 'This day has a time of its own. Should its new time become every event’s time, or every event move by the same amount?',
       options: label((x) => (x.id === 'adopt'
         ? at(x) + ' becomes its time: every event at ' + at(x)
         : 'Every event moves ' + spanWords(g.shift || 0) + ((g.shift || 0) > 0 ? ' later' : ' earlier') + ': ' + at(x) + ', this one at ' + at(adopt))),
@@ -803,7 +803,7 @@ const ADOPTION = {
   },
   length: (g, o, label) => ({
     lead: '',
-    reason: 'This day has a length of its own. Should its new length become the series’ length, or every event change by the same amount?',
+    reason: 'This day has a length of its own. Should its new length become every event’s length, or every event change by the same amount?',
     options: label((x) => (x.id === 'adopt'
       ? upperFirst(spanWords(g.length || 0)) + ' becomes its length: every event ' + spanWords(g.length || 0) + ' long'
       : 'Every event ' + ((g.shift || 0) > 0 ? 'lengthens' : 'shortens') + ' by ' + spanWords(g.shift || 0) + ', this one ' + spanWords(g.length || 0) + ' long')),
@@ -880,8 +880,8 @@ const REFUSALS = {
   severalAllDay: 'This repeat happens several times a day, so it can’t be made all-day.',
   weekno: 'This repeat counts weeks of the year, so its days can’t follow a drag.',
   overlap: 'Two of its days are the same day in some months, so its days can’t follow a drag.',
-  dayset: 'This repeat came from another app and picks its days in a way a drag can’t follow. Move only this one, or open the series to choose its days.',
-  empty: 'This would leave the series with no events. Delete it instead?',
+  dayset: 'This repeat came from another app and picks its days in a way a drag can’t follow. Move only this one, or open the repeating event to choose its days.',
+  empty: 'This would leave the repeating event with no events. Delete it instead?',
   member_taken: 'That day is already one of its days.',
   off_weeks: 'Those days would fall in weeks this repeat skips.',
   interval_month: 'Those days would fall in months this repeat skips.',
@@ -918,7 +918,7 @@ function hiddenWords(r) {
 }
 /** A refusal's sentence, by its code (and the plan's scope: a split's are its own); $r, the refusal itself, for one whose words carry its data. */
 export const refusalWords = (code, scope, r = null) => (code === 'googleHidden' && r ? hiddenWords(r) : null)
-  || (scope === 'following' && SPLIT_REFUSALS[code]) || REFUSALS[code] || 'This change can’t be made to the series.';
+  || (scope === 'following' && SPLIT_REFUSALS[code]) || REFUSALS[code] || 'This change can’t be made to this repeating event.';
 /** Why a scope chooser leaves "This and following" out, by the split refusal's code. */
 export const unofferedWords = (code) => UNOFFERED[code] || null;
 
@@ -950,7 +950,7 @@ export function noteWords(n, opts = {}) {
 }
 
 /** The line a 409 brings. */
-export const CHANGED_WORDS = 'The series changed since this was worked out. Here is the new plan.';
+export const CHANGED_WORDS = 'This repeating event changed since this was worked out. Here is the new plan.';
 export const WORKING_WORDS = 'Working out the plan…';
 export const SAVING_WORDS = 'Saving…';
 

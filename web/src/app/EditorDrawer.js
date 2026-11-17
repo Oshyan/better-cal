@@ -1367,7 +1367,7 @@ export function EditorDrawer() {
             <option value="this">This event only</option>
             ${editorScopes.scopes.includes('following') ? html`<option value="following">This and following</option>`
               : editorScopes.why && html`<option value="following" disabled>${editorScopes.why}</option>`}
-            <option value="all">All events in series</option>
+            <option value="all">All events</option>
           </select>
         </div>`}
       </div>
@@ -1376,7 +1376,7 @@ export function EditorDrawer() {
         <button type="submit" class="bc-btn bc-btn-primary" disabled=${unsaveable || !!seriesAsk} title=${backwards ? 'The end is before the start' : intervalWrong ? intervalWrong : badTags.length > 0 ? 'A new tag\'s name needs changing first (under Tags)' : (occ ? 'Save' : 'Create') + ' (' + saveKeys + ')'}>${seriesAsk === 'asking' ? 'Working out the plan…' : occ ? 'Save' : 'Create'}</button>
         <button type="button" class="bc-btn" onClick=${requestClose}>Cancel</button>
         ${googleCalendar(Number(form.calendarId)) && (occ ? occ.recurring && scope !== 'this' : (form.rrule.custom || form.rrule.freq !== 'none'))
-          && html`<span class="bc-drawer-note" title="This calendar lives in Google Calendar: a change to the series is sent there and read back, and the calendar here shows what is stored there.">${occ ? 'Saves' : 'Creates'} in Google Calendar</span>`}
+          && html`<span class="bc-drawer-note" title="This calendar lives in Google Calendar: a change to a repeating event is sent there and read back, and the calendar here shows what is stored there.">${occ ? 'Saves' : 'Creates'} in Google Calendar</span>`}
         ${occ && html`<button type="button" class="bc-btn bc-btn-danger bc-ed-delete" onClick=${() => deleteEvent(occ, scope)}>Delete</button>`}
       </div>
       <${SeriesDialog} host="editor" />

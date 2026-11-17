@@ -134,7 +134,7 @@ return static function (Db $db): void {
         ]);
         $yr = (int) gmdate('Y') === 2027 ? '' : ' 2027';
         $rejoined = array_values(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
-        checkEq('the day going back to the series: its head, then where it shows', ["'Rehearsal' Tue 12 Jan$yr", "goes back to the series, on Tue 12 Jan$yr"],
+        checkEq('the day going back to the series: its head, then where it shows', ["'Rehearsal' Tue 12 Jan$yr", "goes back to the repeating event, on Tue 12 Jan$yr"],
             [$rejoined['head'] ?? null, $rejoined['outcomeWords'] ?? null]);
         $d->undo->undoLatest($u);
         checkEq('undone, the edited day\'s row and its tags are byte-identical to before', $beforeGive, [$rows($owned), $tagRows()]);

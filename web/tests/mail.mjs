@@ -42,12 +42,12 @@ const ReviewCard = runInNewContext(reviewBlock + '\nReviewCard', {
 // A day of a series held before the series (a cancellation or a change) is
 // named as that day, and says there is nothing to accept until the series
 // is added; the other kinds say nothing of the sort.
-const waitingLine = 'Nothing to accept until the series is added.';
+const waitingLine = 'Nothing to accept until the repeating event is added.';
 for (const [detail, label] of [
   [{ isInvitation: true }, 'New emailed invitation'],
   [{ isInvitation: false }, 'New emailed event'],
-  [{ isInvitation: false, method: 'CANCEL', occurrence: '2026-12-19T01:00:00Z' }, 'Cancelled day of an emailed series'],
-  [{ isInvitation: true, method: 'REQUEST', occurrence: '2026-12-26T01:00:00Z' }, 'Changed day of an emailed series'],
+  [{ isInvitation: false, method: 'CANCEL', occurrence: '2026-12-19T01:00:00Z' }, 'Cancelled day of an emailed repeating event'],
+  [{ isInvitation: true, method: 'REQUEST', occurrence: '2026-12-26T01:00:00Z' }, 'Changed day of an emailed repeating event'],
 ]) {
   const card = ReviewCard({ item: { kind: 'invite_new', status: 'open', detail, actions: [] } });
   const badge = walk(card).find((node) => node?.strings?.some((part) => part.includes('class="bc-review-kind" title=')));

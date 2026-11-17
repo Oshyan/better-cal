@@ -496,9 +496,9 @@ const TOOLS = [
   },
   {
     name: 'undo',
-    description: 'Undo the most recent mutating change (create/update/delete) made by this user.',
-    inputSchema: { type: 'object', properties: {} },
-    handler: () => api('POST', '/undo', { body: {} }),
+    description: 'Undo the most recent mutating change (create/update/delete) made by this user. When a change can\'t be undone, the error names it with an entryId; pass that as past on the next call to go on to the change before it.',
+    inputSchema: { type: 'object', properties: { past: { type: 'integer', minimum: 1, description: 'The entryId of the previous refusal, to pass over changes that are still refused.' } } },
+    handler: (a) => api('POST', '/undo', { body: a.past === undefined ? {} : { past: a.past } }),
   },
 ];
 

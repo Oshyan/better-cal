@@ -125,7 +125,7 @@ return static function (Db $db): void {
                 'FREQ=WEEKLY;COUNT=1', [], [], [], [],
             ], [$db->scalar('SELECT rrule FROM events WHERE id = ?', [$s->masterId]), $children($s), $tags($id), $shownOn($s, '2027-03-08'), $s->calls->getArrayCopy()]);
             checkEq('Activity names the day and its tags as removed by the poll', true,
-                str_contains((string) $feedEntry($s), "removed ('Sample practice' on 2027-03-08 with its tags: its series no longer has that day)"));
+                str_contains((string) $feedEntry($s), "removed ('Sample practice' on 2027-03-08 with its tags: its repeating event no longer has that day)"));
         });
 
         scenario("google local follow, $read: an UNTIL before the tagged day removes its row; one after it keeps the row", function () use ($setup, $remote, $children, $tags, $whole): void {
@@ -206,7 +206,7 @@ return static function (Db $db): void {
         $feeds->sync($calendar, Ics::parse($ics('Sample game, renamed', 'FREQ=WEEKLY;COUNT=1', 'Sample park', '20270301T090000')));
         checkEq('shortened to one: no row, no tag, and the feed\'s Activity entry names the day', [null, [], true],
             [$row(), $tags($id), str_contains((string) $db->scalar("SELECT summary FROM mutations WHERE user_id = ? AND entity = 'calendar' ORDER BY id DESC LIMIT 1", [$u]),
-                "'Sample game, renamed' on 2027-03-08 with its tags: its series no longer has that day")]);
+                "'Sample game, renamed' on 2027-03-08 with its tags: its repeating event no longer has that day")]);
     });
 
     // The one rule for every edited day of a series (Feeds::sync): when the

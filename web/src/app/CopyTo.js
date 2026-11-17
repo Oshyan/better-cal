@@ -38,7 +38,7 @@ export function CopyTo({ occ, onDone, compact }) {
     </select>
     ${occ.recurring && target && html`
       <button type="button" class="bc-btn" disabled=${busy} onClick=${() => run('this', target)}>This occurrence</button>
-      <button type="button" class="bc-btn" disabled=${busy} onClick=${() => run('all', target)}>Whole series</button>`}
+      <button type="button" class="bc-btn" disabled=${busy} onClick=${() => run('all', target)}>All events</button>`}
     ${busy && html`<span class="bc-copyto-note">Copying…</span>`}
   </div>`;
 }
